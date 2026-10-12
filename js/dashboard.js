@@ -35,26 +35,14 @@
  *  honouring ?bypass=1.
  * ═══════════════════════════════════════════════════════════════════ */
 const DashboardTool = (() => {
-  const WORK_FACTOR = 0.24;            // works/day per energy point (see daily-profit.js)
   const ACTIVE_MS = 24 * 3600 * 1000;  // < this since last clock-in → Active
   const WINDOW_MS = 48 * 3600 * 1000;  // < this → Slowing; older/never → Idle
   const MIN_MIGRATION_GAIN = 2;        // advisor.js OPTIMAL_THRESHOLD — keep in sync
   const HUGE_MIGRATION_GAIN = 20;      // advisor.js HUGE_THRESHOLD — keep in sync
   const CLOCKIN_PREVIEW = 6;           // worker rows shown before "show more"
+  const { FIDELITY_DAY1_PCT, FIDELITY_DAY5_PCT, META, ICON_FILE, skill, resolveUsername } = ProfitCore;
 
-  const ITEM_NAME = {
-    iron:'Iron', steel:'Steel', limestone:'Limestone', concrete:'Concrete', paper:'Paper',
-    wood:'Wood', oil:'Oil', petroleum:'Petroleum', fish:'Fish', steak:'Steak', grain:'Grain',
-    cookedFish:'Cooked Fish', livestock:'Cow', bread:'Bread', lead:'Lead', coca:'Plant',
-    lightAmmo:'Light Ammo', ammo:'Ammo', cocain:'Pill', heavyAmmo:'Heavy Ammo',
-  };
-  const ICON_FILE = {
-    paper:'paper.png',iron:'iron.png',steel:'steel.png',limestone:'limestone.png',concrete:'concrete.png',
-    wood:'wood.png',oil:'oil.png',petroleum:'petroleum.png',fish:'fish.png',steak:'steak.png',grain:'grain.png',
-    cookedFish:'cookedFish.png',livestock:'livestock.png',bread:'bread.png',lead:'lead.png',
-    coca:'coca.png',lightAmmo:'lightAmmo.png',ammo:'ammo.png',cocain:'cocain.png',heavyAmmo:'heavyAmmo.png',
-  };
-  const itemName = (code) => ITEM_NAME[code] || code || '—';
+  const itemName = (code) => META[code]?.name || code || '—';
   function iconHtml(code) {
     const f = ICON_FILE[code];
     if (!f) return `<span class="dash-ic">📦</span>`;
@@ -131,59 +119,6 @@ const DashboardTool = (() => {
     const res = await fetch(url, { cache: 'no-cache' });
     if (!res.ok) { if (res.status === 404) return null; throw new Error(`HTTP ${res.status}`); }
     return res.json();
-  }
-
-  function skill(u, name) {
-    const sk = u?.skills?.[name];
-    if (!sk || typeof sk !== 'object') return 0;
-    for (const k of ['total','value','level']) { const n = sk[k]; if (typeof n === 'number' && isFinite(n)) return n; }
-    return 0;
-  }
-
-  function orderLowestOffer(d) {
-    const so = d?.sellOrders || []; let ask = Infinity;
-    for (const o of so) if (typeof o.price === 'number' && o.price < ask) ask = o.price;
-    return isFinite(ask) ? ask : null;
-  }
-  function orderMid(d) {
-    const bo = d?.buyOrders || [], so = d?.sellOrders || [];
-    let bid = -Infinity, ask = Infinity;
-    for (const o of bo) if (typeof o.price === 'number' && o.price > bid) bid = o.price;
-    for (const o of so) if (typeof o.price === 'number' && o.price < ask) ask = o.price;
-    if (isFinite(bid) && isFinite(ask)) return (bid + ask) / 2;
-    if (isFinite(ask)) return ask;
-    if (isFinite(bid)) return bid;
-    return null;
-  }
-
-  async function resolveUser(username) {
-    const needle = username.trim().toLowerCase();
-    if (!needle) return null;
-    const res = await db_trpc('search.searchAnything', { searchText: username });
-    const ids = (res?.userIds || []).slice(0, 10);
-    if (!ids.length) return null;
-    const profiles = await trpcManyValues('user.getUserLite', ids.map(userId => ({ userId })));
-    return profiles.find(u => u && typeof u.username === 'string' && u.username.toLowerCase() === needle) || null;
-  }
-
-  async function dailySalary(userId) {
-    const cutoff = Date.now() - 86400000;
-    let cursor = null, pages = 0, total = 0, count = 0, older = false;
-    while (pages < 6 && !older) {
-      const input = { userId, transactionType: 'wage', limit: 100 };
-      if (cursor) input.cursor = cursor;
-      const page = await db_trpc('transaction.getPaginatedTransactions', input).catch(() => null);
-      if (!page) break;
-      const items = page.items || page.data || [];
-      for (const tx of items) {
-        if (new Date(tx.createdAt).getTime() < cutoff) { older = true; continue; }
-        if (tx.sellerId === userId) { total += (tx.money || 0); count++; }
-      }
-      cursor = page.nextCursor ?? null;
-      pages++;
-      if (!cursor || !items.length) break;
-    }
-    return { total, count };
   }
 
   /* ── Visual building blocks (toie style) ─────────────────────────── */
@@ -565,132 +500,21 @@ const DashboardTool = (() => {
   async function fillEconomy(full, companiesP, workersP) {
     try {
       const companyList = await companiesP;
-      const companyIds = companyList?.items || [];
-      if (!companyIds.length) {
+      if (!companyList?.items?.length) {
         setBody('profit', lead('No companies', 'You own no companies to project profit from.'));
         setBody('migration', lead('No companies', 'Buy a company first, then check for a better location.'));
         return;
       }
 
-      const workersData = await workersP;
-      const [allCompaniesRaw, fallbackPrices, gameConfig, regionsObj, allCountriesRaw, salaryInfo] = await Promise.all([
-        trpcManyValues('company.getById', companyIds.map(companyId => ({ companyId }))),
-        db_trpc('itemTrading.getPrices', {}).catch(() => ({})),
-        db_trpc('gameConfig.getGameConfig', {}).catch(() => null),
-        db_trpc('region.getRegionsObject', {}),
-        db_trpc('country.getAllCountries', {}),
-        dailySalary(full._id),
-      ]);
-      const companies = allCompaniesRaw.filter(c => c && !c.disabledAt);
+      const model = await ProfitCore.loadModel(full, { companyList, workersData: workersP, fullUser: full });
+      const { companies, countryById, regionsByCountry } = model;
       if (!companies.length) {
         setBody('profit', lead('No active companies', 'All your companies are disabled.'));
         setBody('migration', lead('No active companies', 'All your companies are disabled.'));
         return;
       }
 
-      const gameItems = gameConfig?.items || {};
-      const aeLevels  = gameConfig?.upgradesConfig?.automatedEngine?.levels || {};
-      const aeDailyProd = (lvl) => aeLevels[lvl]?.stats?.dailyProd || 0;
-      const ownedItems = new Set(companies.map(c => c.itemCode).filter(Boolean));
-      const needed = new Set(ownedItems);
-      for (const code of ownedItems) {
-        const needs = gameItems[code]?.productionNeeds || {};
-        for (const k in needs) needed.add(k);
-      }
-      const prices = {};
-      const priceCodes = [...needed];
-      const books = await trpcManyValues('tradingOrder.getTopOrders',
-        priceCodes.map(itemCode => ({ itemCode })));
-      books.forEach((ob, index) => {
-        const code = priceCodes[index];
-        const p = orderLowestOffer(ob) ?? orderMid(ob) ?? fallbackPrices?.[code];
-        if (p != null) prices[code] = p;
-      });
-
-      const allCountries = Array.isArray(allCountriesRaw) ? allCountriesRaw : (allCountriesRaw?.items || []);
-      const countryById = {};
-      const fullCountries = await trpcManyValues('country.getCountryById',
-        allCountries.map(c => ({ countryId: c._id })));
-      fullCountries.forEach((fc, index) => {
-        if (fc) countryById[allCountries[index]._id] = fc;
-      });
-      await enrichCountriesWithIndustrialism(countryById);
-
-      const netPerPP = (code, bonusPct) => {
-        const it = gameItems[code]; const pp = it?.productionPoints || 0;
-        const sale = prices[code]; if (!pp || sale == null) return null;
-        let rc = 0; const needs = it.productionNeeds || {};
-        for (const k in needs) { if (prices[k] == null) return null; rc += needs[k] * prices[k]; }
-        return (sale - rc) * (1 + bonusPct / 100) / pp;
-      };
-
-      const regionsByCountry = {};
-      Object.values(regionsObj).forEach(r => { if (r?.country) (regionsByCountry[r.country] = regionsByCountry[r.country] || []).push(r); });
-
-      const workerEntries = [];
-      (workersData?.workersPerCompany || []).forEach(({ company, workers }) =>
-        (workers || []).forEach(w => { if (w && w.user) workerEntries.push({ companyId: company?._id, userId: w.user, wage: w.wage, fidelity: w.fidelity }); }));
-      const uniqueWorkerIds = [...new Set(workerEntries.map(w => w.userId).filter(id => id !== full._id))];
-      const workerProfiles = { [full._id]: full };
-      const workerLites = await trpcManyValues('user.getUserLite',
-        uniqueWorkerIds.map(userId => ({ userId })));
-      workerLites.forEach((lite, index) => {
-        if (lite) workerProfiles[uniqueWorkerIds[index]] = lite;
-      });
-
-      const companyById = {};
-      companies.forEach(c => {
-        companyById[c._id] = c;
-        const region  = regionsObj[c.region];
-        const country  = region ? countryById[region.country] : null;
-        c._region = region;
-        c._bonus  = computeProductionBonus(country, region, c.itemCode) || { total: 0, tax: country?.taxes?.income ?? null, netMult: 1, country };
-        c._netPP  = netPerPP(c.itemCode, 0);
-        c._dailyAE = aeDailyProd(c.activeUpgradeLevels?.automatedEngine);
-        c._aeBonus = c._dailyAE * (1 + c._bonus.total / 100);
-        c._workersManual = 0;
-        c._wageCost = 0;
-      });
-      workerEntries.forEach(w => {
-        const c = companyById[w.companyId]; if (!c) return;
-        const prof = workerProfiles[w.userId]; if (!prof) return;
-        const basePP = skill(prof, 'production') * skill(prof, 'energy') * WORK_FACTOR;
-        const fid  = typeof w.fidelity === 'number' ? w.fidelity : 0;
-        const wage = typeof w.wage === 'number' ? w.wage : 0;
-        c._workersManual += basePP * (1 + (fid + c._bonus.total) / 100);
-        c._wageCost      += basePP * wage;
-      });
-      const selfPP = skill(full, 'production') * skill(full, 'entrepreneurship') * WORK_FACTOR;
-      if (selfPP > 0) {
-        let best = null, bestv = -Infinity;
-        for (const c of companies) { const v = c._netPP == null ? -Infinity : c._netPP; if (v > bestv) { bestv = v; best = c; } }
-        if (best) best._workersManual += selfPP * (1 + best._bonus.total / 100);
-      }
-
-      // ── Profit ──
-      let companiesIncome = 0;
-      companies.forEach(c => { if (c._netPP != null) companiesIncome += c._netPP * (c._aeBonus + c._workersManual) - c._wageCost; });
-      const salaryWorksPerDay = skill(full, 'energy') * WORK_FACTOR;
-      const salaryAvg = salaryInfo.count ? salaryInfo.total / salaryInfo.count : 0;
-      const salaryDaily = salaryWorksPerDay * salaryAvg;
-      // Companies + salary only, on purpose. Mission money and case sales are
-      // conditional on what you actually completed and sold, and this card has
-      // no controls to say otherwise — the full tool does, so it owns them.
-      // The card would rather understate than assert income you can't correct.
-      const total = companiesIncome + salaryDaily;
-
-      const incRow = (label, value, sub) =>
-        `<div class="dash-inc"><span class="dash-inc-l">${escapeHtml(label)}</span><span class="dash-inc-v">₿${fmtK(value)}</span><span class="dash-inc-s">${escapeHtml(sub)}</span></div>`;
-      setNote('profit', `${companies.length} compan${companies.length === 1 ? 'y' : 'ies'}`);
-      setBody('profit', `
-        <div class="dash-lead">₿${fmtK(total)}<small>/day</small></div>
-        <div class="dash-sub">Companies and salary. Missions and case sales live in the full tool, where you can tick what you actually did.</div>
-        <div class="dash-inc-list">
-          ${incRow('Companies', companiesIncome, `${companies.length} active, current output`)}
-          ${incRow('Salary', salaryDaily, salaryInfo.count ? `~${salaryWorksPerDay.toFixed(0)} works/day × ${salaryAvg.toFixed(2)} net` : 'no recent wages')}
-        </div>`);
-
-      // ── Migration ──
+      // ── Best location per product (Migration + Top products) ──
       // Scored exactly like advisor.js: candidates rank on raw production
       // bonus normally, but on tax-adjusted take-home (netMult) for the
       // companies you work in yourself — a higher-bonus region behind a
@@ -698,8 +522,6 @@ const DashboardTool = (() => {
       // improvement in output (advisor.js improvementFor), not the
       // difference in percentage points: +2.5pp on top of a 50% bonus is
       // only 1.7% more iron, which is why raw pp overstated the case.
-      const worksIn = new Set(
-        workerEntries.filter(w => w.userId === full._id).map(w => w.companyId));
       const scoreOf = (b, worksHere) =>
         worksHere ? (b.netMult ?? (1 + b.total / 100)) : 1 + b.total / 100;
 
@@ -713,13 +535,88 @@ const DashboardTool = (() => {
           for (const region of (regionsByCountry[cid] || [])) {
             const b = computeProductionBonus(country, region, code);
             if (b && scoreOf(b, worksHere) > scoreOf(best, worksHere)) {
-              best = { total: b.total, netMult: b.netMult, country, region };
+              best = { total: b.total, netMult: b.netMult, tax: b.tax, country, region };
             }
           }
         }
         return (bestForItem[key] = best);
       };
 
+      // ── Profit ──
+      // Rows are the full tool's product table at its defaults (no what-ifs).
+      const rows = ProfitCore.buildRows(model);
+      // Headline: today's output, i.e. each product's Actual.
+      const companiesIncome = rows.reduce((sum, r) => sum + (r.actual ?? 0), 0);
+      // Companies + salary only, on purpose. Mission money and case sales are
+      // conditional on what you actually completed and sold, and this card has
+      // no controls to say otherwise — the full tool does, so it owns them.
+      // The card would rather understate than assert income you can't correct.
+      const total = companiesIncome + model.salaryDaily;
+
+      // Top products: the full tool's Total max — every engine plus your
+      // staff on that product at its best-bonus region, each hire costed at
+      // no less than the market wage. A loss-making staff contribution is
+      // floored at 0.
+      const topProducts = rows.filter(r => r.totalMax != null)
+        .sort((a, b) => b.totalMax - a.totalMax).slice(0, 3);
+      const hasStaff = model.employees.length > 0 || model.selfPPbase > 0;
+
+      const incRow = (label, value, sub) =>
+        `<div class="dash-inc"><span class="dash-inc-l">${escapeHtml(label)}</span><span class="dash-inc-v">₿${fmtK(value)}</span><span class="dash-inc-s">${escapeHtml(sub)}</span></div>`;
+      // One short line per product so it stays readable on a phone; the full
+      // breakdown sits in the row's tooltip for desktop.
+      const topRow = (r, i) => {
+        const where = r.country
+          ? `${escapeHtml(r.country.name)} · ${pct(r.bonus)} bonus`
+          : 'No bonus region';
+        // What to offer a hire there: the market net wage grossed up for that
+        // country's income tax — the same wage the ₿/day projection charges.
+        const wage = r.lowWage == null ? ''
+          : ` · wage ${r.lowWage.toFixed(3)}${r.tax != null ? ` (${r.tax}% tax)` : ''}`;
+        // Can a new hire at that wage pay for themselves here?
+        const verdict = r.employeeProfitDay1 == null ? ''
+          : r.employeeProfitDay1 >= 0 ? pill('✅ Hire profitable', 'ok')
+          : r.employeeProfitDay5 >= 0 ? pill('🟡 Hire profitable by day 5', 'warn')
+          : pill('❌ Hire unprofitable', 'loss');
+        const sale = ProfitCore.price(model, r.code);
+        const detail = [
+          r.region ? `Best region: ${r.region.name}` : null,
+          r.employeeProfitDay1 == null ? null
+            : `New hire (${fmtK(model.genericWorker.basePP)} base PP) at wage ${r.lowWage.toFixed(3)}, tested at ${FIDELITY_DAY1_PCT}% fidelity on day 1 and ${FIDELITY_DAY5_PCT}% by day 5`,
+          `Sells ₿${sale.toFixed(3)} · margin ₿${(sale - ProfitCore.rawCostOf(model, r.code)).toFixed(3)}/item · ₿${r.netPP.toFixed(4)}/PP`,
+          `Engines ₿${fmtK(r.maxCompany)}${hasStaff ? ` + staff ₿${fmtK(Math.max(r.maxEmployee, 0))}` : ''}`,
+        ].filter(Boolean).join('\n');
+        return `<div class="dash-row top" title="${escapeHtml(detail)}">
+          <div class="dash-row-main">
+            <div class="dash-row-title"><span class="dash-rank">${i + 1}</span>${iconHtml(r.code)} <strong>${escapeHtml(itemName(r.code))}</strong>${r.makesIt ? ' ' + pill('You make this', 'ok') : ''}</div>
+            <span class="dash-top-v">₿${fmtK(r.totalMax)}<small>/day</small></span>
+          </div>
+          <div class="dash-sub small">${where}${wage}</div>
+          ${verdict ? `<div class="dash-hire">${verdict}</div>` : ''}
+        </div>`;
+      };
+      setNote('profit', `${companies.length} compan${companies.length === 1 ? 'y' : 'ies'}`);
+      setBody('profit', `
+        <div class="dash-lead">₿${fmtK(total)}<small>/day</small></div>
+        <div class="dash-sub">Companies and salary. Missions and case sales live in the full tool, where you can tick what you actually did.</div>
+        <div class="dash-inc-list">
+          ${incRow('Companies', companiesIncome, `${companies.length} active, current output`)}
+          ${incRow('Salary', model.salaryDaily, model.salaryCount ? `~${model.salaryWorksPerDay.toFixed(0)} works/day × ${model.salaryAvgPerWork.toFixed(2)} net` : 'no recent wages')}
+        </div>
+        ${topProducts.length ? `
+        <div class="dash-top">
+          <div class="dash-top-h">Most profitable products <span>all your output, market wages</span></div>
+          <div class="dash-rows">${topProducts.map((t, i) => topRow(t, i)).join('')}</div>
+        </div>` : ''}
+        <a class="dash-cta" href="#profit?u=${encodeURIComponent(full.username)}">Compare every product →</a>`);
+
+      // ── Migration ──
+      // A company with no bonus still has a current tax to compare against.
+      companies.forEach(c => {
+        if (!c._bonus) c._bonus = { total: 0, tax: countryById[c._region?.country]?.taxes?.income ?? null, netMult: 1 };
+      });
+      const worksIn = new Set(
+        model.workerEntries.filter(w => w.userId === full._id).map(w => w.companyId));
       const migs = companies.map(c => {
         const worksHere = worksIn.has(c._id);
         const best = bestFor(c.itemCode, worksHere);
@@ -793,7 +690,7 @@ const DashboardTool = (() => {
     $grid.innerHTML = `<div class="dash-loading"><span class="dash-spinner"></span> Looking up “${escapeHtml(raw)}”…</div>`;
 
     try {
-      const lite = await resolveUser(raw);
+      const lite = await resolveUsername(raw);
       if (!lite) throw new Error(`No War Era user found with username “${raw}”. Check the spelling and try again.`);
       enforceIrishOnly(lite.country ?? lite.countryId, lite.username);
 
