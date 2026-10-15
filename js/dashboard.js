@@ -216,7 +216,6 @@ const DashboardTool = (() => {
             </div>
           </div>
         </div>
-        <p class="wealth-bucket-note">Each bucket shows its latest reading. Weekly and monthly intervals count back from now.</p>
         <div id="dash-wlead"></div>
         <div id="dash-wchart"></div>`);
       renderWealth();

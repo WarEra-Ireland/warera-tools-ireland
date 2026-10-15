@@ -1919,7 +1919,6 @@ input[type="password"]:focus { outline: none; border-color: #3a4350; }
 /* Chart controls */
 .wm-controls { display: flex; flex-wrap: wrap; gap: 14px 20px; align-items: center; margin-bottom: 14px; }
 .wm-control { display: flex; align-items: center; gap: 8px; }
-.wealth-bucket-note { color: var(--muted); font-size: 12px; line-height: 1.5; margin: 8px 0 12px; }
 .wm-control > label { font-size: 12px; color: var(--muted); }
 .wm-seg { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
 .wm-seg button {
