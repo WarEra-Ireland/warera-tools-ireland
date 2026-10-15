@@ -1066,3 +1066,75 @@ function readLoadedAccount() {
   try { return (localStorage.getItem('warera:last-loaded-account') || '').trim(); }
   catch { return ''; }
 }
+
+// Keep every monthly boundary anchored to the same date, including month ends.
+function wealthMonthBoundary(now, monthsAgo) {
+  const date = new Date(now);
+  const day = date.getUTCDate();
+  date.setUTCDate(1);
+  date.setUTCMonth(date.getUTCMonth() - monthsAgo);
+  const lastDay = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 0)).getUTCDate();
+  date.setUTCDate(Math.min(day, lastDay));
+  return date;
+}
+
+function wealthMonthBucketIndex(iso, now) {
+  const date = new Date(iso);
+  let index = 0;
+  // A reading on a boundary belongs to the interval starting there.
+  while (date < wealthMonthBoundary(now, index + 1)) index++;
+  return index;
+}
+
+function wealthMonthBucketKey(iso, now) {
+  return wealthMonthBoundary(now, wealthMonthBucketIndex(iso, now)).toISOString().slice(0, 10);
+}
+
+// Weekly intervals are rolling 7-day windows counted back from now, like the
+// monthly ones, rather than calendar weeks.
+const WEALTH_WEEK_MS = 7 * 86400000;
+
+function wealthWeekBoundary(now, weeksAgo) {
+  return new Date(new Date(now).getTime() - weeksAgo * WEALTH_WEEK_MS);
+}
+
+function wealthWeekBucketIndex(iso, now) {
+  // A reading on a boundary belongs to the interval starting there.
+  return Math.max(0, Math.ceil((new Date(now) - new Date(iso)) / WEALTH_WEEK_MS) - 1);
+}
+
+function wealthWeekBucketKey(iso, now) {
+  return wealthWeekBoundary(now, wealthWeekBucketIndex(iso, now)).toISOString().slice(0, 10);
+}
+
+// Range choices, in display order. A bucket as wide as its range or wider
+// would hold every reading, so only narrower buckets are offered.
+const WEALTH_RANGES = [
+  { key: 'week',    label: '1W',  title: 'Last week',     buckets: ['day'] },
+  { key: 'month',   label: '1M',  title: 'Last month',    buckets: ['day', 'week'] },
+  { key: '3months', label: '3M',  title: 'Last 3 months', buckets: ['day', 'week', 'month'] },
+  { key: 'all',     label: 'All', title: 'All time',      buckets: ['day', 'week', 'month'] },
+];
+
+function wealthRange(key) {
+  return WEALTH_RANGES.find(r => r.key === key) || WEALTH_RANGES[WEALTH_RANGES.length - 1];
+}
+
+// Keep the chosen bucket unless the range rules it out; then use the widest
+// bucket the range still allows.
+function wealthBucketFor(range, bucket) {
+  const { buckets } = wealthRange(range);
+  return buckets.includes(bucket) ? bucket : buckets[buckets.length - 1];
+}
+
+// Filter before bucketing so an older reading cannot enter the selected range.
+function wealthSnapshotsInRange(snapshots, range, now = new Date()) {
+  if (range === 'all') return snapshots;
+  let start;
+  if (range === 'week') {
+    start = wealthWeekBoundary(now, 1);
+  } else {
+    start = wealthMonthBoundary(now, range === '3months' ? 3 : 1);
+  }
+  return snapshots.filter(s => new Date(s.t) >= start);
+}

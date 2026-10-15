@@ -46,6 +46,7 @@ const WealthMonitorTool = (() => {
   const $breakdown = document.getElementById('wm-breakdown');
   const $metricSeg = document.getElementById('wm-metric-seg');
   const $bucketSeg = document.getElementById('wm-bucket-seg');
+  const $rangeSeg  = document.getElementById('wm-range-seg');
   const $chartBox  = document.getElementById('wm-chart-box');
   const $legend    = document.getElementById('wm-legend');
   const steps      = makeSteps(document.getElementById('wm-steps'));
@@ -53,7 +54,9 @@ const WealthMonitorTool = (() => {
   // State
   let current      = null;            // { user, wealth, avatarUrl } for the resolved player
   let historySnaps = [];              // the resolved player's snapshots
-  const chart      = { user: null, metric: 'total', bucket: 'day' };
+  let readingTimes = new Map();       // bucketKey -> time of the reading it shows
+  const OPENING = 'opening';          // x-slot key for the range's first reading
+  const chart      = { user: null, metric: 'total', bucket: 'day', range: 'all' };
 
   // Helpers
   const wm_trpc = (endpoint, input) => trpc(endpoint, input, { retry: true });
@@ -217,21 +220,18 @@ const WealthMonitorTool = (() => {
   }
 
   // ── Bucketing ───────────────────────────────────────────────────
-  function bucketKey(iso, bucket) {
+  function bucketKey(iso, bucket, now) {
     const d = new Date(iso);
     if (isNaN(d)) return null;
-    if (bucket === 'month') return iso.slice(0, 7);
-    if (bucket === 'day')   return iso.slice(0, 10);
-    const t = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
-    const dow = t.getUTCDay() || 7;
-    t.setUTCDate(t.getUTCDate() - (dow - 1));
-    return t.toISOString().slice(0, 10);
+    if (bucket === 'month') return wealthMonthBucketKey(iso, now);
+    if (bucket === 'week')  return wealthWeekBucketKey(iso, now);
+    return iso.slice(0, 10);
   }
 
-  function bucketedValues(snapshots, key, bucket) {
+  function bucketedValues(snapshots, key, bucket, now) {
     const byBucket = new Map();   // bucketKey -> { t, value }
     for (const s of snapshots || []) {
-      const bk = bucketKey(s.t, bucket);
+      const bk = bucketKey(s.t, bucket, now);
       if (!bk) continue;
       const v = s[key];
       if (typeof v !== 'number') continue;
@@ -246,59 +246,72 @@ const WealthMonitorTool = (() => {
   // Complete, gap-inclusive sequence of bucket keys from first..last. This
   // is what gives gaps their REAL WIDTH — every missing day/week/month gets
   // an x-slot even though no series has a value there.
-  function allBuckets(firstISO, lastISO, bucket) {
+  function allBuckets(firstISO, lastISO, bucket, now) {
     const start = new Date(firstISO), end = new Date(lastISO);
     if (isNaN(start) || isNaN(end)) return [];
     const keys = [];
-    if (bucket === 'month') {
-      let y = start.getUTCFullYear(), m = start.getUTCMonth();
-      const ey = end.getUTCFullYear(), em = end.getUTCMonth();
-      while (y < ey || (y === ey && m <= em)) {
-        keys.push(`${y}-${String(m + 1).padStart(2, '0')}`);
-        if (++m > 11) { m = 0; y++; }
+    if (bucket === 'month' || bucket === 'week') {
+      const [indexOf, boundary] = bucket === 'month'
+        ? [wealthMonthBucketIndex, wealthMonthBoundary]
+        : [wealthWeekBucketIndex, wealthWeekBoundary];
+      const first = indexOf(firstISO, now);
+      const last = indexOf(lastISO, now);
+      for (let i = first; i >= last; i--) {
+        keys.push(boundary(now, i).toISOString().slice(0, 10));
       }
       return keys;
     }
-    const stepDays = bucket === 'week' ? 7 : 1;
-    const norm = (dt) => {
-      const c = new Date(Date.UTC(dt.getUTCFullYear(), dt.getUTCMonth(), dt.getUTCDate()));
-      if (bucket === 'week') { const dow = c.getUTCDay() || 7; c.setUTCDate(c.getUTCDate() - (dow - 1)); }
-      return c;
-    };
-    let cur = norm(start); const last = norm(end);
+    const day = (dt) => new Date(Date.UTC(dt.getUTCFullYear(), dt.getUTCMonth(), dt.getUTCDate()));
+    let cur = day(start); const last = day(end);
     let guard = 0;
     while (cur <= last && guard++ < 5000) {
       keys.push(cur.toISOString().slice(0, 10));
-      cur.setUTCDate(cur.getUTCDate() + stepDays);
+      cur.setUTCDate(cur.getUTCDate() + 1);
     }
     return keys;
   }
 
   function buildSeries() {
-    const snaps = historySnaps.slice();
+    const now = new Date();
+    let snaps = historySnaps.slice();
     // Append the live "now" reading so the chart's right edge matches the
     // game. Stored snapshots lag by up to the cron interval, so without this
     // the last point can sit hours behind the in-game figure.
     if (current && current.user._id === chart.user && current.wealth) {
       const w = current.wealth;
       snaps.push({
-        t: new Date().toISOString(),
+        t: now.toISOString(),
         companies: w.companies, items: w.items, money: w.money,
         equipments: w.equipments, weapons: w.weapons, total: w.total,
       });
     }
+    snaps = wealthSnapshotsInRange(snaps, chart.range, now);
     if (!snaps.length) return { labels: [], series: [], dataCount: 0 };
     const times = snaps.map(s => s.t).filter(Boolean).sort();
-    const labels = allBuckets(times[0], times[times.length - 1], chart.bucket);
+    const labels = allBuckets(times[0], times[times.length - 1], chart.bucket, now);
+    readingTimes = new Map();
+    for (const s of snaps) {
+      const bk = bucketKey(s.t, chart.bucket, now);
+      if (bk && typeof s.total === 'number' && !(readingTimes.get(bk) > s.t)) readingTimes.set(bk, s.t);
+    }
 
     // Breakdown is now multi-line (one line per category) rather than a
     // stacked area, so Companies no longer swamps the smaller categories.
     const series = (chart.metric === 'breakdown')
       ? COMPONENTS.map(c => ({
           key: c.key, label: c.label, color: c.color,
-          values: bucketedValues(snaps, c.key, chart.bucket),
+          values: bucketedValues(snaps, c.key, chart.bucket, now),
         }))
-      : [{ key: 'total', label: 'Total', color: TOTAL_COLOR, values: bucketedValues(snaps, 'total', chart.bucket) }];
+      : [{ key: 'total', label: 'Total', color: TOTAL_COLOR, values: bucketedValues(snaps, 'total', chart.bucket, now) }];
+
+    // Start the line at the range's first reading, which its bucket's latest
+    // reading would otherwise hide (a week range would start 6 days late).
+    const open = snaps.filter(s => typeof s.total === 'number').reduce((a, s) => (!a || s.t < a.t ? s : a), null);
+    if (open && readingTimes.get(labels[0]) !== open.t) {
+      labels.unshift(OPENING);
+      readingTimes.set(OPENING, open.t);
+      for (const s of series) if (typeof open[s.key] === 'number') s.values.set(OPENING, open[s.key]);
+    }
 
     const dataCount = series.reduce((m, s) => Math.max(m, s.values.size), 0);
     return { labels, series, dataCount };
@@ -317,7 +330,7 @@ const WealthMonitorTool = (() => {
       return;
     }
     if (dataCount === 1) {
-      $chartBox.innerHTML = `<div class="wm-chart-empty">Only one data point so far — the chart fills in as more daily snapshots are collected. Check back tomorrow.</div>`;
+      $chartBox.innerHTML = `<div class="wm-chart-empty">Only one data point in this range. Choose a wider range or a smaller bucket, or check back as more daily snapshots are collected.</div>`;
       $legend.innerHTML = '';
       return;
     }
@@ -348,7 +361,7 @@ const WealthMonitorTool = (() => {
     }
     const xstep = Math.max(1, Math.ceil(n / 8));
     for (let i = 0; i < n; i += xstep) {
-      svg += `<text class="wm-axis-text" x="${x(i).toFixed(1)}" y="${H - 10}" text-anchor="middle">${escapeHtml(shortLabel(labels[i]))}</text>`;
+      svg += `<text class="wm-axis-text" x="${x(i).toFixed(1)}" y="${H - 10}" text-anchor="middle">${escapeHtml(pointLabel(labels[i]))}</text>`;
     }
     svg += linePath(s, labels, x, y, n, M.top + PH);
     svg += `<line id="wm-hover-line" class="wm-hover-line" x1="0" y1="${M.top}" x2="0" y2="${M.top + PH}" style="display:none"/>`;
@@ -450,7 +463,7 @@ const WealthMonitorTool = (() => {
       }
       const xstep = Math.max(1, Math.ceil(n / 8));
       for (let i = 0; i < n; i += xstep) {
-        svg += `<text class="wm-axis-text" x="${x(i).toFixed(1)}" y="${H - 10}" text-anchor="middle">${escapeHtml(shortLabel(labels[i]))}</text>`;
+        svg += `<text class="wm-axis-text" x="${x(i).toFixed(1)}" y="${H - 10}" text-anchor="middle">${escapeHtml(pointLabel(labels[i]))}</text>`;
       }
     } else {
       // Compact: just the min/max bounds + first/last dates.
@@ -459,8 +472,8 @@ const WealthMonitorTool = (() => {
         svg += `<line class="wm-grid-line" x1="${m.left}" y1="${yy.toFixed(1)}" x2="${m.left + pw}" y2="${yy.toFixed(1)}"/>`;
         svg += `<text class="wm-axis-text" x="${m.left - 6}" y="${(yy + 3).toFixed(1)}" text-anchor="end">${fmtTick(val, (dom.max - dom.min) || 1)}</text>`;
       }
-      svg += `<text class="wm-axis-text" x="${x(0).toFixed(1)}" y="${H - 7}" text-anchor="start">${escapeHtml(shortLabel(labels[0]))}</text>`;
-      svg += `<text class="wm-axis-text" x="${x(n - 1).toFixed(1)}" y="${H - 7}" text-anchor="end">${escapeHtml(shortLabel(labels[n - 1]))}</text>`;
+      svg += `<text class="wm-axis-text" x="${x(0).toFixed(1)}" y="${H - 7}" text-anchor="start">${escapeHtml(pointLabel(labels[0]))}</text>`;
+      svg += `<text class="wm-axis-text" x="${x(n - 1).toFixed(1)}" y="${H - 7}" text-anchor="end">${escapeHtml(pointLabel(labels[n - 1]))}</text>`;
     }
     svg += linePath(s, labels, x, y, n, m.top + ph);
     svg += `<line id="wm-mhl-${idx}" class="wm-hover-line" x1="0" y1="${m.top}" x2="0" y2="${m.top + ph}" style="display:none"/>`;
@@ -485,7 +498,7 @@ const WealthMonitorTool = (() => {
       for (let i = 0; i < n; i++) { const d = Math.abs(x(i) - sx); if (d < bd) { bd = d; best = i; } }
       const lab = labels[best];
       hl.setAttribute('x1', x(best)); hl.setAttribute('x2', x(best)); hl.style.display = '';
-      valEl.textContent = (s.values.has(lab) ? fmtK(s.values.get(lab)) : '–') + ' · ' + shortLabel(lab);
+      valEl.textContent = (s.values.has(lab) ? fmtK(s.values.get(lab)) : '–') + ' · ' + pointLabel(lab, true);
     });
     svg.addEventListener('mouseleave', () => { hl.style.display = 'none'; valEl.textContent = resetText; });
   }
@@ -524,6 +537,16 @@ const WealthMonitorTool = (() => {
     return label;
   }
 
+  // A bucket shows its latest reading, so label it with that reading's date
+  // rather than the bucket key, which marks where the interval ends. Empty
+  // buckets fall back to the key.
+  function pointLabel(label, describeGap = false) {
+    const t = readingTimes.get(label);
+    if (t) return shortLabel(t.slice(0, 10));
+    if (!describeGap || chart.bucket === 'day') return shortLabel(label);
+    return `${chart.bucket === 'week' ? 'Week' : 'Month'} to ${shortLabel(label)}`;
+  }
+
   function wireHover(labels, series, x, n) {
     const svg = $chartBox.querySelector('svg');
     const $tt = document.getElementById('wm-tooltip');
@@ -546,8 +569,8 @@ const WealthMonitorTool = (() => {
         const v = s.values.get(lab);
         rows += `<div class="wm-tt-row"><span class="wm-dot" style="background:${s.color}"></span>${escapeHtml(s.label)}<span class="wm-tt-val">${fmtK(v)}</span></div>`;
       }
-      if (!rows) { $tt.innerHTML = `<div class="wm-tt-date">${escapeHtml(shortLabel(lab))} · no data</div>`; positionTip(i); return; }
-      $tt.innerHTML = `<div class="wm-tt-date">${escapeHtml(shortLabel(lab))}</div>${rows}`;
+      if (!rows) { $tt.innerHTML = `<div class="wm-tt-date">${escapeHtml(pointLabel(lab, true))} · no data</div>`; positionTip(i); return; }
+      $tt.innerHTML = `<div class="wm-tt-date">${escapeHtml(pointLabel(lab, true))}</div>${rows}`;
       positionTip(i);
     }
     function positionTip(i) {
@@ -584,10 +607,25 @@ const WealthMonitorTool = (() => {
     expandedKey = (expandedKey === key) ? null : key;
     renderChart();
   });
-  $bucketSeg.addEventListener('click', e => {
+  function syncRangeControls() {
+    const { buckets } = wealthRange(chart.range);
+    $rangeSeg.querySelectorAll('button').forEach(x => x.classList.toggle('active', x.dataset.range === chart.range));
+    $bucketSeg.querySelectorAll('button').forEach(x => {
+      x.disabled = !buckets.includes(x.dataset.bucket);
+      x.classList.toggle('active', x.dataset.bucket === chart.bucket);
+    });
+  }
+  $rangeSeg.addEventListener('click', e => {
     const b = e.target.closest('button'); if (!b) return;
+    chart.range = b.dataset.range;
+    chart.bucket = wealthBucketFor(chart.range, chart.bucket);
+    syncRangeControls();
+    renderChart();
+  });
+  $bucketSeg.addEventListener('click', e => {
+    const b = e.target.closest('button'); if (!b || b.disabled) return;
     chart.bucket = b.dataset.bucket;
-    $bucketSeg.querySelectorAll('button').forEach(x => x.classList.toggle('active', x === b));
+    syncRangeControls();
     renderChart();
   });
 

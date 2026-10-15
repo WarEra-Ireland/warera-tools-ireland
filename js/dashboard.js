@@ -176,7 +176,7 @@ const DashboardTool = (() => {
     ['equipments', 'Gear',      '#a78bfa'],
     ['weapons',    'Weapons',   '#f87171'],
   ];
-  const wealthState = { snaps: [], metric: 'total', bucket: 'day' };
+  const wealthState = { snaps: [], metric: 'total', bucket: 'day', range: 'all' };
 
   async function fillWealth(full) {
     try {
@@ -187,7 +187,7 @@ const DashboardTool = (() => {
       // Live "now" point carries every component so every metric tab matches.
       snaps = snaps.concat([{ t: new Date().toISOString(), companies: w.companies, items: w.items, money: w.money, equipments: w.equipments, weapons: w.weapons, total: w.total }]);
       snaps.sort((a, b) => new Date(a.t) - new Date(b.t));
-      wealthState.snaps = snaps; wealthState.metric = 'total'; wealthState.bucket = 'day';
+      wealthState.snaps = snaps; wealthState.metric = 'total'; wealthState.bucket = 'day'; wealthState.range = 'all';
 
       setNote('wealth', `${snaps.length} record${snaps.length === 1 ? '' : 's'}`);
 
@@ -198,17 +198,25 @@ const DashboardTool = (() => {
 
       const metricTabs = WEALTH_METRICS.map(([k, label]) =>
         `<button class="dash-seg-btn${k === 'total' ? ' active' : ''}" data-val="${k}">${label}</button>`).join('');
+      const rangeTabs = WEALTH_RANGES.map(r =>
+        `<button class="dash-seg-btn" data-val="${r.key}" title="${r.title}">${r.label}</button>`).join('');
       setBody('wealth', `
         <div class="dash-seg-row">
           <div class="dash-seg wrap" data-group="metric">${metricTabs}</div>
         </div>
         <div class="dash-seg-row">
-          <div class="dash-seg" data-group="bucket">
-            <button class="dash-seg-btn active" data-val="day">Day</button>
-            <button class="dash-seg-btn" data-val="week">Week</button>
-            <button class="dash-seg-btn" data-val="month">Month</button>
+          <div class="dash-seg-field"><span class="dash-seg-label">Range</span>
+            <div class="dash-seg" data-group="range">${rangeTabs}</div>
+          </div>
+          <div class="dash-seg-field"><span class="dash-seg-label">Bucket</span>
+            <div class="dash-seg" data-group="bucket">
+              <button class="dash-seg-btn" data-val="day">Day</button>
+              <button class="dash-seg-btn" data-val="week">Week</button>
+              <button class="dash-seg-btn" data-val="month">Month</button>
+            </div>
           </div>
         </div>
+        <p class="wealth-bucket-note">Each bucket shows its latest reading. Weekly and monthly intervals count back from now.</p>
         <div id="dash-wlead"></div>
         <div id="dash-wchart"></div>`);
       renderWealth();
@@ -216,42 +224,40 @@ const DashboardTool = (() => {
     } catch (e) { setError('wealth', `Couldn't load wealth: ${e.message}`); }
   }
 
-  // Delta for a metric over the tracked span: latest value vs the last point
-  // at least a week old (else the oldest available point).
-  function wealthDelta(snaps, key) {
-    const pts = snaps.filter(s => typeof s[key] === 'number');
+  // Delta for a metric across the selected range: its first reading to its
+  // latest, the same endpoints the chart line runs between.
+  function wealthDelta(snaps, key, range, now) {
+    const pts = wealthSnapshotsInRange(snaps, range, now).filter(s => typeof s[key] === 'number');
     if (pts.length < 2) return null;
-    const cur = pts[pts.length - 1][key];
-    const weekAgo = Date.now() - 7 * 86400000;
-    let base = null;
-    for (const s of pts) { if (new Date(s.t).getTime() <= weekAgo) base = s; }
-    if (!base) base = pts[0];
+    const base = pts[0], cur = pts[pts.length - 1][key];
     const change = cur - base[key];
     const pctv = base[key] ? change / base[key] * 100 : null;
-    const days = Math.round((Date.now() - new Date(base.t).getTime()) / 86400000);
-    return { cur, change, pctv, days };
+    return { cur, change, pctv, since: base.t };
   }
 
   /* ── Wealth bucketing + charts ──
    *  Buckets the full snapshot history by day / week / month (one point per
    *  bucket = the latest reading in it), so the chart uses ALL stored
    *  history, not just the endpoints. */
-  function bucketKey(iso, bucket) {
+  function bucketKey(iso, bucket, now) {
     const d = new Date(iso); if (isNaN(d)) return null;
-    if (bucket === 'month') return iso.slice(0, 7);
-    if (bucket === 'day')   return iso.slice(0, 10);
-    const t = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
-    const dow = t.getUTCDay() || 7; t.setUTCDate(t.getUTCDate() - (dow - 1));
-    return t.toISOString().slice(0, 10);   // Monday of the ISO week
+    if (bucket === 'month') return wealthMonthBucketKey(iso, now);
+    if (bucket === 'week')  return wealthWeekBucketKey(iso, now);
+    return iso.slice(0, 10);
   }
-  function bucketedSeries(snaps, key, bucket) {
+  function bucketedSeries(snaps, key, bucket, now = new Date()) {
     const m = new Map();
     for (const s of snaps) {
-      const bk = bucketKey(s.t, bucket); if (!bk) continue;
+      const bk = bucketKey(s.t, bucket, now); if (!bk) continue;
       const v = s[key]; if (typeof v !== 'number') continue;
       const prev = m.get(bk); if (!prev || s.t > prev.t) m.set(bk, { t: s.t, v });
     }
-    return [...m.values()].sort((a, b) => new Date(a.t) - new Date(b.t));
+    const pts = [...m.values()].sort((a, b) => new Date(a.t) - new Date(b.t));
+    // Start the line at the range's first reading, which its bucket's latest
+    // reading would otherwise hide (a week range would start 6 days late).
+    const open = snaps.filter(s => typeof s[key] === 'number').reduce((a, s) => (!a || s.t < a.t ? s : a), null);
+    if (open && pts.length && pts[0].t !== open.t) pts.unshift({ t: open.t, v: open[key] });
+    return pts;
   }
 
   // preserveAspectRatio "none" stretches to full width; non-scaling-stroke
@@ -261,7 +267,9 @@ const DashboardTool = (() => {
     const vals = points.map(p => p.v);
     const min = Math.min(...vals), max = Math.max(...vals), span = (max - min) || 1;
     const n = points.length, pw = CW - CPAD.l - CPAD.r, ph = height - CPAD.t - CPAD.b;
-    const x = i => CPAD.l + (n === 1 ? pw / 2 : (i / (n - 1)) * pw);
+    const times = points.map(p => new Date(p.t).getTime());
+    const timeSpan = times[n - 1] - times[0];
+    const x = i => CPAD.l + (timeSpan ? (times[i] - times[0]) / timeSpan * pw : pw / 2);
     const y = v => CPAD.t + ph - ((v - min) / span) * ph;
     return { x, y, n, baseY: CPAD.t + ph };
   }
@@ -279,27 +287,28 @@ const DashboardTool = (() => {
     </svg>`;
   }
   function renderWealth() {
-    const { snaps, metric, bucket } = wealthState;
+    const { snaps, metric, bucket, range } = wealthState;
     const [key, label, color] = WEALTH_METRICS.find(m => m[0] === metric) || WEALTH_METRICS[0];
 
+    const now = new Date();
     const $lead = document.getElementById('dash-wlead');
     if ($lead) {
-      const d = wealthDelta(snaps, key);
+      const d = wealthDelta(snaps, key, range, now);
       if (!d) { $lead.innerHTML = `<div class="dash-wlead-row"><span class="dash-lead">–</span></div>`; }
       else {
         const cls = d.change >= 0 ? 'dash-pos' : 'dash-neg';
         const arrow = d.change >= 0 ? '▲' : '▼';
         $lead.innerHTML = `<div class="dash-wlead-row">
           <span class="dash-lead">₿${fmtK(d.cur)}</span>
-          <span class="dash-wdelta ${cls}">${arrow} ₿${fmtK(Math.abs(d.change))}${d.pctv != null ? ` (${pct(d.pctv)})` : ''}</span>
+          <span class="dash-wdelta ${cls}">${arrow} ₿${fmtK(Math.abs(d.change))}${d.pctv != null ? ` (${pct(d.pctv)})` : ''} since ${escapeHtml(fmtDateShort(d.since))}</span>
           <span class="dash-wmetric" style="color:${color}">· ${escapeHtml(label)}</span>
         </div>`;
       }
     }
 
     const cont = document.getElementById('dash-wchart'); if (!cont) return;
-    const pts = bucketedSeries(snaps, key, bucket);
-    if (pts.length < 2) { cont.innerHTML = `<div class="dash-chart-note">Only ${pts.length} ${bucket}-point so far — try Day, or check back as more snapshots accumulate.</div>`; return; }
+    const pts = bucketedSeries(wealthSnapshotsInRange(snaps, range, now), key, bucket, now);
+    if (pts.length < 2) { cont.innerHTML = `<div class="dash-chart-note">Only ${pts.length} ${bucket}-point in this range. Try Day or a wider range.</div>`; return; }
     cont.innerHTML = `<div class="dash-chart-wrap">
       ${areaSvg(pts, { color, gradId: 'g_w', height: 130, hlId: 'dash-chl' })}
       <div class="dash-chart-tip" id="dash-chart-tip"></div>
@@ -309,11 +318,29 @@ const DashboardTool = (() => {
   }
   function wireWealthTabs() {
     const card = document.getElementById('dash-card-wealth'); if (!card) return;
+    const syncRangeControls = () => {
+      const { buckets } = wealthRange(wealthState.range);
+      card.querySelectorAll('[data-group="range"] .dash-seg-btn').forEach(b => b.classList.toggle('active', b.dataset.val === wealthState.range));
+      card.querySelectorAll('[data-group="bucket"] .dash-seg-btn').forEach(b => {
+        b.disabled = !buckets.includes(b.dataset.val);
+        b.classList.toggle('active', b.dataset.val === wealthState.bucket);
+      });
+    };
+    syncRangeControls();
     card.addEventListener('click', e => {
-      const btn = e.target.closest('.dash-seg-btn'); if (!btn) return;
+      const btn = e.target.closest('.dash-seg-btn'); if (!btn || btn.disabled) return;
       const group = btn.parentElement.dataset.group, val = btn.dataset.val;
-      if (group === 'metric') wealthState.metric = val; else wealthState.bucket = val;
-      btn.parentElement.querySelectorAll('.dash-seg-btn').forEach(b => b.classList.toggle('active', b === btn));
+      if (group === 'metric') {
+        wealthState.metric = val;
+        btn.parentElement.querySelectorAll('.dash-seg-btn').forEach(b => b.classList.toggle('active', b === btn));
+      } else if (group === 'range') {
+        wealthState.range = val;
+        wealthState.bucket = wealthBucketFor(val, wealthState.bucket);
+        syncRangeControls();
+      } else {
+        wealthState.bucket = val;
+        syncRangeControls();
+      }
       renderWealth();
     });
   }
