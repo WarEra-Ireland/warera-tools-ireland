@@ -318,8 +318,10 @@ const WealthMonitorTool = (() => {
   }
 
   // ── SVG chart ───────────────────────────────────────────────────
-  const W = 900, H = 360, M = { top: 16, right: 16, bottom: 30, left: 52 };
-  const PW = W - M.left - M.right, PH = H - M.top - M.bottom;
+  // The viewBox is sized to the box's rendered width, so one SVG unit is one
+  // CSS pixel and axis text stays legible on a phone instead of shrinking.
+  // The left margin is fitted to the widest y-axis label at render time.
+  const M = { top: 16, right: 6, bottom: 30 };
 
   function renderChart() {
     const { labels, series, dataCount } = buildSeries();
@@ -345,30 +347,41 @@ const WealthMonitorTool = (() => {
 
     // Total: one large single-series chart.
     renderLegend(series);
-    const s = series[0];
-    const n = labels.length;
-    const x = i => M.left + (n === 1 ? PW / 2 : (i / (n - 1)) * PW);
+    const W = Math.max(280, Math.round($chartBox.clientWidth) || 900);
+    const H = Math.max(200, Math.round(W * 0.4));
     // Data-driven y-range (not pinned to zero) so small moves are visible.
     const { min: yMin, max: yMax, step } = yDomain(series);
+    const ticks = Math.max(1, Math.round((yMax - yMin) / step));
+    const tickLabels = Array.from({ length: ticks + 1 }, (_, i) => fmtTick(yMin + step * i, step));
+    const left = Math.max(28, Math.max(...tickLabels.map(t => t.length)) * 7 + 12);
+    const n = labels.length;
+    // Every x label sits centred on its point. Labels are spaced by a fixed
+    // point step, as tight as their widest text allows, counting back from
+    // the latest point so it is always shown; the right margin fits half of it.
+    const xLabels = labels.map(l => pointLabel(l));
+    const labelW = Math.max(...xLabels.map(t => t.length)) * 6.5;
+    const right = Math.max(M.right, Math.ceil(xLabels[n - 1].length * 3.25) + 2);
+    const PW = W - left - right, PH = H - M.top - M.bottom;
+    const s = series[0];
+    const x = i => left + (n === 1 ? PW / 2 : (i / (n - 1)) * PW);
     const y = v => M.top + PH - ((v - yMin) / (yMax - yMin || 1)) * PH;
 
     let svg = '';
-    const ticks = Math.max(1, Math.round((yMax - yMin) / step));
     for (let i = 0; i <= ticks; i++) {
-      const val = yMin + step * i, yy = y(val);
-      svg += `<line class="wm-grid-line" x1="${M.left}" y1="${yy.toFixed(1)}" x2="${M.left + PW}" y2="${yy.toFixed(1)}"/>`;
-      svg += `<text class="wm-axis-text" x="${M.left - 8}" y="${(yy + 3).toFixed(1)}" text-anchor="end">${fmtTick(val, step)}</text>`;
+      const yy = y(yMin + step * i);
+      svg += `<line class="wm-grid-line" x1="${left}" y1="${yy.toFixed(1)}" x2="${left + PW}" y2="${yy.toFixed(1)}"/>`;
+      svg += `<text class="wm-axis-text" x="${left - 8}" y="${(yy + 4).toFixed(1)}" text-anchor="end">${tickLabels[i]}</text>`;
     }
-    const xstep = Math.max(1, Math.ceil(n / 8));
-    for (let i = 0; i < n; i += xstep) {
-      svg += `<text class="wm-axis-text" x="${x(i).toFixed(1)}" y="${H - 10}" text-anchor="middle">${escapeHtml(pointLabel(labels[i]))}</text>`;
+    const xstep = n > 1 ? Math.max(1, Math.ceil((labelW + 16) / (PW / (n - 1)))) : 1;
+    for (let i = n - 1; i >= 0; i -= xstep) {
+      svg += `<text class="wm-axis-text" x="${x(i).toFixed(1)}" y="${H - 10}" text-anchor="middle">${escapeHtml(xLabels[i])}</text>`;
     }
     svg += linePath(s, labels, x, y, n, M.top + PH);
     svg += `<line id="wm-hover-line" class="wm-hover-line" x1="0" y1="${M.top}" x2="0" y2="${M.top + PH}" style="display:none"/>`;
     $chartBox.innerHTML =
       `<svg class="wm-chart" viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet">${svg}</svg>` +
       `<div class="wm-tooltip" id="wm-tooltip"></div>`;
-    wireHover(labels, series, x, n);
+    wireHover(labels, series, x, n, W);
   }
 
   // One series as a continuous line with a soft gradient area fill beneath —
@@ -547,7 +560,7 @@ const WealthMonitorTool = (() => {
     return `${chart.bucket === 'week' ? 'Week' : 'Month'} to ${shortLabel(label)}`;
   }
 
-  function wireHover(labels, series, x, n) {
+  function wireHover(labels, series, x, n, W) {
     const svg = $chartBox.querySelector('svg');
     const $tt = document.getElementById('wm-tooltip');
     const $hl = document.getElementById('wm-hover-line');
@@ -601,6 +614,14 @@ const WealthMonitorTool = (() => {
     renderChart();
   });
   // Click a breakdown mini-chart to expand it to full width (and again to shrink).
+  // Re-fit the Total chart when the box width changes (rotation, resize).
+  let chartWidth = 0;
+  new ResizeObserver(() => {
+    const w = $chartBox.clientWidth;
+    if (w === chartWidth) return;
+    chartWidth = w;
+    if (current && chart.metric !== 'breakdown') renderChart();
+  }).observe($chartBox);
   $chartBox.addEventListener('click', e => {
     const card = e.target.closest('.wm-mini'); if (!card) return;
     const key = card.dataset.miniKey;

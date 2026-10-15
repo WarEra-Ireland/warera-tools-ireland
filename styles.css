@@ -1933,8 +1933,10 @@ input[type="password"]:focus { outline: none; border-color: #3a4350; }
 /* Chart */
 .wm-chart-box { position: relative; }
 .wm-chart { width: 100%; height: auto; display: block; user-select: none; touch-action: none; }
+@media (max-width: 600px) { .wm-chart-box { margin: 0 -14px; } }
 .wm-grid-line { stroke: var(--border); stroke-width: 1; }
 .wm-axis-text { fill: var(--muted); font-size: 10px; font-family: inherit; }
+.wm-chart .wm-axis-text { font-size: 12px; }
 .wm-series-line { fill: none; stroke-width: 2; }
 .wm-series-dot { stroke: var(--panel); stroke-width: 1.5; }
 .wm-hover-line { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 3 3; }
@@ -2244,8 +2246,8 @@ table.dp-table th.dp-sortable .dp-sort-arrow { margin-left: 3px; opacity: .7; }
 .dash-seg-btn:disabled:hover { color: var(--muted); background: none; }
 .dash-seg.wrap { flex-wrap: wrap; }
 .dash-seg-field { display: inline-flex; align-items: center; gap: 6px; }
-.dash-seg-field + .dash-seg-field { margin-left: 10px; }
-.dash-seg-label { font-size: 11.5px; color: var(--muted); }
+.dash-seg-row:has(.dash-seg-field) { column-gap: 18px; }
+.dash-seg-label { min-width: 3.4em; font-size: 11.5px; color: var(--muted); }
 
 /* Dashboard — wealth breakdown small-multiples. */
 .dash-mini-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 10px; margin-top: 12px; }
