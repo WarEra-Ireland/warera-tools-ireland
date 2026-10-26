@@ -1,59 +1,40 @@
 /* ═══════════════════════════════════════════════════════════════════
- *  COMPANY MIGRATION ADVISOR
+ *  COMPANY MIGRATION ADVISOR ("Bring it home")
  *
- *  Computes production bonuses locally from country + region data. The
- *  model mirrors the current game API's four-component breakdown:
+ *  v0.27 removed specialisation, deposits and party ethics, so the only
+ *  location levers left are (docs/v0.27-update.md):
  *
- *    strategic       — country.strategicResources.bonuses.productionPercent
- *                      (fires when item matches country.specializedItem)
- *    specialisation  — the ruling party's positive Industrialism modifier:
- *                      +10% at +1 or +30% at +2, on the specialised item
- *                      when it is one of the game's 12 eligible industrial
- *                      goods
- *    deposit         — region.deposit.bonusPercent, fires when the region
- *                      has an active matching deposit, EXCEPT when the
- *                      country specialises in the item AND is industrialist
- *                      (in which case the deposit is suppressed; this is a
- *                      generalisation of Fanatic Industrialist's "deposits
- *                      cannot spawn within your borders" trait). Stacks
- *                      with strategic when the country specialises but is
- *                      NOT industrialist — verified Brazil/coca/Recife:
- *                      +15 strategic + +30 deposit = +45. Does NOT stack
- *                      when the country IS industrialist — verified
- *                      Egypt/iron/Ouham: +32 strategic + +30 specialisation
- *                      = +62, deposit suppressed despite being active.
- *    depositCountry  — the ruling party's negative Industrialism modifier:
- *                      +10% at -1 or +30% at -2, on matching active deposits
- *                      of coca, grain, livestock, or fish only
+ *    core region  — +5% employee output when the company sits in a core
+ *                   region. Read as region.country === region.initialCountry
+ *                   (the controller is the region's original owner). That
+ *                   reading is inferred, not confirmed by the game.
+ *    income tax   — charged on employee wages and paid to the country that
+ *                   controls the region. Each 1% costs employees 1 happiness,
+ *                   and each happiness point is ±1% employee output.
  *
- *  Industrialism is a signed tier from the ruling party's live game record.
- *  Both sign and magnitude matter. Neutral, missing, or unknown tiers grant
- *  neither modifier, preserving the tool's conservative fallback.
+ *  Both act on employee output only, not on automated engines or self-work.
+ *  company.getProductionBonus is NOT a source for either: it still returns
+ *  only {depositBonus, total} and was 0 for every company sampled on
+ *  2026-10-26, core or not.
  *
- *  Re-verified July 2026 against api2.warera.io's game-owned calculations:
- *  Namibia/lead/Ghanzi = +50 (+20 strategic, +30 Fanatic Industrialist);
- *  Egypt/iron/Red Sea Coast = +45.5 (+15.5 strategic, +30 deposit);
- *  Switzerland/grain/Zurich = +60 (+30 deposit, +30 Fanatic Agrarian).
- *  Sudan (-1)/lead/Tigray gets only the +30 deposit: lead is not eligible
- *  for the Agrarian deposit modifier.
+ *  So each company is one of: home (Irish core region), not-core (Irish
+ *  controlled but not core, i.e. Northern Ireland), or abroad. Abroad cards
+ *  show how much wage tax went to the foreign country over the last week
+ *  (work.getStatsByCompany `wage` × that country's income tax) and the
+ *  output difference, honestly, including when staying abroad is better.
  *
- *  Bugs to NOT repeat:
- *  - DO use the exact tier. Treating only the sign as meaningful turns +1
- *    and -1 into +30% and caused the false Tigray recommendation.
- *  - DO keep separate allowlists. Industrial specialisation covers 12 goods;
- *    Agrarian deposit modifiers cover only coca/grain/livestock/fish.
- *  - DO keep the !(isSpecialised && industrialist) gate on hasMatchingDeposit;
- *    Egypt/iron proves deposits don't stack with industrialist specialisation.
- *  - Open question: the mirror case for agrarian-leaning countries (does
- *    an agrarian country's regional deposit still fire on its specialised
- *    item?) is unverified. If a Fanatic Agrarian country shows a miscount,
- *    that's where to look.
+ *  Moving costs 5 concrete, or nothing while company.freeMoves ≥ 1. The
+ *  free move is a one-off v0.27 grant, not something that refills.
  *
  *  Access: restricted to Irish citizens (enforceIrishOnly from
  *  shared.js). The bypass=1 URL param lifts the restriction.
  * ═══════════════════════════════════════════════════════════════════ */
 const AdvisorTool = (() => {
   const companyUrlFor = id => `${GAME_BASE}/company/${id}`;
+
+  const CORE_BONUS_PCT = 5;
+  const MOVE_COST_CONCRETE = 5;
+  const TAX_WINDOW_DAYS = 7;
 
   const ITEMS = {
     cocain:     { name: 'Pill',            file: 'cocain.png',     fb: '💊' },
@@ -77,14 +58,6 @@ const AdvisorTool = (() => {
     paper:      { name: 'Paper',           file: 'paper.png',      fb: '📄' },
     wood:       { name: 'Wood',            file: 'wood.png',       fb: '🪵' },
   };
-
-  const OPTIMAL_THRESHOLD = 2;
-  const HUGE_THRESHOLD    = 20;
-
-  // Current Party Ethics production rules, mirrored from the live game's
-  // Industrialism config and checked against its production-bonus API.
-  // The bonus tables and computeProductionBonus live in shared.js — this
-  // header documents the model they implement.
 
   const $grid     = document.getElementById('adv-grid');
   const $hint     = document.getElementById('adv-hint');
@@ -191,172 +164,120 @@ const AdvisorTool = (() => {
     );
   }
 
-  // isDepositActive / industrialismTier / computeProductionBonus live in shared.js.
+  const isCore = region => !!region && region.country === region.initialCountry;
 
-  async function loadCountriesParallel(countries) {
-    const byId = {};
-    const loaded = await trpcManyValues('country.getCountryById',
-      countries.map(c => ({ countryId: c._id })),
-      { onProgress: (done, total) => {
-        steps.setStep(3, 'active', { count: `${done}/${total}` });
-      } });
-    // Individual failures are skipped: a country that won't load simply has
-    // no bonus data, which the placement scoring already tolerates.
-    loaded.forEach((country, index) => {
-      if (country) byId[countries[index]._id] = country;
+  // Employee output from location alone, as a percentage: the core bonus
+  // minus one point per point of income tax (via happiness).
+  const locationPct = side => (side.core ? CORE_BONUS_PCT : 0) - (side.tax ?? 0);
+
+  /**
+   * Where Irish companies should go: the Irish core regions, best
+   * development first. On 2026-10-26 all four were tied at 52.25.
+   */
+  function irishCoreRegions(regionsObj) {
+    return Object.values(regionsObj)
+      .filter(r => r?.country === IRELAND_COUNTRY_ID && isCore(r))
+      .sort((a, b) => (b.development || 0) - (a.development || 0) || a.name.localeCompare(b.name));
+  }
+
+  /**
+   * Load and classify every company a user owns. Also used by the
+   * dashboard's Migration card, so it reports progress through an optional
+   * callback instead of touching this view's step panel.
+   *
+   * @param {string} userId
+   * @param {function(string, Object):void} [onStep] Called with (phase, info).
+   * @returns {Promise<{placements: Object[], homeRegions: Object[], ireland: Object}>}
+   */
+  async function loadPlacements(userId, onStep) {
+    const companyList = await adv_trpc('company.getCompanies', { userId, perPage: 100 });
+    const companyIds = companyList?.items || [];
+    if (!companyIds.length) return { placements: [], homeRegions: [], ireland: null };
+
+    onStep?.('companies', { done: 0, total: companyIds.length });
+    const settled = await trpcMany('company.getById',
+      companyIds.map(companyId => ({ companyId })),
+      { onProgress: (done, total) => onStep?.('companies', { done, total }) });
+    // Your own companies are the whole analysis, so a failure here is fatal
+    // rather than a gap to skip over.
+    const failed = settled.find(result => result.status === 'rejected');
+    if (failed) throw failed.reason;
+    const companies = settled.map(result => result.value).filter(Boolean);
+
+    onStep?.('places', {});
+    const [regionsObj, stats] = await Promise.all([
+      adv_trpc('region.getRegionsObject', {}),
+      // Wage history is a nice-to-have: a company without it just shows no
+      // tax figure.
+      trpcManyValues('work.getStatsByCompany', companies.map(c => ({ companyId: c._id }))),
+    ]);
+
+    const countryIds = [...new Set([IRELAND_COUNTRY_ID,
+      ...companies.map(c => regionsObj[c.region]?.country).filter(Boolean)])];
+    const countries = await trpcManyValues('country.getCountryById',
+      countryIds.map(countryId => ({ countryId })));
+    const countryById = {};
+    countries.forEach((country, i) => { if (country) countryById[countryIds[i]] = country; });
+
+    const ireland = countryById[IRELAND_COUNTRY_ID];
+    const homeRegions = irishCoreRegions(regionsObj);
+    const homeSide = {
+      region: homeRegions[0] || null,
+      country: ireland,
+      core: true,
+      tax: ireland?.taxes?.income ?? null,
+    };
+
+    const placements = companies.map((company, i) => {
+      const region = regionsObj[company.region] || null;
+      const country = region ? countryById[region.country] : null;
+      const side = { region, country, core: isCore(region), tax: country?.taxes?.income ?? null };
+      const status = region?.country !== IRELAND_COUNTRY_ID ? 'abroad'
+        : side.core ? 'home' : 'not-core';
+
+      const days = (stats[i] || []).slice(-TAX_WINDOW_DAYS);
+      const wages = days.length ? days.reduce((sum, d) => sum + (d.wage || 0), 0) : null;
+      const taxPaid = wages != null && side.tax != null ? wages * side.tax / 100 : null;
+
+      // Relative change in employee output from moving home.
+      const gain = (1 + locationPct(homeSide) / 100) / (1 + locationPct(side) / 100) * 100 - 100;
+
+      return {
+        company, side, homeSide, status, wages, taxPaid, gain,
+        freeMove: (company.freeMoves || 0) >= 1,
+      };
     });
-    return byId;
+
+    const order = { abroad: 0, 'not-core': 1, home: 2 };
+    placements.sort((a, b) => order[a.status] - order[b.status] || (b.taxPaid || 0) - (a.taxPaid || 0));
+    return { placements, homeRegions, ireland };
   }
 
   async function analyse(username) {
     steps.setStep(1, 'active', { sub: `Searching for "${username}"` });
     const resolved = await resolveUserId(username);
-    const userId = resolved.userId;
     steps.setStep(1, 'done', {
       count: resolved.exact ? `→ ${resolved.username}` : `→ ${resolved.username} (unverified)`
     });
 
     // Irish-citizens-only gate. The bypass=1 URL param lifts this
     // for admin/debugging. Non-Irish users get a hard block here,
-    // before any of the expensive company/country loading runs.
+    // before any of the company loading runs.
     enforceIrishOnly(resolved.country, resolved.username);
 
     steps.setStep(2, 'active', { sub: 'Fetching company list' });
-    const [companyList, workersData] = await Promise.all([
-      adv_trpc('company.getCompanies', { userId, perPage: 100 }),
-      adv_trpc('worker.getWorkers', { userId }).catch(() => null),
-    ]);
-    const companyIds = companyList?.items || [];
-    if (!companyIds.length) throw new Error(`"${resolved.username}" has no companies`);
-
-    const ownCompaniesWhereUserWorks = new Set();
-    (workersData?.workersPerCompany || []).forEach(({ company, workers }) => {
-      (workers || []).forEach(w => {
-        if (w.user === userId) ownCompaniesWhereUserWorks.add(company._id);
-      });
-    });
-
-    steps.setStep(2, 'active', {
-      sub: `Loading ${companyIds.length} company details`,
-      count: `0/${companyIds.length}`
-    });
-    const settled = await trpcMany('company.getById',
-      companyIds.map(companyId => ({ companyId })),
-      { onProgress: (done, total) => {
-        steps.setStep(2, 'active', { count: `${done}/${total}` });
-      } });
-    // Your own companies are the whole analysis, so a failure here is fatal
-    // rather than a gap to skip over — surface it like the single-request
-    // version did.
-    const failed = settled.find(result => result.status === 'rejected');
-    if (failed) throw failed.reason;
-    const companies = settled.map(result => result.value);
-    steps.setStep(2, 'done', { count: `${companies.filter(Boolean).length} loaded` });
-
-    // Regions and the country list load in parallel. Industrialism is then
-    // resolved from each country's ruling party through the live game API.
-    // A failed party lookup stops the load rather than silently producing
-    // recommendations from incomplete bonus data.
-    steps.setStep(3, 'active', { sub: 'Loading regions, countries, and party ethics' });
-    const [regionsObj, allCountriesRaw] = await Promise.all([
-      adv_trpc('region.getRegionsObject', {}),
-      adv_trpc('country.getAllCountries', {}),
-    ]);
-    const allCountries = Array.isArray(allCountriesRaw)
-      ? allCountriesRaw
-      : (allCountriesRaw?.items || []);
-
-    steps.setStep(3, 'active', {
-      sub: `Loading bonuses for ${allCountries.length} countries`,
-      count: `0/${allCountries.length}`
-    });
-    const countryById = await loadCountriesParallel(allCountries);
-    await enrichCountriesWithIndustrialism(countryById);
-    steps.setStep(3, 'done', { count: `${allCountries.length} loaded` });
-
-    const regionsByCountry = {};
-    Object.values(regionsObj).forEach(r => {
-      if (!r?.country) return;
-      (regionsByCountry[r.country] = regionsByCountry[r.country] || []).push(r);
-    });
-
-    const analyses = companies.filter(Boolean).map(c => {
-      const a = analyseCompany(c, regionsObj, regionsByCountry, countryById);
-      a.userWorksHere = ownCompaniesWhereUserWorks.has(c._id);
-      return a;
-    });
-    return { username: resolved.username, userId, analyses };
-  }
-
-  function analyseCompany(company, allRegions, regionsByCountry, countryById) {
-    const currentRegion  = allRegions[company.region];
-    const currentCountry = currentRegion ? countryById[currentRegion.country] : null;
-    const currentBonus   = computeProductionBonus(currentCountry, currentRegion, company.itemCode);
-
-    // Enumerate every (country, region) pair. Most produce 0 bonus and
-    // get filtered later by sort; the search space is small enough that
-    // brute force is cleaner than per-country shortlisting.
-    const candidates = [];
-    for (const cid in countryById) {
-      const country = countryById[cid];
-      if (!country) continue;
-      const regs = regionsByCountry[cid] || [];
-      for (const region of regs) {
-        const bonus = computeProductionBonus(country, region, company.itemCode);
-        if (!bonus) continue;
-        candidates.push({ country, region, ...bonus });
+    const result = await loadPlacements(resolved.userId, (phase, info) => {
+      if (phase === 'companies') {
+        steps.setStep(2, 'active', { sub: `Loading ${info.total} company details`, count: `${info.done}/${info.total}` });
+      } else if (phase === 'places') {
+        steps.setStep(2, 'done', {});
+        steps.setStep(3, 'active', { sub: 'Loading regions, taxes and wage history' });
       }
-    }
-
-    const current = currentBonus
-      ? { country: currentCountry, region: currentRegion, ...currentBonus }
-      : null;
-    return { company, current, candidates };
-  }
-
-  function scoreOf(c, userWorksHere) {
-    return userWorksHere ? c.netMult : (1 + c.total / 100);
-  }
-  function scoreLabel(userWorksHere) {
-    return userWorksHere ? 'take-home (after tax)' : 'production bonus';
-  }
-
-  function improvementFor(current, best, userWorksHere) {
-    if (!current || !best) return 0;
-    const cur = scoreOf(current, userWorksHere);
-    const bst = scoreOf(best, userWorksHere);
-    return (bst - cur) / cur * 100;
-  }
-
-  function evaluate(analysis) {
-    const { current, candidates, userWorksHere } = analysis;
-    if (!current || !candidates.length) {
-      return { cls: 'optimal', text: 'No data', showAlt: false, best: null, sorted: [] };
-    }
-    const sorted = [...candidates].sort((a, b) => scoreOf(b, userWorksHere) - scoreOf(a, userWorksHere));
-    const best = sorted[0];
-    const sameRegion  = current.region?._id  === best.region?._id;
-    const sameCountry = current.country?._id === best.country?._id;
-    const imp = improvementFor(current, best, userWorksHere);
-    const gainLabel = userWorksHere ? 'more take-home' : 'more output';
-
-    if (sameRegion || imp < 0.1) {
-      return { cls: 'optimal', text: '✓ Best placed', showAlt: false, best, sorted };
-    }
-    if (imp < OPTIMAL_THRESHOLD) {
-      return {
-        cls: 'optimal',
-        text: `✓ Stay put · top option only +${fmt(imp, 1)}% ${gainLabel}`,
-        showAlt: false, best, sorted
-      };
-    }
-    const target = sameCountry
-      ? best.region.name
-      : `${best.region.name} (${best.country.name})`;
-    if (imp >= HUGE_THRESHOLD) {
-      return { cls: 'huge', text: `⚠ Move to ${target}: +${fmt(imp, 1)}% ${gainLabel}`, showAlt: true, best, sorted };
-    }
-    return { cls: 'move', text: `↻ Move to ${target}: +${fmt(imp, 1)}% ${gainLabel}`, showAlt: true, best, sorted };
+    });
+    if (!result.placements.length) throw new Error(`"${resolved.username}" has no companies`);
+    steps.setStep(2, 'done', { count: `${result.placements.length} loaded` });
+    steps.setStep(3, 'done', {});
+    return { username: resolved.username, ...result };
   }
 
   function iconHtml(itemCode) {
@@ -365,155 +286,124 @@ const AdvisorTool = (() => {
     return `<div class="icon-box"><img src="images/${it.file}" alt="${it.name}" onerror="this.outerHTML='<span class=\\'fallback\\'>${it.fb}</span>'"></div>`;
   }
 
-  function renderSide(side, label, compareWith, userWorksHere) {
-    if (!side || !side.country) return `<div class="side"><div style="color:var(--muted)">Unknown location</div></div>`;
-    const breakdown = [];
-    if (side.strategic)       breakdown.push(`Strategic resources: +${fmt(side.strategic)}%`);
-    if (side.specialisation)  breakdown.push(`${side.industrialismLabel} specialization: +${fmt(side.specialisation)}%`);
-    if (side.deposit) {
-      const ttl = side.depositEndsAt ? new Date(side.depositEndsAt).getTime() - Date.now() : null;
-      const left = (ttl !== null && ttl > 0) ? ` (${formatDuration(ttl)} left)` : '';
-      breakdown.push(`Regional deposit: +${fmt(side.deposit)}%${left}`);
-    }
-    if (side.depositCountry)  breakdown.push(`${side.industrialismLabel} deposit: +${fmt(side.depositCountry)}%`);
+  const money = v => v == null ? '–' : v.toLocaleString(undefined, { maximumFractionDigits: v < 10 ? 2 : 0 });
+  const signed = v => `${v >= 0 ? '+' : '−'}${fmt(Math.abs(v), 1)}%`;
+
+  function renderSide(side, label) {
+    if (!side.region || !side.country) return `<div class="side"><div style="color:var(--muted)">Unknown location</div></div>`;
     const taxClass = side.tax >= 12 ? 'tax-high' : side.tax >= 8 ? 'tax-mid' : 'tax-low';
-
-    const inlineDelta = (delta, higherIsBetter, threshold = 0.05) => {
-      if (compareWith === undefined || delta === null || Math.abs(delta) < threshold) return '';
-      const sign = delta > 0 ? '+' : '−';
-      const abs  = Math.abs(delta);
-      const good = (delta > 0) === higherIsBetter;
-      const tip  = good
-        ? `${fmt(abs)} percentage points better than your current location`
-        : `${fmt(abs)} percentage points worse than your current location`;
-      return `<span class="delta ${good ? 'good' : 'bad'}" title="${tip}">(${sign}${fmt(abs)} pp)</span>`;
-    };
-    const bonusDelta = compareWith ? inlineDelta(side.total - compareWith.total, true) : '';
-
-    const relativeDelta = (current, better, higherIsBetter, label) => {
-      if (compareWith === undefined || current === undefined) return '';
-      const pct = (better - current) / current * 100;
-      if (Math.abs(pct) < 0.05) return '';
-      const sign = pct > 0 ? '+' : '−';
-      const good = (pct > 0) === higherIsBetter;
-      return `<span class="delta ${good ? 'good' : 'bad'}">(${sign}${fmt(Math.abs(pct), 1)}% ${label})</span>`;
-    };
-
-    const taxOpacity = userWorksHere ? '' : ' style="opacity: 0.55"';
-    const summary = userWorksHere
-      ? {
-          label: 'Your take-home per work cycle',
-          value: `${side.netMult.toFixed(3)}× base wage`,
-          help:  'How much you keep after income tax, relative to a no-bonus country.',
-          delta: compareWith ? relativeDelta(compareWith.netMult, side.netMult, true, 'more take-home') : ''
-        }
-      : {
-          label: 'Output per work cycle',
-          value: `${(1 + side.total / 100).toFixed(3)}× base`,
-          help:  'How much product you produce vs. a no-bonus country.',
-          delta: compareWith ? relativeDelta(1 + compareWith.total / 100, 1 + side.total / 100, true, 'more output') : ''
-        };
-
     return `
       <div class="side">
-        ${label ? `<div class="label">${label}</div>` : ''}
+        <div class="label">${label}</div>
         <div class="country">
-          <span class="region">${side.region?.name || '?'}</span>
-          <span class="controller">currently controlled by</span>
+          <span class="region">${escapeHtml(side.region.name)}</span>
+          <span class="controller">controlled by</span>
           <span class="flag">${flag(side.country.code)}</span>
-          <span class="controller">${side.country.name}</span>
+          <span class="controller">${escapeHtml(side.country.name)}</span>
         </div>
         <div class="stats">
-          <span><span class="stat-label">Production bonus</span> <span class="stat-value pos">+${fmt(side.total)}%</span>${bonusDelta}</span>
-          <span${taxOpacity}><span class="stat-label">Income tax</span> <span class="stat-value ${taxClass}">${fmt(side.tax)}%</span></span>
+          <span><span class="stat-label">Core region</span> <span class="stat-value ${side.core ? 'pos' : 'tax-high'}">${side.core ? `Yes, +${CORE_BONUS_PCT}%` : 'No'}</span></span>
+          <span><span class="stat-label">Income tax</span> <span class="stat-value ${taxClass}">${side.tax == null ? '?' : `${fmt(side.tax)}%`}</span></span>
         </div>
-        <div class="net" title="${summary.help}">
-          <span class="stat-label">${summary.label}</span>
-          <span><span class="net-val">${summary.value}</span>${summary.delta}</span>
+        <div class="net" title="Core bonus minus income tax (each 1% of tax costs employees 1 happiness, worth 1% output).">
+          <span class="stat-label">Employee output from location</span>
+          <span class="net-val">${signed(locationPct(side))}</span>
         </div>
-        ${breakdown.length ? `<div class="breakdown">${breakdown.join(' &nbsp;·&nbsp; ')}</div>` : ''}
-      </div>
-    `;
+      </div>`;
   }
 
-  function renderCard(analysis) {
-    const { company, current, userWorksHere } = analysis;
-    const item = ITEMS[company.itemCode] || { name: company.itemCode };
-    const verdict = evaluate(analysis);
-    const showCompanyName = company.name && company.name !== item.name;
-    const workerBadge = userWorksHere
-      ? `<span class="worker-badge" title="You are one of this company's workers, so income tax applies to your earnings here.">👷 You work here</span>`
-      : '';
+  function verdictFor(p) {
+    if (p.status === 'home')     return { cls: 'optimal', text: '✓ Home' };
+    if (p.status === 'not-core') return { cls: 'move', text: 'Move to an Irish core region' };
+    return { cls: 'huge', text: `Abroad in ${p.side.country?.name || 'another country'}` };
+  }
 
-    if (!current) {
-      return `<div class="adv-card"><div class="card-head"><div class="title">${iconHtml(company.itemCode)}<span>${item.name}</span><a href="${companyUrlFor(company._id)}" target="_blank" rel="noopener" class="link-icon" title="Open this company in War Era"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></svg></a></div></div>
-        <div class="body" style="color:var(--muted)">Could not analyse (missing region/country data).</div></div>`;
+  function moveLine(p, homeRegions) {
+    const names = homeRegions.map(r => r.name);
+    const where = names.length > 1 && homeRegions[0].development === homeRegions[1].development
+      ? `any Irish core region (${names.join(', ')})`
+      : names[0] || 'an Irish core region';
+    const cost = p.freeMove
+      ? '<strong>Free</strong> with your one-off v0.27 free move.'
+      : `Costs ${MOVE_COST_CONCRETE} concrete.`;
+    return `<p><strong>Move to ${escapeHtml(where)}.</strong> ${cost}</p>`;
+  }
+
+  function renderCard(p, homeRegions) {
+    const { company, side, homeSide, status } = p;
+    const item = ITEMS[company.itemCode] || { name: company.itemCode || 'Unknown' };
+    const verdict = verdictFor(p);
+    const showCompanyName = company.name && company.name !== item.name;
+    const freeBadge = p.freeMove && status !== 'home'
+      ? `<span class="worker-badge" title="This company still has its one-off v0.27 free move.">Free move</span>` : '';
+
+    const country = escapeHtml(side.country?.name || 'that country');
+    const taxLine = p.taxPaid == null
+      ? `<p class="breakdown">No wage history for this company yet.</p>`
+      : p.wages < 0.005
+      ? `<p class="breakdown">No employee wages paid in the last ${TAX_WINDOW_DAYS} days, so no income tax either.</p>`
+      : `<p>Over the last ${TAX_WINDOW_DAYS} days this company paid about <strong>₿${money(p.wages)}</strong> in wages, so roughly <strong>₿${money(p.taxPaid)}</strong> of income tax went to ${status === 'abroad' ? country : 'Ireland'}.</p>`;
+
+    let body;
+    if (status === 'home') {
+      body = `<div class="panels">${renderSide(side, 'Current location')}</div>${taxLine}`;
+    } else {
+      let take;
+      if (status === 'not-core') {
+        take = `<p>Ireland controls ${escapeHtml(side.region?.name || 'this region')}, but it isn't an Irish core region, so you miss the +${CORE_BONUS_PCT}% core bonus. Moving to a core region is about <strong>${signed(p.gain)}</strong> employee output.</p>`;
+      } else if (p.gain >= 0.05) {
+        take = `<p>Moving home is about <strong>${signed(p.gain)}</strong> employee output, and your wage tax would fund Ireland instead of ${country}.</p>`;
+      } else if (p.gain <= -0.05) {
+        take = `<p>Staying is about <strong>${fmt(-p.gain, 1)}% better</strong> for employee output, because ${country}'s location bonus beats Ireland's. Your wage tax still funds ${country}, not Ireland.</p>`;
+      } else {
+        take = `<p>Output is about the same in Ireland, and your wage tax would fund Ireland instead of ${country}.</p>`;
+      }
+      body = `
+        <div class="panels compare">
+          ${renderSide(side, 'Current location')}
+          <div class="arrow">→</div>
+          ${renderSide(homeSide, 'In Ireland')}
+        </div>
+        ${take}${taxLine}${moveLine(p, homeRegions)}`;
     }
 
-    const body = verdict.showAlt
-      ? `<div class="panels compare">
-           ${renderSide(current, 'Currently in', undefined, userWorksHere)}
-           <div class="arrow">→</div>
-           ${renderSide(verdict.best, 'Better option', current, userWorksHere)}
-         </div>`
-      : `<div class="panels">
-           ${renderSide(current, 'Currently in', undefined, userWorksHere)}
-         </div>`;
-
-    const top10 = verdict.sorted.slice(0, 10);
-    const currentScore = current ? scoreOf(current, userWorksHere) : null;
-    const altsHtml = top10.map((c, i) => {
-      const isCurrent = c.country._id === current.country?._id && c.region._id === current.region?._id;
-      const isWorse   = !isCurrent && currentScore !== null && scoreOf(c, userWorksHere) < currentScore;
-      const headline = userWorksHere
-        ? `${c.netMult.toFixed(3)}× base take-home`
-        : `${(1 + c.total / 100).toFixed(3)}× base output`;
-      const depositTtl = c.depositEndsAt ? new Date(c.depositEndsAt).getTime() - Date.now() : null;
-      const depositTag = (depositTtl !== null && depositTtl > 0)
-        ? ` <span style="color:var(--warn)" title="Bonus comes from a deposit; will revert when the deposit expires.">⏱ ${formatDuration(depositTtl)}</span>`
-        : '';
-      const classes = ['alt'];
-      if (isCurrent) classes.push('curr');
-      if (isWorse)   classes.push('worse');
-      return `
-        <div class="${classes.join(' ')}">
-          <span><span class="rank">${i + 1}.</span><strong>${c.region.name}</strong> <span style="color:var(--muted)">${flag(c.country.code)} ${c.country.name}</span>${isCurrent ? ' <span style="color:var(--link)">(your current)</span>' : ''}</span>
-          <span class="right">+${fmt(c.total)}% bonus${depositTag} &nbsp;·&nbsp; ${fmt(c.tax)}% income tax &nbsp;·&nbsp; <span class="v">${headline}</span></span>
-        </div>`;
-    }).join('');
-
     return `
-      <div class="adv-card">
+      <div class="adv-card${status === 'home' ? '' : ' expanded'}">
         <div class="card-head">
           <div class="title">
             ${iconHtml(company.itemCode)}
-            <span>${item.name}</span>
-            ${showCompanyName ? `<span class="sub-title">· ${company.name}</span>` : ''}
+            <span>${escapeHtml(item.name)}</span>
+            ${showCompanyName ? `<span class="sub-title">· ${escapeHtml(company.name)}</span>` : ''}
             <a href="${companyUrlFor(company._id)}" target="_blank" rel="noopener" class="link-icon" title="Open this company in War Era"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></svg></a>
-            ${workerBadge}
+            ${freeBadge}
           </div>
-          <div class="verdict ${verdict.cls}">${verdict.text}</div>
+          <div class="verdict ${verdict.cls}">${escapeHtml(verdict.text)}</div>
           <span class="chev">▾</span>
         </div>
         <div class="body">${body}</div>
-        <details class="alts-wrap">
-          <summary>Top ${top10.length} region${top10.length === 1 ? '' : 's'} ranked by ${scoreLabel(userWorksHere)}</summary>
-          <div class="alts">${altsHtml}</div>
-        </details>
-      </div>
-    `;
+      </div>`;
+  }
+
+  function summaryText(username, placements) {
+    const abroad = placements.filter(p => p.status === 'abroad');
+    const notCore = placements.filter(p => p.status === 'not-core');
+    const away = abroad.length + notCore.length;
+    if (!away) return `All ${placements.length} of ${username}'s companies are home in Irish core regions. 🇮🇪`;
+    const parts = [];
+    if (abroad.length) parts.push(`${abroad.length} of ${placements.length} companies are abroad`);
+    if (notCore.length) parts.push(`${notCore.length} ${notCore.length === 1 ? 'is' : 'are'} in Ireland but not a core region`);
+    const foreignTax = abroad.reduce((sum, p) => sum + (p.taxPaid || 0), 0);
+    if (foreignTax > 0) parts.push(`about ₿${money(foreignTax)} of wage tax went to foreign countries in the last ${TAX_WINDOW_DAYS} days`);
+    const free = placements.filter(p => p.status !== 'home' && p.freeMove).length;
+    if (free) parts.push(`${free} can move for free`);
+    return `${username}: ${parts.join(' · ')}.`;
   }
 
   function render() {
     if (!lastResult) return;
-    const { username, analyses } = lastResult;
-    const moveCount = analyses.filter(a => evaluate(a).showAlt).length;
-    setStatus(
-      moveCount > 0
-        ? `Showing ${analyses.length} companies for ${username}. ${moveCount} could improve by moving.`
-        : `Showing ${analyses.length} companies for ${username}. All optimally placed.`
-    );
-    $grid.innerHTML = analyses.map(renderCard).join('');
+    const { username, placements, homeRegions } = lastResult;
+    setStatus(summaryText(username, placements));
+    $grid.innerHTML = placements.map(p => renderCard(p, homeRegions)).join('');
     $howto.classList.remove('hidden');
   }
 
@@ -570,6 +460,7 @@ const AdvisorTool = (() => {
   });
 
   return {
+    loadPlacements,
     /**
      * Called by the router every time this view becomes active. Idempotent:
      * if the username param differs from what's already in the input, the

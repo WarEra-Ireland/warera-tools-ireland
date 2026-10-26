@@ -49,7 +49,7 @@ const ToolkitShell = (() => {
   // One-line explainer shown in the info box for each tool. Replaces every
   // tool's own header (hidden in the shell) so the framing is consistent.
   const TOOL_INFO = {
-    advisor:        { icon: '🏭', title: 'Migration Advisor', desc: `For each of your companies, find whether a different country or region would produce more — and by how much.` },
+    advisor:        { icon: '🏭', title: 'Migration Advisor', desc: `Find your companies outside Ireland, what their wage tax funds abroad, and what moving home is worth.` },
     clockin:        { icon: '⏱',  title: 'Clock-In Monitor',  desc: `See when each of your workers last clocked in, on a 48-hour timeline, plus a payroll projection.` },
     wealth:         { icon: '💰', title: 'Wealth Tracker',    desc: `Track any Irish player's wealth over time — total, or split into companies, items, money, equipment and weapons.` },
     'buddy-finder': { icon: '🤝', title: 'Buddy Finder',      desc: `Find a buddy for the Irish buddy system (you hire each other at minimum wage), or join the waiting list.` },

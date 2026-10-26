@@ -657,7 +657,7 @@
     <div class="tool-header">
       <div class="title-block">
         <h2><span>🏭</span> Company Migration Advisor</h2>
-        <p>Find a better country for each of your companies.</p>
+        <p>Find companies outside Ireland and see what bringing them home is worth.</p>
       </div>
       <div class="controls">
         <input id="adv-username" type="text" placeholder="Your War Era username" autocomplete="off" spellcheck="false" />
@@ -685,7 +685,7 @@
       <div class="step" data-state="pending" data-step="3">
         <div class="step-icon"></div>
         <div class="step-body">
-          <div class="step-title">Loading country data</div>
+          <div class="step-title">Loading regions and taxes</div>
           <div class="step-sub"></div>
         </div>
         <div class="step-count"></div>
@@ -698,21 +698,13 @@
       <summary>How this works</summary>
       <div class="howto-body">
         <ul>
-          <li><strong>Production bonus</strong> has up to four components. Strategic resources and regional deposits are country/region facts; the other components come from the ruling party's exact <strong>Industrialism</strong> tier in the live game data. Industrialist (+1) grants +10% and Fanatic Industrialist (+2) grants +30% on an eligible specialised industrial good. Agrarian (−1) grants +10% and Fanatic Agrarian (−2) grants +30% on an eligible matching regional deposit. Neutral (0), missing, and unknown tiers grant neither modifier.
-            <ul style="margin-top: 4px;">
-              <li><strong>Strategic Resource Bonus:</strong> the country's <code>productionPercent</code>, applied when the item matches the country's <code>specializedItem</code>. Fanatic Agrarian disables specialisation benefits.</li>
-              <li><strong>Industrialist specialisation:</strong> the tier-specific +10% or +30% modifier applies only to eligible specialised industrial goods.</li>
-              <li><strong>Deposit Bonus:</strong> the active matching deposit's own <code>bonusPercent</code>. The existing edge-case suppression is preserved when a country both specialises in the item and has a positive Industrialism tier.</li>
-              <li><strong>Agrarian deposit:</strong> the tier-specific +10% or +30% modifier stacks with the base Deposit Bonus only for coca, grain, livestock, or fish.</li>
-            </ul>
-          </li>
-          <li><strong>Industrialism is read directly</strong> from each country's ruling party. If any party lookup fails, loading stops rather than presenting recommendations based on incomplete bonus data. A country with no ruling party is naturally neutral.</li>
-          <li><strong>Income tax</strong> is deducted from <em>workers'</em> wages, not from the owner's share of production. So whether tax directly affects you depends on whether you actually work in the company.</li>
-          <li><strong>You work here</strong> (badge shown on the card): ranking uses your take-home, <code>(1 + bonus%) × (1 − income tax%)</code>.</li>
-          <li><strong>No badge:</strong> you own the company but don't work in it. Ranking uses raw output, <code>1 + bonus%</code>.</li>
-          <li><strong>The percentage on each verdict pill is a relative increase</strong>, not a percentage-point change.</li>
-          <li><strong>Numbers shown are regional/country bonuses only.</strong> Company-level upgrades aren't location-dependent, so totals here may be lower than what the game shows on your company.</li>
-          <li>Not modelled: migration cost, active wars or sanctions, worker recruitment effects of high tax, market and sales taxes, or political shifts.</li>
+          <li>Since War Era v0.27 there are only two location effects: a <strong>+5% core region bonus</strong> and the <strong>income tax</strong> of the country that controls the region. Specialisation, deposits and party ethics no longer exist.</li>
+          <li><strong>Core region:</strong> a region still held by its original country. Ulster, Connacht, Leinster and Munster are Irish core regions. Northern Ireland is Irish-controlled but isn't core, so it misses the bonus.</li>
+          <li><strong>Income tax</strong> is charged on your employees' wages and paid to the country that controls the region. A company abroad funds that country, not Ireland. Each 1% of tax costs employees 1 happiness, which is worth 1% of their output.</li>
+          <li><strong>Employee output from location</strong> is the core bonus minus the income tax rate. Both only affect employee output, not automated engines or your own work.</li>
+          <li><strong>Tax sent abroad</strong> is the company's wages over the last 7 days (<code>work.getStatsByCompany</code>) times the income tax rate. It's an estimate.</li>
+          <li><strong>Moving</strong> costs 5 concrete. Companies that still have the one-off v0.27 free move show a "Free move" badge.</li>
+          <li>The game doesn't publish its core region rule; "held by its original country" is our reading of it.</li>
         </ul>
       </div>
     </details>
@@ -1681,16 +1673,16 @@ Please transfer: ₿X</pre>
 </footer>
 
 <!-- Load order matters: shared first, tools next, router last. -->
-<script src="js/shared.js?v=20261026"></script>
+<script src="js/shared.js?v=20261026b"></script>
 <script src="js/profit-core.js?v=20260906c"></script>
 <script src="js/mu.js?v=20261026"></script>
 <script src="js/buddy-finder.js?v=20260906c"></script>
-<script src="js/advisor.js?v=20260906c"></script>
+<script src="js/advisor.js?v=20261026"></script>
 <script src="js/clockin.js?v=20260906c"></script>
 <script src="js/wealth.js?v=20261015e"></script>
 <script src="js/daily-profit.js?v=20260906c"></script>
 <script src="js/daily-profit-dev.js?v=20260906c"></script>
-<script src="js/dashboard.js?v=20261026"></script>
+<script src="js/dashboard.js?v=20261026b"></script>
 <script src="js/donation-draw.js?v=20260906c"></script>
 <script src="js/irish-tax.js?v=20260906c"></script>
 <script src="js/irish-tax-dev.js?v=20260906c"></script>
@@ -1705,7 +1697,7 @@ Please transfer: ₿X</pre>
 <script src="js/sp-advisor-core.js?v=20260906c"></script>
 <script src="js/sp-advisor.js?v=20260906c"></script>
 <script src="js/softcap.js?v=20260906c"></script>
-<script src="js/toolkit.js?v=20261026"></script>
+<script src="js/toolkit.js?v=20261026b"></script>
 <script src="js/router.js?v=20261026"></script>
 </body>
 </html>

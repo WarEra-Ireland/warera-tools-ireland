@@ -165,15 +165,13 @@ Capacity is `dormitories * 5`. MUs with no dormitory data have unknown capacity 
 
 ### Company Migration Advisor (`advisor.js`)
 
-For each of a user's companies, works out whether a different country or region would produce more, and by how much.
+Rebuilt for v0.27. For each of a user's companies, says whether it sits in an Irish core region, and if not, what moving home is worth.
 
-> **v0.27:** specialisation, deposits and party ethics are removed from the game, so every bonus component below is obsolete. The section describes the pre-v0.27 model. See [`docs/v0.27-update.md`](docs/v0.27-update.md).
+v0.27 left only two location effects: a +5% employee output bonus in a core region, and the controlling country's income tax, which is charged on employee wages and costs employees 1 happiness (worth 1% output) per percent. "Core" is read as `region.country === region.initialCountry`. The game doesn't document that rule, so treat it as inferred. Each company is **home** (Irish core region), **not core** (Irish-controlled but not core, i.e. Northern Ireland) or **abroad**.
 
-This is the most intricate tool in the project. The production bonus is computed locally from four components: the Strategic Resource Bonus, an Industrialist specialisation modifier, the active region's Deposit Bonus, and an Agrarian deposit modifier. Industrialism is read from each country's ruling party in the live game API: +1/+2 grant +10%/+30% on one of 12 eligible specialised industrial goods, while −1/−2 grant +10%/+30% on matching deposits of coca, grain, livestock, or fish. Neutral, missing, and unknown tiers contribute no Party Ethics modifier.
+Abroad cards compare "employee output from location" (core bonus minus tax rate) here and in Ireland, and say so plainly when staying abroad is better. They estimate the wage tax sent abroad as the last 7 days of `work.getStatsByCompany` `wage` × the country's `taxes.income`. A move costs 5 concrete, or nothing while `company.freeMoves ≥ 1` (a one-off v0.27 grant). Don't use `company.getProductionBonus`: it still returns only the dead deposit bonus.
 
-The whole model was reverse-engineered and verified against game-owned calculations. The file header lists verified cases and an explicit "bugs to NOT repeat" list. Do not change the bonus logic without re-verifying live. Keep the two explicit item allowlists separate, and do not reuse `gameConfig.company.depositResourceBonus` as a Party Ethics modifier.
-
-Income tax only affects the ranking on companies the user actually works in. If they just own it, raw output is ranked instead. Any failed ruling-party lookup stops the load so the tool never presents recommendations based on incomplete Industrialism data. A country with no ruling party is naturally neutral.
+`AdvisorTool.loadPlacements(userId)` is also what the dashboard's Migration card calls.
 
 ### Employee Clock-In Monitor (`clockin.js`)
 

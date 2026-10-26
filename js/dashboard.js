@@ -23,8 +23,8 @@
  *
  *  Reuse: the economic model (production-bonus maths, net-per-PP pricing,
  *  salary modelling) and the clock-in/status logic are ported from
- *  js/daily-profit.js and js/clockin.js, and the migration scoring from
- *  js/advisor.js, so the numbers and thresholds agree with the full tools
+ *  js/daily-profit.js and js/clockin.js, and the Migration card calls
+ *  AdvisorTool.loadPlacements, so the numbers agree with the full tools
  *  for everything this page actually shows.
  *
  *  Cards fill independently — cheap ones (Wealth, MU) land within a
@@ -37,8 +37,6 @@
 const DashboardTool = (() => {
   const ACTIVE_MS = 24 * 3600 * 1000;  // < this since last clock-in → Active
   const WINDOW_MS = 48 * 3600 * 1000;  // < this → Slowing; older/never → Idle
-  const MIN_MIGRATION_GAIN = 2;        // advisor.js OPTIMAL_THRESHOLD — keep in sync
-  const HUGE_MIGRATION_GAIN = 20;      // advisor.js HUGE_THRESHOLD — keep in sync
   const CLOCKIN_PREVIEW = 6;           // worker rows shown before "show more"
   const { FIDELITY_DAY1_PCT, FIDELITY_DAY5_PCT, META, ICON_FILE, skill, resolveUsername } = ProfitCore;
 
@@ -528,7 +526,6 @@ const DashboardTool = (() => {
       const companyList = await companiesP;
       if (!companyList?.items?.length) {
         setBody('profit', lead('No companies', 'You own no companies to project profit from.'));
-        setBody('migration', lead('No companies', 'Buy a company first, then check for a better location.'));
         return;
       }
 
@@ -536,37 +533,8 @@ const DashboardTool = (() => {
       const { companies, countryById, regionsByCountry } = model;
       if (!companies.length) {
         setBody('profit', lead('No active companies', 'All your companies are disabled.'));
-        setBody('migration', lead('No active companies', 'All your companies are disabled.'));
         return;
       }
-
-      // ── Best location per product (Migration + Top products) ──
-      // Scored exactly like advisor.js: candidates rank on raw production
-      // bonus normally, but on tax-adjusted take-home (netMult) for the
-      // companies you work in yourself — a higher-bonus region behind a
-      // higher income tax can be a net loss. `gain` is the *relative*
-      // improvement in output (advisor.js improvementFor), not the
-      // difference in percentage points: +2.5pp on top of a 50% bonus is
-      // only 1.7% more iron, which is why raw pp overstated the case.
-      const scoreOf = (b, worksHere) =>
-        worksHere ? (b.netMult ?? (1 + b.total / 100)) : 1 + b.total / 100;
-
-      const bestForItem = {};
-      const bestFor = (code, worksHere) => {
-        const key = `${code}|${worksHere ? 1 : 0}`;
-        if (bestForItem[key]) return bestForItem[key];
-        let best = { total: 0, netMult: 0, country: null, region: null };
-        for (const cid in countryById) {
-          const country = countryById[cid];
-          for (const region of (regionsByCountry[cid] || [])) {
-            const b = computeProductionBonus(country, region, code);
-            if (b && scoreOf(b, worksHere) > scoreOf(best, worksHere)) {
-              best = { total: b.total, netMult: b.netMult, tax: b.tax, country, region };
-            }
-          }
-        }
-        return (bestForItem[key] = best);
-      };
 
       // ── Profit ──
       // Rows are the full tool's product table at its defaults (no what-ifs).
@@ -635,62 +603,48 @@ const DashboardTool = (() => {
           <div class="dash-rows">${topProducts.map((t, i) => topRow(t, i)).join('')}</div>
         </div>` : ''}
         <a class="dash-cta" href="#profit?u=${encodeURIComponent(full.username)}">Compare every product →</a>`);
-
-      // ── Migration ──
-      // A company with no bonus still has a current tax to compare against.
-      companies.forEach(c => {
-        if (!c._bonus) c._bonus = { total: 0, tax: countryById[c._region?.country]?.taxes?.income ?? null, netMult: 1 };
-      });
-      const worksIn = new Set(
-        model.workerEntries.filter(w => w.userId === full._id).map(w => w.companyId));
-      const migs = companies.map(c => {
-        const worksHere = worksIn.has(c._id);
-        const best = bestFor(c.itemCode, worksHere);
-        const cur  = scoreOf(c._bonus, worksHere);
-        const gain = cur > 0 ? (scoreOf(best, worksHere) - cur) / cur * 100 : 0;
-        return { c, best, gain, worksHere };
-      }).sort((a, b) => b.gain - a.gain);
-      const improvable = migs.filter(m => m.gain >= MIN_MIGRATION_GAIN);
-      const placed = migs.filter(m => m.gain < MIN_MIGRATION_GAIN);
-      setNote('migration', `${companies.length} compan${companies.length === 1 ? 'y' : 'ies'}`);
-
-      const migRow = (m, ok) => {
-        const c = m.c;
-        const curRegion = c._region?.name || '—';
-        const curTax = c._bonus.tax != null ? ` · ${c._bonus.tax}% tax` : '';
-        const gainLabel = m.worksHere ? 'more take-home' : 'more output';
-        const verdict = ok
-          ? `<span class="dash-verdict ok">✓ Best placed</span>`
-          : `<span class="dash-verdict move">→ ${escapeHtml(m.best.country?.name || 'elsewhere')}${m.best.region ? ' · ' + escapeHtml(m.best.region.name) : ''}<b>${pct(m.gain)} ${gainLabel}</b></span>`;
-        return `<div class="dash-row mig">
-          <div class="dash-row-main">
-            <div class="dash-row-title">${iconHtml(c.itemCode)} <strong>${escapeHtml(c.name || itemName(c.itemCode))}</strong></div>
-            ${verdict}
-          </div>
-          <div class="dash-sub small">${escapeHtml(itemName(c.itemCode))} · ${escapeHtml(curRegion)} · ${pct(c._bonus.total)} bonus${curTax}</div>
-        </div>`;
-      };
-
-      let html = '';
-      if (improvable.length) {
-        const topGain = improvable[0].gain;   // migs are sorted by gain, descending
-        const who = improvable.length === 1 ? 'Your company' : `${improvable.length} of your companies`;
-        const urgency = topGain >= HUGE_MIGRATION_GAIN ? 'Worth relocating now.' : 'Worth a move.';
-        html += `<div class="dash-warn">${pill('⚠ Move suggested', 'warn')}
-          <span>${who} could produce more elsewhere — up to <strong>+${topGain.toFixed(1)}%</strong> more output. ${urgency}</span></div>`;
-        html += `<div class="dash-rows">${improvable.map(m => migRow(m, false)).join('')}</div>`;
-        html += `<a class="dash-cta" href="#advisor?u=${encodeURIComponent(full.username)}">Plan the move →</a>`;
-      }
-      if (placed.length && !improvable.length) {
-        html += `<div class="dash-statline"><span class="dash-pos">🎉 All ${placed.length} compan${placed.length === 1 ? 'y is' : 'ies are'} best-placed</span></div>`;
-      } else if (placed.length) {
-        html += `<details class="dash-more"><summary>${placed.length} already best-placed</summary><div class="dash-rows">${placed.map(m => migRow(m, true)).join('')}</div></details>`;
-      }
-      setBody('migration', html || lead('—', 'No placement data.'));
     } catch (e) {
       setError('profit', `Couldn't load economy: ${e.message}`);
-      setError('migration', `Couldn't load economy: ${e.message}`);
     }
+  }
+
+  /* ── Card: Migration ── (companies outside Irish core regions) ────── */
+  async function fillMigration(full) {
+    try {
+      const { placements } = await AdvisorTool.loadPlacements(full._id);
+      if (!placements.length) {
+        setBody('migration', lead('No companies', 'Buy a company first.'));
+        return;
+      }
+      setNote('migration', `${placements.length} compan${placements.length === 1 ? 'y' : 'ies'}`);
+      const away = placements.filter(p => p.status !== 'home');
+      if (!away.length) {
+        setBody('migration', `<div class="dash-statline"><span class="dash-pos">🇮🇪 All ${placements.length} compan${placements.length === 1 ? 'y is' : 'ies are'} home in Irish core regions</span></div>`);
+        return;
+      }
+      const foreignTax = away.reduce((sum, p) => sum + (p.status === 'abroad' ? p.taxPaid || 0 : 0), 0);
+      const row = p => {
+        const c = p.company;
+        const where = `${escapeHtml(p.side.region?.name || '—')}${p.side.country ? ' · ' + escapeHtml(p.side.country.name) : ''}`;
+        const verdict = p.status === 'abroad'
+          ? `<span class="dash-verdict move">→ Ireland<b>${pct(p.gain)} output</b></span>`
+          : `<span class="dash-verdict move">→ Irish core region<b>${pct(p.gain)} output</b></span>`;
+        const tax = p.status === 'abroad' && p.taxPaid > 0 ? ` · ₿${fmtK(p.taxPaid)} tax abroad (7d)` : '';
+        return `<div class="dash-row mig">
+          <div class="dash-row-main">
+            <div class="dash-row-title">${iconHtml(c.itemCode)} <strong>${escapeHtml(c.name || itemName(c.itemCode))}</strong>${p.freeMove ? ' ' + pill('Free move', 'ok') : ''}</div>
+            ${verdict}
+          </div>
+          <div class="dash-sub small">${escapeHtml(itemName(c.itemCode))} · ${where}${tax}</div>
+        </div>`;
+      };
+      const who = away.length === 1 ? '1 company is' : `${away.length} companies are`;
+      setBody('migration', `
+        <div class="dash-warn">${pill('⚠ Bring it home', 'warn')}
+          <span>${who} outside Irish core regions${foreignTax > 0 ? `, and about <strong>₿${fmtK(foreignTax)}</strong> of wage tax went abroad this week` : ''}.</span></div>
+        <div class="dash-rows">${away.map(row).join('')}</div>
+        <a class="dash-cta" href="#advisor?u=${encodeURIComponent(full.username)}">Plan the move →</a>`);
+    } catch (e) { setError('migration', `Couldn't load companies: ${e.message}`); }
   }
 
   /* ── Orchestration ───────────────────────────────────────────────── */
@@ -733,6 +687,7 @@ const DashboardTool = (() => {
       // the companies/workers fetches they share, once those are rebuilt.
       fillWealth(full);
       fillMU(full);
+      fillMigration(full);
     } catch (e) {
       $grid.innerHTML = '';
       const friendly = isTransientError(e)
