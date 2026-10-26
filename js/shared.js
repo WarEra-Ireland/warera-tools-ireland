@@ -55,6 +55,63 @@ const GAME_BASE        = 'https://app.warera.io';
 // filter and the Irish-only gate on personal tools (clockin, advisor).
 const IRELAND_COUNTRY_ID = '6813b6d446e731854c7ac7fe';
 
+/*
+ *  v0.27 pause. War Era v0.27 replaced the player job market with NPC
+ *  employees (docs/v0.27-update.md), which broke every tool below. Their
+ *  views show a notice instead of activating, and links to them are greyed
+ *  out. The notice's "Continue anyway" button runs the tool regardless, for
+ *  this page load only. Delete a route from this set once it's rebuilt.
+ */
+const V027_PAUSED = new Set([
+  'advisor', 'clockin', 'buddy-finder', 'profit', 'profit-dev', 'sp-advisor', 'factory-tax',
+  'buddy', 'tax', 'tax-dev', 'tax-partner', 'tax-deals', 'partner-guide',
+]);
+const isPaused = view => V027_PAUSED.has(view);
+const V027_CONTINUED = new Set();
+// Whether the router/shell should hold the tool back from activating.
+const isHeld = view => isPaused(view) && !V027_CONTINUED.has(view);
+
+// Grey out tool cards and shell tabs that lead to a paused route.
+function markPausedLinks(root = document) {
+  root.querySelectorAll('.tool-card, .stg-tab').forEach(el => {
+    const route = el.dataset.stgTab || el.dataset.prev || (el.getAttribute('href') || '').slice(1).split('?')[0];
+    if (!isPaused(route) || el.classList.contains('is-paused')) return;
+    el.classList.add('is-paused');
+    el.title = 'Paused while it is updated for War Era v0.27';
+    const h3 = el.querySelector('h3');
+    if (h3) h3.insertAdjacentHTML('beforeend', ' <span class="v027-pill">Updating for v0.27</span>');
+  });
+}
+
+// Swap each paused view's content for a notice. The notice lives inside the
+// view, so it moves with it when the home shell hosts the view.
+function pauseViews() {
+  V027_PAUSED.forEach(view => {
+    const el = document.querySelector(`.view[data-view="${view}"]`);
+    if (!el || el.classList.contains('is-paused')) return;
+    el.classList.add('is-paused');
+    el.insertAdjacentHTML('afterbegin', `<div class="v027-paused">
+      <h2>🔧 Updating for War Era v0.27</h2>
+      <p>This tool is paused. It was built on the old player job market (workers, wages and fidelity), which v0.27 replaced with NPC employees. It'll be back once it's rebuilt for the new system.</p>
+      <p>You can still open it, but expect wrong numbers or parts that fail to load.</p>
+      <button class="btn-primary" type="button" data-v027-continue="${view}">Continue anyway</button>
+    </div>`);
+  });
+  markPausedLinks();
+}
+
+// Unhide the view and re-run the current route, so the router (or the home
+// shell, for tools hosted inside it) activates the tool as normal.
+document.addEventListener('click', e => {
+  const btn = e.target.closest('[data-v027-continue]');
+  if (!btn) return;
+  const view = btn.dataset.v027Continue;
+  V027_CONTINUED.add(view);
+  const el = document.querySelector(`.view[data-view="${view}"]`);
+  if (el) { el.classList.remove('is-paused'); el.querySelector('.v027-paused')?.remove(); }
+  window.dispatchEvent(new HashChangeEvent('hashchange'));
+});
+
 function escapeHtml(s) {
   return String(s ?? '').replace(/[&<>"']/g, c =>
     ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));

@@ -120,7 +120,7 @@
     if (updateHash) writeHash(name, params);
 
     const tool = tools[name];
-    if (tool && typeof tool.activate === 'function') {
+    if (tool && !isHeld(name) && typeof tool.activate === 'function') {
       try { tool.activate(params); }
       catch (e) { console.error(`Failed to activate ${name}:`, e); }
     }
@@ -156,6 +156,8 @@
     resettingAccount = false;
     setView(r.view, { updateHash: false, params: r.params });
   });
+
+  pauseViews();
 
   const initial = parseRoute();
   if (ACCOUNT_VIEWS.has(initial.view)) {

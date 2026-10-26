@@ -2842,3 +2842,29 @@ html[data-theme="light"] .idd-period-panel input { color-scheme: light; }
               color: var(--accent); cursor: pointer; text-decoration: underline; }
 .dp-linkbtn:hover { filter: brightness(1.15); }
 .dp-linkbtn.dp-hide { display: none; }
+
+/* ── v0.27 pause (see V027_PAUSED in js/shared.js) ───────────────── */
+.v027-banner {
+  padding: 10px 32px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--muted); font-size: 13px; line-height: 1.5; text-align: center;
+}
+.v027-banner strong { color: var(--warn); }
+.view.is-paused > :not(.v027-paused) { display: none; }
+.v027-paused {
+  max-width: 640px; margin: 32px auto;
+  padding: 20px 24px;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+}
+.v027-paused h2 { margin: 0 0 8px; font-size: 18px; color: var(--warn); }
+.v027-paused p { margin: 0 0 12px; color: var(--muted); font-size: 14px; line-height: 1.6; }
+.v027-paused .btn-primary { margin-top: 4px; }
+.tool-card.is-paused, .stg-tab.is-paused { opacity: 0.55; }
+.tool-card.is-paused:hover { opacity: 0.8; }
+.v027-pill {
+  display: inline-block; vertical-align: middle;
+  margin-left: 6px; padding: 1px 8px;
+  border: 1px solid var(--warn); border-radius: 999px;
+  color: var(--warn); font-size: 11px; font-weight: 500;
+}

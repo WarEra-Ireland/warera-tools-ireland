@@ -30,8 +30,8 @@
  *       once scrolled to the end.
  * ═══════════════════════════════════════════════════════════════════ */
 const ToolkitShell = (() => {
-  const DEFAULT_TOOL       = 'advisor';   // first tab; used when no name yet
-  const DEFAULT_AFTER_LOAD = 'advisor';   // user typed a name, show their data
+  const DEFAULT_TOOL       = 'wealth';   // first tab; used when no name yet
+  const DEFAULT_AFTER_LOAD = 'wealth';   // user typed a name, show their data
   const TOOLS              = ['advisor', 'clockin', 'buddy-finder', 'profit', 'wealth', 'mu', 'softcap', 'sp-advisor'];
   const USERNAME_DRIVEN    = new Set(['buddy-finder', 'advisor', 'clockin', 'profit', 'wealth', 'softcap', 'sp-advisor']);
 
@@ -356,7 +356,7 @@ const ToolkitShell = (() => {
    *  differs from their own input, so repeated calls are safe no-ops. */
   function driveActive() {
     const mod = MODULES[state.active] && MODULES[state.active]();
-    if (!mod || typeof mod.activate !== 'function') return;
+    if (!mod || isHeld(state.active) || typeof mod.activate !== 'function') return;
     const params = new URLSearchParams();
     if (USERNAME_DRIVEN.has(state.active) && state.username) params.set('u', state.username);
     try { mod.activate(params); }
@@ -401,6 +401,7 @@ const ToolkitShell = (() => {
     $preview.innerHTML = PREVIEW_CATS.map(c =>
       `<h3 class="community-cat">${c.title}</h3><div class="tool-cards">${c.tools.map(card).join('')}${(c.links || []).map(linkCard).join('')}</div>`
     ).join('');
+    markPausedLinks($preview);
     $preview.dataset.done = '1';
   }
 

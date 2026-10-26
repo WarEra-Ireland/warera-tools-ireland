@@ -298,7 +298,7 @@ const RosterTool = (() => {
   // build labels on the roster agree with what the bot uses internally.
   const COMBAT_SKILLS = ['attack','precision','dodge','armor','lootChance',
                           'criticalChance','criticalDamages','health'];
-  const ECO_SKILLS    = ['companies','entrepreneurship','production','management'];
+  const ECO_SKILLS    = ['companies','leadership','production','management'];
 
   const COMBAT_THRESHOLD = 70;   // combat % of (combat+economy) skill levels
   const ECO_THRESHOLD    = 30;

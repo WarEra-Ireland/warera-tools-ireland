@@ -5,14 +5,15 @@ name: Tax deal logger
 # taxlog.yml/tax_log.py — a change here can never affect that cron.
 
 on:
-  schedule:
+  # Paused for v0.27: worker.getWorkers is gone (docs/v0.27-update.md).
+  # schedule:
     # Same retry-window shape as taxlog.yml: one entry per day, only written
     # when real data is seen. An outage run writes nothing and exits, so the
     # next cron retries ~2h later.
-    - cron: "12 16 * * *"   # 16:12 UTC — first attempt
-    - cron: "12 18 * * *"   # 18:12 UTC — retry if 16:12 found no data
-    - cron: "12 20 * * *"   # 20:12 UTC — retry
-    - cron: "12 22 * * *"   # 22:12 UTC — last attempt before midnight
+  #   - cron: "12 16 * * *"   # 16:12 UTC — first attempt
+  #   - cron: "12 18 * * *"   # 18:12 UTC — retry if 16:12 found no data
+  #   - cron: "12 20 * * *"   # 20:12 UTC — retry
+  #   - cron: "12 22 * * *"   # 22:12 UTC — last attempt before midnight
   workflow_dispatch:
   # A deal shouldn't sit idle until the next scheduled tick just because it
   # was newly enabled (or edited) — react immediately to any change to the

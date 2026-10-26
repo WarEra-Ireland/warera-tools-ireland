@@ -143,7 +143,7 @@ const DashboardTool = (() => {
 
   function renderScaffold(username) {
     const u = encodeURIComponent(username);
-    $grid.innerHTML = CARDS.map(c => `
+    $grid.innerHTML = CARDS.filter(c => !isPaused(c.href.slice(1))).map(c => `
       <section class="dash-card" id="dash-card-${c.key}">
         <header class="dash-card-head">
           <span class="dash-card-icon">${c.icon}</span>
@@ -728,14 +728,11 @@ const DashboardTool = (() => {
       renderScaffold(full.username);
       rememberLoadedAccount(full.username);
 
-      const companiesP = db_trpc('company.getCompanies', { userId: full._id, perPage: 100 }).catch(() => null);
-      const workersP   = db_trpc('worker.getWorkers',    { userId: full._id }).catch(() => null);
-
+      // v0.27: the buddy, clock-in and economy cards are paused (their tools
+      // are, and worker.getWorkers is gone). Restore their fills here, with
+      // the companies/workers fetches they share, once those are rebuilt.
       fillWealth(full);
       fillMU(full);
-      fillBuddy(full, workersP);
-      fillClockin(full, companiesP, workersP);
-      fillEconomy(full, companiesP, workersP);
     } catch (e) {
       $grid.innerHTML = '';
       const friendly = isTransientError(e)

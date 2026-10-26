@@ -20,7 +20,7 @@ const MUTool = (() => {
   // derived stat) since allocation is what tells us their playstyle.
   //
   // Bucketing:
-  //   eco — energy, companies, entrepreneurship, production, management
+  //   eco — energy, companies, leadership, production, management
   //   war — health, hunger, attack, precision, armor, dodge,
   //         criticalChance, criticalDamages
   //   ignored — lootChance (special; doesn't favour either side)
@@ -40,7 +40,7 @@ const MUTool = (() => {
   const PURITY_THRESHOLD     = 0.6;
   const MIN_POINTS_TO_CLASSIFY = 5;
   const ECO_SKILLS = new Set([
-    'energy', 'companies', 'entrepreneurship', 'production', 'management',
+    'energy', 'companies', 'leadership', 'production', 'management',
   ]);
   const WAR_SKILLS = new Set([
     'health', 'hunger', 'attack', 'precision',

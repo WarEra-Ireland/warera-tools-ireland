@@ -17,8 +17,9 @@ on:
   repository_dispatch:
     types: [waitlist-update]
   # Daily self-cleaning job — removes anyone now in a balanced buddy pair
-  schedule:
-    - cron: '17 */3 * * *'
+  # Paused for v0.27 along with the buddy finder (docs/v0.27-update.md).
+  # schedule:
+  #   - cron: '17 */3 * * *'
   workflow_dispatch:
 
 permissions:
