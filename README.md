@@ -4,6 +4,8 @@ An Irish player's toolkit for [War Era](https://app.warera.io/). Live at [we.haw
 
 This is a static site: plain HTML, CSS, and vanilla JavaScript with no build step, no framework, and no bundler. You edit files, refresh the page, done. Everything runs in the browser. The only backend is a thin Cloudflare Worker that proxies the game's API and holds a couple of secrets.
 
+> **Game version note.** War Era v0.27 (2026-10-25) replaced the player job market with NPC employees and removed Entrepreneurship, specialisation, deposits and party ethics. Several tools below were built on the old mechanics and are now broken or obsolete. [`docs/v0.27-update.md`](docs/v0.27-update.md) has the change list and per-tool impact.
+
 ## Quick start
 
 Clone the repo and serve the folder over HTTP. You can't open `index.html` with `file://` because the tools use `fetch` and the Web Crypto API, both of which need a real origin.
@@ -122,7 +124,7 @@ This depends on the Worker's `Access-Control-Expose-Headers` — the rate-limit 
 
 The resolved cache is **per item, not per request**. A batched result is stored under the key each input would have had as a scalar call, so the two share freely in both directions: a 100-user batch fills the cache for a later single lookup, and an overlapping list only fetches the difference. Order and chunk boundaries don't matter, and a failed item no longer stops its neighbours being cached — only fulfilled items are stored, so a 404 is never cached and stuck for 90s. Entries are evicted on read when stale and capped at `TRPC_CACHE_MAX_ENTRIES`, since nothing else sweeps them.
 
-Note the cache is off by default and only four places switch it on: dashboard during a run, both tax tools, and the toolkit shell while you're on `#home` (which covers tools hosted inside it). Each passes an owner token — `setTrpcCache(true, 'toolkit')` — and a release only lands if that view still holds the cache. Several views tear down on the same `hashchange` that mounts the next one, so without this the scheme's correctness rests on the order the listeners were registered, i.e. on `<script>` order in `index.html`; reorder two tags and the incoming view's freshly warmed cache is wiped by the outgoing view's teardown, silently. A tool opened standalone runs with in-flight dedupe only. That makes `fresh: true` a no-op wherever the cache is off — it's a correctness marker for calls that must never serve a warmed value (donation-draw resolves money), not something that changes behaviour today.
+Note the cache is off by default and only two places switch it on: dashboard during a run, and the toolkit shell while you're on `#home` (which covers tools hosted inside it). Each passes an owner token — `setTrpcCache(true, 'toolkit')` — and a release only lands if that view still holds the cache. Several views tear down on the same `hashchange` that mounts the next one, so without this the scheme's correctness rests on the order the listeners were registered, i.e. on `<script>` order in `index.html`; reorder two tags and the incoming view's freshly warmed cache is wiped by the outgoing view's teardown, silently. A tool opened standalone runs with in-flight dedupe only. That makes `fresh: true` a no-op wherever the cache is off — it's a correctness marker for calls that must never serve a warmed value (donation-draw resolves money), not something that changes behaviour today.
 
 **`enforceIrishOnly(country, username)`** throws unless the user is an Irish citizen or the `bypass=1` URL flag is set. Personal tools call this right after resolving a username, before any expensive loading. A `null` country passes through (the resolution path reports its own error).
 
@@ -165,6 +167,8 @@ Capacity is `dormitories * 5`. MUs with no dormitory data have unknown capacity 
 
 For each of a user's companies, works out whether a different country or region would produce more, and by how much.
 
+> **v0.27:** specialisation, deposits and party ethics are removed from the game, so every bonus component below is obsolete. The section describes the pre-v0.27 model. See [`docs/v0.27-update.md`](docs/v0.27-update.md).
+
 This is the most intricate tool in the project. The production bonus is computed locally from four components: the Strategic Resource Bonus, an Industrialist specialisation modifier, the active region's Deposit Bonus, and an Agrarian deposit modifier. Industrialism is read from each country's ruling party in the live game API: +1/+2 grant +10%/+30% on one of 12 eligible specialised industrial goods, while −1/−2 grant +10%/+30% on matching deposits of coca, grain, livestock, or fish. Neutral, missing, and unknown tiers contribute no Party Ethics modifier.
 
 The whole model was reverse-engineered and verified against game-owned calculations. The file header lists verified cases and an explicit "bugs to NOT repeat" list. Do not change the bonus logic without re-verifying live. Keep the two explicit item allowlists separate, and do not reuse `gameConfig.company.depositResourceBonus` as a Party Ethics modifier.
@@ -174,6 +178,8 @@ Income tax only affects the ranking on companies the user actually works in. If 
 ### Employee Clock-In Monitor (`clockin.js`)
 
 Shows when each of an employer's workers last clocked in, on a 48-hour timeline, plus a payroll projection.
+
+> **v0.27:** player workers no longer exist and `worker.getWorkers` returns 404. Companies run on NPC employees paid hourly and automatically, so this tool is obsolete. See [`docs/v0.27-update.md`](docs/v0.27-update.md).
 
 Wage transactions are the source of truth. A clock-in is inferred from a wage payment, because every work cycle pays a timestamped wage. Wages are modelled as trades: `sellerId` is the worker (sold their labour), `buyerId` is the employer (bought it). Two filters are applied to each transaction and both matter: the worker must be the seller (drops their own outgoing payroll if they also employ people), and the employer must be the buyer (drops wages from other employers, since a worker can now hold multiple contracts).
 
@@ -196,6 +202,8 @@ One limitation, stated in the tool's how-to: `totalAfterSoftCap` is the only val
 ### Buddy Finder (`buddy-finder.js`)
 
 A self-service tool for Irish citizens to find a buddy-system partner, or join a waiting list. Distinct from the MoE-only Buddy System Monitor, which is an admin oversight dashboard.
+
+> **v0.27:** players can no longer employ each other. Managing a company is the only player-to-player job left, so reciprocal buddy pairs can't form and `worker.getWorkers` is gone. This applies to Buddy System Monitor too. See [`docs/v0.27-update.md`](docs/v0.27-update.md).
 
 Matching pipeline: resolve the user, pull all Irish citizens and their skill profiles, pull worker rosters to detect who already employs whom, classify each mutual pair as balanced or imbalanced, then rank candidates in three tiers (waitlist members first, then members of imbalanced pairs, then everyone unpaired), sorted by skill closeness within each tier. People in balanced pairs are skipped, since pairing them would break a working arrangement.
 
@@ -227,6 +235,8 @@ Both are password-encrypted (see Access control). Buddy System Monitor is the Mo
 
 Estimates a player's daily profit across their companies and employees: engine vs staff throughput, wages, fidelity, daily/weekly missions, case sales, and per-product net margins (with country tax and production-bonus lookups). The economic model was validated formula-by-formula against Adro's spreadsheet — direct questions about the model go to Adro.
 
+> **v0.27:** the model's inputs (`worker.getWorkers`, `workOffer.*`, fidelity, self-work tax, Entrepreneurship, deposits) are gone. Employee wages are now set by the employee and paid hourly, so the model needs rebuilding. See [`docs/v0.27-update.md`](docs/v0.27-update.md).
+
 ### Wealth tracker (`wealth.js`)
 
 Charts any Irish citizen's wealth over time. A scheduled GitHub Action (`wealth_log.py`) snapshots every citizen's public wealth once a day into `data/wealth/<userId>.json`; the page fetches only the one file for the player being viewed, so it scales to hundreds of citizens. The wealth breakdown (companies, items, money, equipment, weapons) is the same public figure shown on an in-game profile.
@@ -241,7 +251,7 @@ All game data comes through one Cloudflare Worker at `warera-proxy.0x5ca1ab1e.wo
 
 - `/trpc/*` proxies the live War Era tRPC API at `api2.warera.io`, injecting the game API token.
 - `/waitlist-update` mutates the Buddy Finder waiting list (see below).
-- `/deal-config-submit` creates a tax deal from the Tax Deals dashboard.
+- `/deal-config-submit` creates a tax deal. Its dashboard is paused for v0.27 and the workflow is disabled.
 - `/notify-discord` forwards a message to the Battle Orders Discord webhook (held as a Worker secret).
 - `/healthz` reports whether the game API token is configured.
 
@@ -255,7 +265,7 @@ Endpoints currently in use, for reference:
 search.searchAnything
 user.getUserLite, user.getById (+ fallbacks), user.getUsersByCountry
 company.getCompanies, company.getById
-worker.getWorkers
+worker.getWorkers, workOffer.getWorkOffersPaginated   (removed in v0.27, now 404)
 transaction.getPaginatedTransactions
 mu.getManyPaginated
 region.getRegionsObject

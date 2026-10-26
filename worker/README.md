@@ -75,8 +75,13 @@ times the throughput.
 Most read endpoints are public - `country.getAllCountries`, `country.getCountryById`
 and `search.searchAnything` all answer unauthenticated. The rest return
 `{"error":{"message":"API token required","code":-32001}}` with HTTP 401.
-Known token-gated endpoints in use here: `worker.getWorkers` (clock-in wages)
-and `transaction.getPaginatedTransactions` (wealth/tax logs).
+Known token-gated endpoints in use here: `transaction.getPaginatedTransactions`
+(wealth/tax logs). `worker.getWorkers` (clock-in wages) was removed in v0.27
+and now returns 404. The new `work.getStatsByCompany` / `work.getStatsByUserId`
+are token-gated but readable. Some endpoints refuse tokens outright with 403
+"API tokens cannot access this endpoint" and only work from a logged-in browser
+session. Since v0.27 that covers all `employee.*`, `employeeEvent.*`, `tool.getMine`
+and every "my" endpoint. See `docs/v0.27-update.md`.
 
 Note the game API **403s on an empty User-Agent**. The Worker always sends its
 own, and does not forward the browser's.
