@@ -2330,6 +2330,18 @@ table.dp-table th.dp-sortable .dp-sort-arrow { margin-left: 3px; opacity: .7; }
 .dash-rank { display: inline-flex; width: 18px; height: 18px; align-items: center; justify-content: center; border-radius: 50%; background: var(--panel-2); border: 1px solid var(--border); font-size: 10.5px; font-weight: 700; color: var(--muted); flex: 0 0 auto; }
 .dash-top-v { font-size: 14px; font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .dash-top-v small { font-size: 11px; font-weight: 500; color: var(--muted); margin-left: 2px; }
+
+/* Employee Training card: today's progress bar, linked pills and action rows. */
+.dash-train-bar { display: flex; height: 6px; margin-top: 10px; border-radius: 999px; overflow: hidden; background: var(--panel-2); }
+.dash-train-bar .done { background: var(--accent); }
+.dash-train-bar .hand { background: var(--warn); }
+a.dash-pill { text-decoration: none; }
+a.dash-pill:hover { filter: brightness(1.25); }
+.dash-train-row { display: block; color: inherit; text-decoration: none; }
+.dash-train-row:hover strong { color: var(--link); }
+.dash-train-row .dash-row-title { align-items: flex-start; }
+.dash-train-row .dash-sub.small { display: block; }
+.dash-train-cut { padding: 6px 0; border-top: 1px dashed var(--border); font-size: 11.5px; color: var(--muted); text-align: center; }
 .dash-hire { margin-top: 5px; }
 
 /* CTA buttons (join buddy / join MU). */

@@ -10,6 +10,10 @@
  *                    a verdict ("✓ Best placed" or "→ Country · +X%")
  *    🎯 Products   — the most profitable product, how many companies make
  *                    it, and the top three by margin (ProductPickerTool)
+ *    🎓 Training   — energy and the actions it covers, today's training
+ *                    progress, what's waiting (hands, replacements,
+ *                    mismatches) and the top three energy actions
+ *                    (EmployeeTrainingTool.summary)
  *    ⏱ Clock-In    — each worker: status pill, last clock-in, stat chips,
  *                    plus 24h payroll
  *    📈 Daily Profit— simplified projected income broken into rows
@@ -135,6 +139,7 @@ const DashboardTool = (() => {
   const CARDS = [
     { key: 'migration', icon: '🏭', title: 'Migration',     href: '#advisor' },
     { key: 'products',  icon: '🎯', title: 'Top products', href: '#products' },
+    { key: 'training',  icon: '🎓', title: 'Employee Training', href: '#training' },
     { key: 'clockin',   icon: '⏱',  title: 'Clock-In',      href: '#clockin' },
     { key: 'profit',    icon: '📈', title: 'Daily Profit',  href: '#profit'  },
     { key: 'wealth',    icon: '💰', title: 'Wealth Trend',  href: '#wealth'  },
@@ -660,6 +665,79 @@ const DashboardTool = (() => {
   }
 
   /* ── Card: Migration ── (companies outside Irish core regions) ────── */
+  /* ── Card: Employee Training ──
+   *  Loads through the Training page itself (EmployeeTrainingTool.summary),
+   *  so its numbers match the page's Overview and opening it is instant.
+   *  Card pricing and the assignment planner finish in the background;
+   *  watch() redraws the card as they land. Rows rank by career profit,
+   *  as Next actions does, and show it averaged per working day. ─────── */
+  let trainingUnwatch = null;
+  async function fillTraining(full) {
+    trainingUnwatch?.();
+    trainingUnwatch = null;
+    const mine = s => s.username.toLowerCase() === full.username.toLowerCase();
+    try {
+      const s = await EmployeeTrainingTool.summary(full.username);
+      if (!mine(s) || !body('training')) return;
+      renderTraining(s);
+      trainingUnwatch = EmployeeTrainingTool.watch(next => { if (mine(next) && body('training')) renderTraining(next); });
+    } catch (e) { setError('training', `Couldn't load employees: ${e.message}`); }
+  }
+
+  function renderTraining(s) {
+    const u = encodeURIComponent(s.username);
+    const link = (q = '') => `#training?u=${u}${q}`;
+    const plural = (n, word, many = `${word}s`) => `${n} ${n === 1 ? word : many}`;
+    const cta = `<a class="dash-cta" href="${link()}">Plan today's training →</a>`;
+    if (!s.employees) { setNote('training', ''); setBody('training', lead('No employees', 'Hire into one of your companies to start training.') + cta); return; }
+    setNote('training', plural(s.employees, 'employee'));
+
+    const energy = s.energy == null ? '' : `${s.energy}${s.energyMax ? ` / ${s.energyMax}` : ''} energy`;
+    const head = s.actions == null ? `<div class="dash-lead">–<small>energy unavailable</small></div>`
+      : s.actions > 0 ? `<div class="dash-lead">${plural(s.actions, 'action')}<small>${energy} · ${escapeHtml(s.energyFull.replace(/^./, c => c.toLowerCase()))}</small></div>`
+      : `<div class="dash-lead">No actions yet<small>${energy}${s.tenIn != null ? ` · 10 more in ${escapeHtml(formatDuration(s.tenIn))}` : ''}</small></div>`;
+    const share = n => s.trainable ? (n / s.trainable * 100).toFixed(1) : 0;
+    const progress = s.trainable ? `
+      <div class="dash-sub">${s.trained} of ${s.trainable} trained today · resets 00:00 UTC, in ${escapeHtml(formatDuration(s.untilReset))}</div>
+      <div class="dash-train-bar" role="img" aria-label="${s.trained} trained, ${s.hands} with a hand waiting, of ${s.trainable}">
+        <i class="done" style="width:${share(s.trained)}%"></i><i class="hand" style="width:${share(s.hands)}%"></i>
+      </div>` : `<div class="dash-sub">Everyone is fully trained.</div>`;
+
+    const pillLink = (label, kind, q) => `<a class="dash-pill ${kind}" href="${link(q)}">${escapeHtml(label)}</a>`;
+    const pills = [
+      s.hands ? pillLink(`🃏 ${plural(s.hands, 'hand')} waiting`, 'warn', '') : '',
+      s.moves ? pillLink(`🧭 ${plural(s.moves, 'move')} instead of replacing`, 'info', '&tab=assignments') : '',
+      s.replace ? pillLink(`${s.replace} to replace`, 'loss', '&tab=keep') : '',
+      s.mismatches ? pillLink(plural(s.mismatches, 'mismatch', 'mismatches'), 'warn', '&tab=assignments') : '',
+    ].filter(Boolean);
+
+    const money = v => `${v < 0 ? '−' : '+'}₿${Math.abs(v).toFixed(3)}`;
+    let cut = false;
+    const rows = s.top.map((a, i) => {
+      const line = !cut && a.belowSelf ? (cut = true, `<div class="dash-train-cut">Below here, self-work earns more</div>`) : '';
+      const what = a.kind === 'hire' ? `Hire into <strong>${escapeHtml(a.company)}</strong>`
+        : `${a.kind === 'train' ? 'Train' : 'Replace'} <strong>${escapeHtml(a.name)}</strong>`;
+      const q = a.kind === 'hire' ? '&tab=hire' : `&tab=${a.kind === 'train' ? 'train' : 'keep'}&emp=${encodeURIComponent(a.emp)}`;
+      const value = a.perDay != null ? `${money(a.perDay)}<small>/day</small>` : `≈ ${a.pp >= 0 ? '+' : '−'}${Math.abs(a.pp).toFixed(1)}<small> PP</small>`;
+      return `${line}<a class="dash-row dash-train-row" href="${link(q)}">
+          <div class="dash-row-main">
+            <div class="dash-row-title"><span class="dash-rank">${i + 1}</span>${iconHtml(a.itemCode)}<span>${what}<span class="dash-sub small">${a.kind === 'hire' ? '' : `${escapeHtml(a.company)} · `}${escapeHtml(a.detail)}</span></span></div>
+            <span class="dash-top-v${a.perDay != null && a.perDay < 0 ? ' dash-neg' : ' dash-pos'}">${value}</span>
+          </div>
+        </a>`;
+    }).join('');
+
+    setBody('training', `
+      ${head}
+      ${progress}
+      ${pills.length ? `<div class="dash-chips">${pills.join('')}</div>` : ''}
+      <div class="dash-top">
+        <div class="dash-top-h">Best uses of energy <span>ranked by career profit${s.pricing ? ' · valuing moves…' : ''}</span></div>
+        ${rows ? `<div class="dash-rows">${rows}</div>` : '<div class="dash-sub">Nothing to train, hire or replace right now.</div>'}
+      </div>
+      ${cta}`);
+  }
+
   async function fillMigration(full) {
     try {
       const { placements } = await AdvisorTool.loadPlacements(full._id);
@@ -740,6 +818,7 @@ const DashboardTool = (() => {
       fillMU(full);
       fillMigration(full);
       fillProducts(full);
+      if (!isPaused('training')) fillTraining(full);
     } catch (e) {
       $grid.innerHTML = '';
       const friendly = isTransientError(e)
@@ -758,7 +837,7 @@ const DashboardTool = (() => {
   // views behave exactly as before.
   window.addEventListener('hashchange', () => {
     const view = location.hash.replace(/^#/, '').split('?')[0] || 'home';
-    if (view !== 'dashboard' && mounted) { setTrpcCache(false, CACHE_OWNER); mounted = false; }
+    if (view !== 'dashboard' && mounted) { setTrpcCache(false, CACHE_OWNER); trainingUnwatch?.(); trainingUnwatch = null; mounted = false; }
   });
 
   /* ── Wire-up ─────────────────────────────────────────────────────── */

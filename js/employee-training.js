@@ -127,6 +127,8 @@ const EmployeeTrainingTool = (() => {
   }
 
   let mounted = false;
+  // Called with a fresh snapshot() whenever the Overview redraws (watch).
+  const watchers = new Set();
   // { ppValue, list: [{ code, perPP, ratio }] best first }, once loaded.
   let market = null;
   let marketLoad = null;
@@ -1018,6 +1020,25 @@ const EmployeeTrainingTool = (() => {
     return `<span class="tr-act-profit" title="Expected career profit gain from replacing this employee: new hire surplus ${amount(fresh.best)}, minus keeping surplus ${amount(surplus)}. Both careers account for the value of occupying the slot. Daily and hourly figures average this gain over the new hire's expected working days. Compare candidates before firing."><span>${amount(row.value)}/career</span>${daily == null ? '<small>expected gain</small>' : `<small>${amount(daily)}/day</small><small>${amount(daily / 24)}/h</small>`}</span>`;
   }
 
+  // What to spend energy on, best first: trainings, hires and replacements.
+  // Replacing someone spends a hire's 10 energy, so it ranks with the
+  // trainings by what that energy earns: the pick less keeping them and
+  // the firing, both after the slot's rate. Training and replacing the same employee rule each
+  // other out, so only the better-ranked of the two stays.
+  // When the planner would move someone marked Replace, the move comes
+  // first (moved): it's free, and their verdict changes with the company.
+  function energyActions() {
+    const flagged = keepRows().filter(r => ['fire', 'replace'].includes(keepVerdict(r)));
+    const moved = new Set(flagged.filter(r => plannedMove(r.emp._id)).map(r => r.emp._id));
+    const replace = flagged.filter(r => !moved.has(r.emp._id))
+      .map(r => ({ kind: 'replace', value: r.gain + r.alt, emp: r.emp, entry: r.entry, keep: r, ready: true }));
+    const seen = new Set();
+    const ready = [...feedRows().filter(r => r.ready && !(r.kind === 'train' && pendingHand(r.emp))), ...replace]
+      .sort((a, b) => b.value - a.value)
+      .filter(r => r.kind === 'hire' || (!seen.has(r.emp._id) && seen.add(r.emp._id)));
+    return { moved, ready };
+  }
+
   // The numbered list, top to bottom: Do now (hands dealt, moves before replacing), Spend
   // energy (trainings, hires and replacements), Check (the planner, mismatches)
   // and Trained today. Each item opens the tab that acts on it.
@@ -1038,28 +1059,14 @@ const EmployeeTrainingTool = (() => {
     }
     const energy = energyNow();
     const actions = energy == null ? null : Math.floor(energy / 10);
-    // Replacing someone spends a hire's 10 energy, so it ranks with the
-    // trainings by what that energy earns: the pick less keeping them and
-    // the firing, both after the slot's rate. Training and replacing the same employee rule each
-    // other out, so only the better-ranked of the two stays.
-    // When the planner would move someone marked Replace, the move comes
-    // first: it's free, and their verdict changes with the company.
-    const moved = new Set();
-    for (const r of keepRows().filter(r => ['fire', 'replace'].includes(keepVerdict(r)))) {
+    const { moved, ready } = energyActions();
+    for (const r of keepRows().filter(r => moved.has(r.emp._id))) {
       const m = plannedMove(r.emp._id);
-      if (!m) continue;
-      moved.add(r.emp._id);
       const to = team.companies.find(x => x.company._id === m.to);
       groups.now.push({ icon: '🧭', go: { tab: 'assignments', emp: r.emp._id },
         what: `Move ${escapeHtml(r.emp.name)}${to ? ` to ${companyLabelHtml(to.company)}` : ''} instead of replacing`,
         sub: `${keepVerdict(r) === 'fire' ? 'Costs more than they earn' : `A new hire beats keeping them ${odds(r.chance)} of the time`} where they are · moving is free · ${where(r.entry)}` });
     }
-    const replace = keepRows().filter(r => ['fire', 'replace'].includes(keepVerdict(r)) && !moved.has(r.emp._id))
-      .map(r => ({ kind: 'replace', value: r.gain + r.alt, emp: r.emp, entry: r.entry, keep: r, ready: true }));
-    const seen = new Set();
-    const ready = [...feedRows().filter(r => r.ready && !(r.kind === 'train' && pendingHand(r.emp))), ...replace]
-      .sort((a, b) => b.value - a.value)
-      .filter(r => r.kind === 'hire' || (!seen.has(r.emp._id) && seen.add(r.emp._id)));
     const preview = ready.slice(0, Math.min(8, Math.max(3, actions ?? 3)));
     preview.push(...ready.filter(r => r.kind === 'hire' && !preview.includes(r)));
     const shown = nextActionsExpanded ? ready : preview;
@@ -1851,15 +1858,25 @@ const EmployeeTrainingTool = (() => {
         <section class="tr-overview-roster" aria-label="Employees by company">${rosterTable()}</section>
       </div>`;
     renderEmployees();
+    if (market) for (const fn of watchers) fn(snapshot());
   }
 
-  async function runLoad(username) {
+  // One load at a time: a call during a load gets that load's promise.
+  let loading = Promise.resolve();
+  let loadError = null;
+  function runLoad(username) {
+    if (!busy) loading = loadAccount(username);
+    return loading;
+  }
+
+  async function loadAccount(username) {
     username = (username || '').trim();
     if (!username || busy) return;
     busy = true;
     $load.disabled = true;
     setStatus('');
     steps.reset();
+    loadError = null;
     try {
       const loaded = await loadTeam(username);
       steps.setStep(5, 'active', { sub: 'Finishing prices and preparing recommendations' });
@@ -1896,6 +1913,7 @@ const EmployeeTrainingTool = (() => {
       steps.fadeOut(400);
     } catch (err) {
       console.warn('[training] load failed', err);
+      loadError = err;
       steps.hide();
       setStatus(err.message || String(err), true);
     } finally {
@@ -2047,6 +2065,64 @@ const EmployeeTrainingTool = (() => {
   }
 
   /* ── Wiring ──────────────────────────────────────────────── */
+  /* ── Dashboard summary ───────────────────────────────────── */
+  // The loaded account in brief, for the dashboard's card: today's
+  // training progress, what's waiting, and the top three Spend energy
+  // actions with their profit a day (money, or PP for a hire).
+  function snapshot() {
+    const all = team.companies.flatMap(entry => entry.employees.map(emp => ({ emp, entry })));
+    const hand = all.filter(x => pendingHand(x.emp));
+    const trainable = all.filter(x => pendingHand(x.emp) || doneToday(x.emp) || (x.emp.potentialMax || 0) - (x.emp.potential || 0) > 0);
+    const energy = energyNow();
+    const { moved, ready } = energyActions();
+    const self = selfWorkValue();
+    const pp = market?.ppValue > 0 ? market.ppValue : null;
+    const perDay = r => {
+      if (!pp || !Number.isFinite(r.value)) return null;
+      const days = r.kind === 'train' ? EC.workingDays(r.emp) : r.kind === 'replace' ? r.keep.fresh.days : null;
+      return days > 0 ? r.value * pp / days : null;
+    };
+    const detail = r => r.kind === 'train' ? `${plural(r.left, 'training')} left`
+      : r.kind === 'replace' ? (keepVerdict(r.keep) === 'fire' ? 'costs more than they earn' : `a new hire wins ${odds(r.keep.chance)} of the time`)
+      : `${r.entry.employees.length} of ${r.cap} slots used`;
+    return {
+      username: team.username,
+      employees: all.length,
+      companies: team.companies.length,
+      energy,
+      energyMax: team.energyBar?.max ?? null,
+      energyFull: energyFullText(),
+      actions: energy == null ? null : Math.floor(energy / 10),
+      tenIn: energy != null && energy < 10 && minutesTo10(energy) != null ? minutesTo10(energy) * 6e4 : null,
+      trainable: trainable.length,
+      trained: trainable.filter(x => doneToday(x.emp) && !pendingHand(x.emp)).length,
+      hands: hand.length,
+      untilReset: untilReset(),
+      // Marked Replace, less those the planner moves instead (moves).
+      replace: keepRows().filter(r => ['fire', 'replace'].includes(keepVerdict(r)) && !moved.has(r.emp._id)).length,
+      moves: moved.size,
+      mismatches: all.filter(x => mismatchOf(x.emp, x.entry.company)).length,
+      pricing: ready.some(r => r.pricing),
+      top: ready.slice(0, 3).map(r => ({
+        kind: r.kind, emp: r.emp?._id || null, name: r.emp?.name || null,
+        companyId: r.entry.company._id, company: companyName(r.entry.company), itemCode: r.entry.company.itemCode,
+        detail: detail(r), perDay: perDay(r), pp: r.value, belowSelf: !!self && r.value < self.value,
+      })),
+    };
+  }
+
+  // Loads the account through this page, so opening it afterwards shows
+  // it at once, then resolves to its snapshot().
+  async function summary(username) {
+    if (!mounted) mount();
+    const want = (username || '').trim().toLowerCase();
+    // A load already running may be for another account; one more runs ours.
+    for (let i = 0; i < 2 && team?.username?.toLowerCase() !== want; i++) await runLoad(username);
+    if (team?.username?.toLowerCase() !== want) throw loadError || new Error(`Couldn't load employees for ${username}`);
+    await marketLoad;
+    return snapshot();
+  }
+
   function mount() {
     wireHelp();
     renderRecent();
@@ -2166,6 +2242,9 @@ const EmployeeTrainingTool = (() => {
   }
 
   return {
+    summary,
+    // fn(snapshot) on every Overview redraw (prices, planner); returns an unsubscribe.
+    watch(fn) { watchers.add(fn); return () => watchers.delete(fn); },
     activate(params) {
       if (!mounted) mount();
       const u = params?.get('u') || '';
