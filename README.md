@@ -47,7 +47,7 @@ js/
   shared.js       Loaded first. Data layer + helpers. Tools depend on this.
   toolkit.js      Home/landing shell + tab navigation
   advisor.js      Company Migration Advisor
-  clockin.js      Employee Clock-In Monitor
+  clockin.js      Manager Check-In Monitor
   softcap.js      Gear Softcap Advisor
   buddy-finder.js Buddy Finder (public)
   daily-profit.js Daily Profit calculator
@@ -138,7 +138,7 @@ Mixed-endpoint batching isn't supported; a `Promise.all` over several different 
 
 This depends on the Worker's `Access-Control-Expose-Headers` — the rate-limit headers reach the browser but stay invisible to `fetch()` unless they're listed there. Drop that and the tools still retry, just blind, on a fixed fallback wait.
 
-**Caching.** Two independent mechanisms sit behind `trpc`. *In-flight dedupe* is always on and shares one promise between identical concurrent calls. The *resolved cache* is opt-in via `setTrpcCache(true)`, holds values for 90s, and skips endpoints in `TRPC_VOLATILE` (`transaction.getPaginatedTransactions`, `worker.getWorkers`).
+**Caching.** Two independent mechanisms sit behind `trpc`. *In-flight dedupe* is always on and shares one promise between identical concurrent calls. The *resolved cache* is opt-in via `setTrpcCache(true)`, holds values for 90s, and skips endpoints in `TRPC_VOLATILE` (`transaction.getPaginatedTransactions`, `worker.getWorkers`, `manager.getByCompanyId`).
 
 The resolved cache is **per item, not per request**. A batched result is stored under the key each input would have had as a scalar call, so the two share freely in both directions: a 100-user batch fills the cache for a later single lookup, and an overlapping list only fetches the difference. Order and chunk boundaries don't matter, and a failed item no longer stops its neighbours being cached — only fulfilled items are stored, so a 404 is never cached and stuck for 90s. Entries are evicted on read when stale and capped at `TRPC_CACHE_MAX_ENTRIES`, since nothing else sweeps them.
 
@@ -191,17 +191,13 @@ Abroad cards compare "employee output from location" (core bonus minus tax rate)
 
 `AdvisorTool.loadPlacements(userId)` is also what the dashboard's Migration card calls.
 
-### Employee Clock-In Monitor (`clockin.js`)
+### Manager Check-In Monitor (`clockin.js`)
 
-Shows when each of an employer's workers last clocked in, on a 48-hour timeline, plus a payroll projection.
+Lists each active company and its current manager using `manager.getByCompanyId`, with vacancies shown explicitly. Active/Inactive comes from the manager's `isInactive` flag. Cards show hourly pay, the production bonus, unpaid hours, and the profile's latest login and manager care timestamps. Missing profile data is shown as Unknown; failed company or manager lookups stop the run rather than imply vacancies.
 
-> **v0.27:** player workers no longer exist and `worker.getWorkers` returns 404. Companies run on NPC employees paid hourly and automatically, so this tool is obsolete.
+The inactive filter uses the game's status. Sorting uses last login, with unknown timestamps last. Payroll is the sum of current hourly wages across all listed contracts multiplied by 3, 6 or 24 hours, assuming contracts and rates stay unchanged. It includes inactive managers and excludes unknown wages with a notice.
 
-Wage transactions are the source of truth. A clock-in is inferred from a wage payment, because every work cycle pays a timestamped wage. Wages are modelled as trades: `sellerId` is the worker (sold their labour), `buyerId` is the employer (bought it). Two filters are applied to each transaction and both matter: the worker must be the seller (drops their own outgoing payroll if they also employ people), and the employer must be the buyer (drops wages from other employers, since a worker can now hold multiple contracts).
-
-Cycles within 4 minutes of each other are grouped into one "episode" to keep the timeline readable. Status is Active (clocked in within 24h), Slowing (24 to 48h), or Idle (none in 48h).
-
-The payroll projection shows three figures. Next 3h and Next 6h are pace-based: last 24h of wages divided by 24, times the window. Next 10h "if maxed" is the worst case where every worker's energy bar is full and gets drained completely. Ten hours is used because energy regenerates at 10% per hour, so that's exactly one full refill from empty.
+This replaces the removed player-worker roster and wage timeline. Hourly payments do not indicate attendance, and the API exposes no manager check-in history. The existing `#clockin?u=toie` route, Irish citizenship restriction and bypass parameter remain supported.
 
 ### Gear Softcap Advisor (`softcap.js`)
 

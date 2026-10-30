@@ -63,7 +63,7 @@ const IRELAND_COUNTRY_ID = '6813b6d446e731854c7ac7fe';
  *  this page load only. Delete a route from this set once it's rebuilt.
  */
 const V027_PAUSED = new Set([
-  'clockin', 'buddy-finder', 'profit', 'profit-dev', 'sp-advisor', 'factory-tax',
+  'buddy-finder', 'profit', 'profit-dev', 'sp-advisor', 'factory-tax',
   'buddy', 'tax', 'tax-dev', 'tax-partner', 'tax-deals', 'partner-guide',
 ]);
 const isPaused = view => V027_PAUSED.has(view);
@@ -294,7 +294,9 @@ function _retryAfterMs(headers) {
 //       throw new Error(`${endpoint} → ${String(msg).slice(0, 120)}`);
 //     }
 //     const item = Array.isArray(json) ? json[0] : json;
-//     return item?.result?.data ?? item;
+//     return Object.prototype.hasOwnProperty.call(item?.result ?? {}, 'data')
+//       ? item.result.data
+//       : item;
 //   } catch (e) {
 //     if (e.name === 'AbortError') throw new Error(`${endpoint} → timed out`);
 //     if (attempt < MAX_ATTEMPTS && isTransientError(e)) {
@@ -321,6 +323,7 @@ const TRPC_CACHE_TTL_MS = 90_000;
 const TRPC_VOLATILE = new Set([
   'transaction.getPaginatedTransactions',
   'worker.getWorkers',
+  'manager.getByCompanyId',
 ]);
 let _trpcCacheOn = false;
 let _trpcCacheOwner = null;
@@ -541,7 +544,9 @@ function _trpcResponseError(item, label) {
 }
 
 function _trpcResponseValue(item) {
-  return item?.result?.data ?? item;
+  return Object.prototype.hasOwnProperty.call(item?.result ?? {}, 'data')
+    ? item.result.data
+    : item;
 }
 
 /**

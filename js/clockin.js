@@ -1,146 +1,41 @@
-/* ═══════════════════════════════════════════════════════════════════
- *  EMPLOYEE CLOCK-IN MONITOR
- *
- *  Pulls each of an employer's workers and reads their recent wage
- *  transactions to build a 48h timeline of clock-ins.
- *
- *  Data model: wage transactions are TRADES.
- *    {
- *      _id, createdAt, transactionType: 'wage',
- *      sellerId,  // the WORKER (sold their labour)
- *      buyerId,   // the EMPLOYER (bought the labour)
- *      quantity,  // labour quantity
- *      money,     // wage paid
- *    }
- *
- *  Querying transaction.getPaginatedTransactions with userId=W returns
- *  wages where W is on either side. A clock-in for W = sellerId === W;
- *  the buy-side entries are W's own payroll if W also employs people
- *  (mutual employment is allowed) and get filtered out.
- *
- *  Payroll projection: alongside the timeline, the top of the view
- *  shows projected payroll over 3h / 6h / 10h. Per-worker formula:
- *    actions(h) = floor((currentEnergy + h × hourlyRegen) / 10)
- *    payroll(h) = Σ actions × production × wage
- *  Fidelity does NOT enter the wage bill. It lifts the company's OUTPUT
- *  per production point, not the production points the worker sells, so
- *  the employer pays the same. Verified against wage transactions: money
- *  / quantity is exactly the posted wage, and quantity tracks the raw
- *  production skill (mean 31.47 over 391 clock-ins for a fidelity-10
- *  worker with production 31 — a fidelity-lifted 34.1 is ruled out).
- *  All inputs come from calls already made — no new endpoints.
- *
- *  Access: restricted to Irish citizens (enforceIrishOnly from
- *  shared.js). The bypass=1 URL param lifts the restriction.
- * ═══════════════════════════════════════════════════════════════════ */
+/* Manager monitor. Activity comes from manager.getByCompanyId;
+ * last login and manager care come from user.getUserLite, not wage payments.
+ * The #clockin route and DOM names are retained for existing bookmarks.
+ */
 const ClockInTool = (() => {
-  /* ── Config ─────────────────────────────────────────────── */
-  const WINDOW_HOURS          = 48;
-  const WINDOW_MS             = WINDOW_HOURS * 3600 * 1000;
-  const ACTIVE_THRESHOLD_MS   = 24 * 3600 * 1000;
-  const TX_PAGE_LIMIT         = 100;
-  const MAX_TX_PAGES          = 6;          // safety cap per worker
-  const GROUP_WINDOW_MS       = 4 * 60_000; // cycles within 4 min → one episode
-  const INITIAL_EPISODE_LIMIT = 5;
-
-  // Payroll projection. Simple model:
-  //  • 3h and 6h windows: take the worker's actual ₿ paid over the
-  //    last 24h, divide by 24 to get an hourly rate, multiply by the
-  //    window. Sums across all workers.
-  //  • 10h window: theoretical ceiling — every worker burns through
-  //    their full energy bar in 10h (one full refill from empty,
-  //    since regen is 10% of max per hour).
-  const ACTION_ENERGY_COST = 10;
-  const PROJECTION_WINDOWS = [
-    { hours: 3,  mode: 'pace' },
-    { hours: 6,  mode: 'pace' },
-    { hours: 10, mode: 'max'  },
-  ];
-
-  /* ── DOM ────────────────────────────────────────────────── */
-  const $username    = document.getElementById('clockin-username');
-  const $run         = document.getElementById('clockin-go');
-  const $hint        = document.getElementById('clockin-hint');
-  const $summary     = document.getElementById('clockin-summary');
-  const $sumWorkers  = document.getElementById('clockin-sum-workers');
-  const $projection  = document.getElementById('clockin-projection');
-  const $workers     = document.getElementById('clockin-workers');
-  const $filterIdle  = document.getElementById('clockin-filter-idle');
-  const $sortRecent  = document.getElementById('clockin-sort-recent');
-  const $sortIdle    = document.getElementById('clockin-sort-idle');
-  const steps        = makeSteps(document.getElementById('clockin-steps'));
-  const setStatus    = makeStatus(document.getElementById('clockin-status'));
-
-  /* ── State ──────────────────────────────────────────────── */
-  let state = null; // { ownerUsername, workers: [...], generatedAt }
+  const $username = document.getElementById('clockin-username');
+  const $run = document.getElementById('clockin-go');
+  const $hint = document.getElementById('clockin-hint');
+  const $summary = document.getElementById('clockin-summary');
+  const $sumWorkers = document.getElementById('clockin-sum-workers');
+  const $projection = document.getElementById('clockin-projection');
+  const $workers = document.getElementById('clockin-workers');
+  const $filterIdle = document.getElementById('clockin-filter-idle');
+  const $sortRecent = document.getElementById('clockin-sort-recent');
+  const $sortIdle = document.getElementById('clockin-sort-idle');
+  const steps = makeSteps(document.getElementById('clockin-steps'));
+  const setStatus = makeStatus(document.getElementById('clockin-status'));
+  let state = null;
   let running = false;
 
-  const ci_trpc = (endpoint, input) => trpc(endpoint, input, { retry: true, timeoutMs: 20000 });
+  const ci_trpc = (endpoint, input) => trpc(endpoint, input, { retry: true, timeoutMs: 20000, fresh: true });
+  const money = n => `₿${n.toLocaleString(undefined, { maximumFractionDigits: 3 })}`;
 
-  /* ── Formatting helpers (tool-specific) ─────────────────── */
-  function fmtAgo(ms) {
-    if (ms == null || !isFinite(ms)) return null;
-    if (ms < 60_000) return 'just now';
-    if (ms < 3_600_000) return `${Math.floor(ms / 60_000)}m ago`;
-    if (ms < 86_400_000) {
-      const h = Math.floor(ms / 3_600_000);
-      const m = Math.floor((ms % 3_600_000) / 60_000);
-      return m > 0 ? `${h}h ${m}m ago` : `${h}h ago`;
-    }
-    const d = Math.floor(ms / 86_400_000);
-    return `${d}d ago`;
-  }
-  function fmtTime(d) {
-    if (!d) return '';
-    return d.toLocaleString(undefined, {
-      weekday: 'short', hour: '2-digit', minute: '2-digit',
-    });
-  }
-  function fmtGap(ms) {
-    if (ms < 60_000) return `${Math.round(ms / 1000)}s`;
-    if (ms < 3_600_000) return `${Math.round(ms / 60_000)}m`;
-    if (ms < 86_400_000) {
-      const h = Math.floor(ms / 3_600_000);
-      const m = Math.round((ms % 3_600_000) / 60_000);
-      return m > 0 ? `${h}h ${m}m` : `${h}h`;
-    }
-    const d = Math.floor(ms / 86_400_000);
-    const h = Math.round((ms % 86_400_000) / 3_600_000);
-    return h > 0 ? `${d}d ${h}h` : `${d}d`;
-  }
-  const userUrl    = id => `${GAME_BASE}/user/${id}`;
-  const companyUrl = id => `${GAME_BASE}/company/${id}`;
-
-  // Small integer formatter for the skill chips. Production can be
-  // fractional (e.g. 22.5) so we keep at most one decimal and strip
-  // trailing zeros.
-  function fmtSkill(n) {
-    if (n == null || !isFinite(n)) return '–';
-    if (n >= 100) return Math.round(n).toString();
-    const rounded = Math.round(n * 10) / 10;
-    return Number.isInteger(rounded) ? rounded.toString() : rounded.toFixed(1);
+  function timestamp(value) {
+    const ms = value ? new Date(value).getTime() : NaN;
+    return Number.isFinite(ms) ? ms : null;
   }
 
-  /* ── Username resolution ─────────────────────────────────
-   *  Same exact-match pattern as the advisor. We can't share its
-   *  helper because the advisor's version uses its own setStep panel
-   *  and has its own endpoint-discovery; this is the simpler form.
-   *  Returns the resolved user's `country` alongside id/username so
-   *  the Irish-only gate has it without an extra call.
-   *
-   *  Error wording is careful to distinguish three failure modes:
-   *    1. Search returned no IDs → could be "user really doesn't
-   *       exist" OR "API blip returning empty". We hedge with
-   *       "couldn't find — does the username exist?" rather than
-   *       flatly claiming non-existence, since the API is known to
-   *       blip and "user does not exist" sends people on goose-
-   *       chases when the real issue is upstream.
-   *    2. Search returned IDs but every getUserLite failed → the
-   *       upstream user endpoint is down. Surface this explicitly
-   *       instead of silently falling back to an unverified id.
-   *    3. Search returned profiles but none matched the typed name
-   *       → show what we got back, like before.
-   */
+  function dateHtml(value, now) {
+    const ms = timestamp(value);
+    if (ms == null) return 'Unknown';
+    const minutes = Math.max(0, Math.floor((now - ms) / 60000));
+    const ago = minutes < 1 ? 'just now' : minutes < 60 ? `${minutes}m ago`
+      : minutes < 1440 ? `${Math.floor(minutes / 60)}h ${minutes % 60}m ago`
+      : `${Math.floor(minutes / 1440)}d ago`;
+    return `<span title="${escapeHtml(new Date(ms).toLocaleString())}">${ago}</span>`;
+  }
+
   async function resolveUserId(username) {
     const search = await ci_trpc('search.searchAnything', { searchText: username });
     const candidateIds = search?.userIds || [];
@@ -184,557 +79,129 @@ const ClockInTool = (() => {
     );
   }
 
-  /* ── Wage transaction loader ────────────────────────────── */
-  /** @returns {Object} The tRPC input for a worker's first page of wages. */
-  function wagePageInput(workerId) {
-    return { userId: workerId, transactionType: 'wage', limit: TX_PAGE_LIMIT };
-  }
-
-  /*
-   *  Pagination is per worker and cursor-driven, so it can't be batched
-   *  wholesale — but the FIRST page can, and within the 24h window most
-   *  workers never need a second one. The caller fetches page one for every
-   *  worker in a few tRPC batches and passes it in as `firstPage`; only the
-   *  rare worker with more history than one page fits falls back to
-   *  sequential requests from page two on.
-   */
-  async function loadWagesForWorker(workerId, employerId, firstPage = null) {
-    const cutoff = Date.now() - WINDOW_MS;
-    const punches = [];
-    let cursor = null;
-    let pages = 0;
-    let seenOlder = false;
-    let filteredOut = 0;
-    let pending = firstPage;
-
-    while (pages < MAX_TX_PAGES && !seenOlder) {
-      const input = wagePageInput(workerId);
-      if (cursor) input.cursor = cursor;
-
-      let page;
-      if (pending) {
-        page = pending;
-        pending = null;
-      } else {
-        try {
-          page = await ci_trpc('transaction.getPaginatedTransactions', input);
-        } catch (e) {
-          console.warn(`[clockin] worker ${workerId} page ${pages} failed:`, e.message);
-          break;
-        }
-      }
-      pages++;
-
-      const items = page?.items || [];
-      if (!items.length) break;
-
-      for (const tx of items) {
-        const t = new Date(tx.createdAt).getTime();
-        if (!isFinite(t)) continue;
-        if (t < cutoff) { seenOlder = true; break; }
-
-        // Two filters here, both required:
-        //   1. Worker must be the seller (they did the work). Filters
-        //      out the worker's own outgoing payroll if they employ
-        //      people too.
-        //   2. Employer must be the buyer (you paid for the work). If
-        //      a worker holds multiple contracts (which the game now
-        //      allows in practice — e.g. M0JTA8A working for several
-        //      employers), this keeps only the wages YOU paid them.
-        //      Without this, the projection inflates with other
-        //      employers' payroll.
-        if (tx.sellerId !== workerId) { filteredOut++; continue; }
-        if (employerId && tx.buyerId !== employerId) { filteredOut++; continue; }
-
-        punches.push({
-          at: t,
-          amount: tx.money,
-          quantity: tx.quantity,
-          buyerId: tx.buyerId,
-        });
-      }
-
-      cursor = page?.nextCursor ?? null;
-      if (!cursor) break;
-    }
-
-    if (filteredOut > 0) {
-      console.log(`[clockin] ${workerId}: filtered ${filteredOut} non-matching wages`);
-    }
-    punches.sort((a, b) => b.at - a.at);
-    return punches;
-  }
-
-  /* ── Main pipeline ──────────────────────────────────────── */
   async function analyse(username) {
     steps.setStep(1, 'active', { sub: `Searching for "${username}"` });
     const resolved = await resolveUserId(username);
-    steps.setStep(1, 'done', {
-      count: resolved.exact ? `→ ${resolved.username}` : `→ ${resolved.username} (unverified)`,
-    });
-
-    // Irish-citizens-only gate. The bypass=1 URL param lifts this
-    // for admin/debugging. Non-Irish users get a hard block here,
-    // before any of the expensive worker/transaction loading runs.
+    steps.setStep(1, 'done', { count: resolved.username });
     enforceIrishOnly(resolved.country, resolved.username);
 
-    steps.setStep(2, 'active', { sub: 'Fetching companies and worker roster' });
-    const [companyList, workersData] = await Promise.all([
-      ci_trpc('company.getCompanies', { userId: resolved.userId, perPage: 100 }),
-      ci_trpc('worker.getWorkers',    { userId: resolved.userId }),
-    ]);
-
-    const companyIds = (companyList?.items || [])
-      .map(c => typeof c === 'string' ? c : c?._id).filter(Boolean);
-    if (!companyIds.length) {
-      throw new Error(`"${resolved.username}" owns no companies`);
-    }
-
-    // Worker map: userId -> { id, name, wage, fidelity, ... }
-    // wage/fidelity come straight off the worker.getWorkers response;
-    // they're needed for the payroll projection. A worker only holds
-    // one contract, so the first values we see are authoritative.
-    //
-    // We also stash the COMPANY they work for, captured from the
-    // `entry.company` object that workersPerCompany hands us. This is
-    // already in memory — no extra API call — and lets the card show
-    // "@ Cement Plant" without resolving anything else. `entry.company`
-    // can be either an object or a bare id depending on the endpoint
-    // response shape, so we handle both.
-    const workerMap = new Map();
-    for (const entry of (workersData?.workersPerCompany || [])) {
-      const companyObj = (entry && typeof entry.company === 'object') ? entry.company : null;
-      const companyId  = companyObj?._id || (typeof entry?.company === 'string' ? entry.company : null);
-      const company    = companyId ? {
-        id:       companyId,
-        name:     companyObj?.name || null,
-        itemCode: companyObj?.itemCode || null,
-      } : null;
-
-      for (const w of (entry.workers || [])) {
-        const uid = typeof w === 'string' ? w : (w.user || w._id || w.userId);
-        if (!uid) continue;
-        if (!workerMap.has(uid)) {
-          const wage     = (w && typeof w === 'object' && typeof w.wage === 'number')     ? w.wage     : null;
-          const fidelity = (w && typeof w === 'object' && typeof w.fidelity === 'number') ? w.fidelity : 0;
-          workerMap.set(uid, { id: uid, name: null, wage, fidelity, company });
-        }
-      }
-    }
-
-    if (workerMap.size === 0) {
-      steps.setStep(2, 'done', { count: `${companyIds.length} companies · 0 workers` });
-      steps.setStep(3, 'done', { sub: 'No workers to resolve' });
-      steps.setStep(4, 'done', { sub: 'No transactions to pull' });
-      state = { ownerUsername: resolved.username, workers: [], generatedAt: Date.now() };
-      render();
-      steps.fadeOut(400);
-      return;
-    }
-
-    steps.setStep(2, 'done', { count: `${companyIds.length} companies · ${workerMap.size} workers` });
-
-    // Step 3: resolve worker usernames + capture stats for projection
-    const workerIds = [...workerMap.keys()];
-    steps.setStep(3, 'active', { sub: 'Resolving worker profiles', count: `0/${workerIds.length}` });
-    const profiles = await trpcManyValues('user.getUserLite',
-      workerIds.map(userId => ({ userId })),
-      { timeoutMs: 20000, onProgress: (done, total) => {
-        steps.setStep(3, 'active', { count: `${done}/${total}` });
-      } });
-    profiles.forEach((u, index) => {
-      // A failed profile is skipped — the projection marks that worker unknown.
-      if (!u) return;
-      const w = workerMap.get(workerIds[index]);
-      if (u.username) w.name = u.username;
-      // Stats needed for payroll projection + the on-card skill
-      // chips. All live under skills.{stat}.value:
-      //   energy.value     → max energy (used for full-bar action count)
-      //   production.value → PP generated per work action
-      //   strength.value   → optional, shown if present
-      //   damage.value     → optional, shown if present
-      if (u.skills) {
-        w.energyMax  = u.skills.energy?.value     ?? null;
-        w.production = u.skills.production?.value ?? null;
-        w.strength   = u.skills.strength?.value   ?? null;
-        w.damage     = u.skills.damage?.value     ?? null;
-      }
-    });
-    steps.setStep(3, 'done', { count: `${workerIds.length} resolved` });
-
-    // Step 4: pull wage transactions
-    steps.setStep(4, 'active', { sub: 'Pulling wage transactions', count: `0/${workerIds.length}` });
-    const firstPages = await trpcManyValues('transaction.getPaginatedTransactions',
-      workerIds.map(uid => wagePageInput(uid)),
-      { timeoutMs: 30_000, onProgress: (done, total) => {
-        steps.setStep(4, 'active', { sub: 'Pulling wage transactions', count: `${done}/${total}` });
-      } });
-
-    let txDone = 0;
-    const txConcurrency = 5;
-    for (let i = 0; i < workerIds.length; i += txConcurrency) {
-      const slice = workerIds.slice(i, i + txConcurrency);
-      await Promise.all(slice.map(async (uid, offset) => {
-        workerMap.get(uid).punches =
-          await loadWagesForWorker(uid, resolved.userId, firstPages[i + offset]);
-        txDone++;
-        steps.setStep(4, 'active', { count: `${txDone}/${workerIds.length}` });
-      }));
-    }
-    steps.setStep(4, 'done', { count: `${workerIds.length} done` });
-
-    state = {
-      ownerUsername: resolved.username,
-      workers: [...workerMap.values()],
-      generatedAt: Date.now(),
-    };
+    const rows = await loadRows(resolved.userId, (n, status, detail) => steps.setStep(n, status, detail));
+    steps.setStep(4, 'active', { sub: 'Checking activity and hourly costs' });
+    state = { ownerUsername: resolved.username, rows };
     render();
+    steps.setStep(4, 'done', { count: `${rows.length} companies checked` });
     steps.fadeOut(800);
   }
 
-  /* ── Payroll projection ─────────────────────────────────── */
-
-  /** Max actions a worker can perform when their bar is FULL.
-   *  Used for the 10h "if maxed" ceiling, which models "if everyone
-   *  was idle for 10h so their bars filled completely, then burned
-   *  through everything". No regen factor — the bar is capped at max,
-   *  so being idle longer than 10h doesn't add anything.
-   *  Returns 0 if stats are missing. */
-  function maxActionsFromFullBar(w) {
-    if (w.energyMax == null) return 0;
-    return Math.floor(w.energyMax / ACTION_ENERGY_COST);
-  }
-
-  /** Theoretical max payroll if every worker started at full energy
-   *  and drained their bar to zero. */
-  function projectMaxPayroll(workers) {
-    let total = 0;
-    let contributors = 0;
-    let unknown = 0;
-    for (const w of workers) {
-      if (w.wage == null || w.production == null || w.energyMax == null) {
-        unknown++;
-        continue;
-      }
-      const actions = maxActionsFromFullBar(w);
-      if (actions === 0) continue;
-      // No fidelity multiplier: wages are paid on raw production points.
-      total += actions * w.production * w.wage;
-      contributors++;
+  async function loadRows(userId, step = () => {}) {
+    step(2, 'active', { sub: 'Fetching companies' });
+    const companyIds = [];
+    let cursor;
+    do {
+      const page = await ci_trpc('company.getCompanies', {
+        userId, perPage: 100, ...(cursor ? { cursor } : {}),
+      });
+      companyIds.push(...(page?.items || []).map(c => typeof c === 'string' ? c : c._id));
+      cursor = page?.nextCursor;
+    } while (cursor);
+    const ids = [...new Set(companyIds)];
+    const byCompany = ids.map(companyId => ({ companyId }));
+    const [companies, managers] = await Promise.all([
+      trpcMany('company.getById', byCompany, { fresh: true }),
+      trpcMany('manager.getByCompanyId', byCompany, { fresh: true }),
+    ]);
+    // A failed lookup is not an empty manager slot. Stop instead of reporting a false vacancy.
+    for (const result of [...companies, ...managers]) {
+      if (result.status === 'rejected') throw result.reason;
     }
-    return { total, contributors, unknown };
+    const rows = companies.flatMap((result, i) => {
+      const company = result.value;
+      if (!company || company.disabledAt) return [];
+      return [{ company, manager: managers[i].value, profile: null }];
+    });
+    const managerIds = [...new Set(rows.map(r => r.manager?.user).filter(Boolean))];
+    step(2, 'done', { count: `${rows.length} companies · ${managerIds.length} managers` });
+
+    step(3, 'active', { sub: 'Loading manager names and activity', count: `0/${managerIds.length}` });
+    const profiles = await trpcManyValues('user.getUserLite', managerIds.map(userId => ({ userId })), {
+      fresh: true, timeoutMs: 20000,
+      onProgress: (done, total) => step(3, 'active', { count: `${done}/${total}` }),
+    });
+    const profileById = new Map(managerIds.map((id, i) => [id, profiles[i]]));
+    rows.forEach(row => { row.profile = profileById.get(row.manager?.user) || null; });
+    step(3, 'done', { count: `${profiles.filter(Boolean).length}/${managerIds.length} profiles loaded` });
+    return rows;
   }
 
-  /** Total ₿ paid across all workers in the last N hours.
-   *  Sums wage transactions we already pulled — no extra API calls. */
-  function actualPayrollInLastHours(workers, hours, now) {
-    const cutoff = now - (hours * 3_600_000);
-    let total = 0;
-    for (const w of workers) {
-      for (const p of (w.punches || [])) {
-        if (p.at >= cutoff) total += (p.amount || 0);
-      }
-    }
-    return total;
+  function managerStatus(manager) {
+    if (!manager) return { label: 'No manager', cls: 'never' };
+    if (manager.isInactive === true) return { label: 'Inactive', cls: 'danger' };
+    if (manager.isInactive === false) return { label: 'Active', cls: '' };
+    return { label: 'Activity unknown', cls: 'warn' };
   }
 
-  /** Pace-based projection: ₿ paid in last 24h / 24 × window hours.
-   *  Treats the whole roster as one bucket — simple and stable. */
-  function projectPacePayroll(workers, hours, now) {
-    const last24h = actualPayrollInLastHours(workers, 24, now);
-    return last24h / 24 * hours;
-  }
-
-  function renderProjection(workers, now) {
-    if (!$projection) return;
-    if (!workers.length) {
-      $projection.style.display = 'none';
-      return;
-    }
-    $projection.style.display = '';
-
-    const cards = PROJECTION_WINDOWS.map(({ hours, mode }) => {
-      const actualSameWindow = actualPayrollInLastHours(workers, hours, now);
-      const actualLine = `<div class="clockin-proj-actual">Last ${hours}h: ₿${actualSameWindow.toLocaleString(undefined, {maximumFractionDigits: 2})} actual</div>`;
-
-      if (mode === 'max') {
-        const { total } = projectMaxPayroll(workers);
-        return `
-          <div class="clockin-proj-card max">
-            <div class="clockin-proj-label">Next ${hours}h <span class="max-tag">if maxed</span></div>
-            <div class="clockin-proj-value">₿${total.toLocaleString(undefined, {maximumFractionDigits: 2})}</div>
-            ${actualLine}
-          </div>
-        `;
-      }
-      const projected = projectPacePayroll(workers, hours, now);
-      return `
-        <div class="clockin-proj-card">
-          <div class="clockin-proj-label">Next ${hours}h</div>
-          <div class="clockin-proj-value">₿${projected.toLocaleString(undefined, {maximumFractionDigits: 2})}</div>
-          ${actualLine}
-        </div>
-      `;
-    }).join('');
-
+  function renderProjection(rows) {
+    const contracts = rows.map(r => r.manager).filter(Boolean);
+    $projection.style.display = contracts.length ? '' : 'none';
+    if (!contracts.length) return;
+    const known = contracts.filter(m => Number.isFinite(m.hourlyWage));
+    const hourly = known.reduce((sum, m) => sum + m.hourlyWage, 0);
+    const unknown = contracts.length - known.length;
     $projection.innerHTML = `
       <div class="clockin-proj-head">
-        <div class="clockin-proj-title">Projected payroll</div>
-        <div class="clockin-proj-hint">
-          What you're likely to pay over the next few hours, based on how your workers have been clocking in recently. The <strong>10h if maxed</strong> figure is the absolute worst case — if every worker burns through their full energy bar.
-        </div>
+        <div class="clockin-proj-title">Manager payroll at current rates</div>
+        <div class="clockin-proj-hint">Hourly wages × hours for all listed contracts. Assumes rates and contracts stay the same. This is not a payment history.${unknown ? ` ${unknown} contract(s) have unknown wages and are excluded.` : ''}</div>
       </div>
-      <div class="clockin-proj-grid">${cards}</div>
-    `;
-  }
-
-  /* ── Rendering ──────────────────────────────────────────── */
-  function statusClass(lastMs) {
-    if (lastMs == null) return 'never';
-    if (lastMs < ACTIVE_THRESHOLD_MS) return '';
-    if (lastMs < WINDOW_MS) return 'warn';
-    return 'danger';
-  }
-  function statusLabel(lastMs) {
-    if (lastMs == null) return 'Never (48h window)';
-    if (lastMs < ACTIVE_THRESHOLD_MS) return 'Active';
-    if (lastMs < WINDOW_MS) return 'Slowing';
-    return 'Idle';
-  }
-
-  function groupIntoEpisodes(punches, cutoff) {
-    const visible = punches.filter(p => p.at >= cutoff);
-    const grouped = [];
-    for (const p of visible) {
-      const last = grouped[grouped.length - 1];
-      if (last && Math.abs(last.at - p.at) <= GROUP_WINDOW_MS) {
-        last.count += 1;
-        last.totalAmount += (p.amount || 0);
-        last.totalQty    += (p.quantity || 0);
-        if (p.at < last.startAt) last.startAt = p.at;
-      } else {
-        grouped.push({
-          at: p.at, startAt: p.at,
-          count: 1,
-          totalAmount: p.amount || 0,
-          totalQty: p.quantity || 0,
-        });
-      }
-    }
-    return grouped;
-  }
-
-  function renderTimeline(episodes, now) {
-    const cutoff = now - WINDOW_MS;
-    const ticks = episodes.map(g => {
-      const pct = ((g.at - cutoff) / WINDOW_MS) * 100;
-      const d = new Date(g.at);
-      const qStr      = g.totalQty > 0    ? ` · ${g.totalQty} production points` : '';
-      const amountStr = g.totalAmount > 0 ? ` · ₿${g.totalAmount.toLocaleString(undefined, {maximumFractionDigits: 4})}` : '';
-      const title = `${fmtTime(d)}${qStr}${amountStr}`;
-      return `<div class="clockin-punch" style="left: ${pct.toFixed(2)}%" title="${escapeHtml(title)}"></div>`;
-    }).join('');
-
-    const axisTicks = [];
-    for (let h = WINDOW_HOURS; h >= 0; h -= 12) {
-      const pct = ((WINDOW_HOURS - h) / WINDOW_HOURS) * 100;
-      const label = h === 0 ? 'now' : `-${h}h`;
-      axisTicks.push(`<div class="clockin-axis-tick" style="left:${pct}%">${label}</div>`);
-    }
-    return `
-      <div class="clockin-timeline-track">
-        ${ticks}
-        <div class="clockin-timeline-now" style="right: 0"></div>
-      </div>
-      <div class="clockin-timeline-axis">${axisTicks.join('')}</div>
-    `;
-  }
-
-  function renderEpisodeList(episodes, now) {
-    if (!episodes.length) return '';
-    const rows = episodes.map((ep, i) => {
-      const d = new Date(ep.at);
-      const ago = fmtAgo(now - ep.at);
-      const older = episodes[i + 1];
-      let gapHtml = '';
-      if (older) {
-        const gapMs = ep.at - older.at;
-        const longGap = gapMs > 60 * 60_000;
-        gapHtml = `<div class="clockin-ep-gap ${longGap ? 'long' : ''}" title="Time between previous clock-in and this one">↓ ${fmtGap(gapMs)} rest before</div>`;
-      }
-      const meta = ep.totalQty > 0 ? `${ep.totalQty} production points` : '';
-      return `
-        <div class="clockin-ep">
-          <div class="clockin-ep-time">${fmtTime(d)}</div>
-          <div class="clockin-ep-ago">${escapeHtml(ago)}</div>
-          <div class="clockin-ep-amount">₿${ep.totalAmount.toLocaleString(undefined, {maximumFractionDigits: 4})}</div>
-          <div class="clockin-ep-meta">${escapeHtml(meta)}</div>
-          ${gapHtml}
-        </div>
-      `;
-    });
-
-    const overflow = episodes.length > INITIAL_EPISODE_LIMIT;
-    const visible  = rows.slice(0, INITIAL_EPISODE_LIMIT).join('');
-    const hidden   = overflow ? `<div class="clockin-ep-hidden" style="display:none">${rows.slice(INITIAL_EPISODE_LIMIT).join('')}</div>` : '';
-    const moreBtn  = overflow
-      ? `<button class="clockin-show-more" onclick="(function(b){var h=b.previousElementSibling;h.style.display='flex';h.style.flexDirection='column';b.remove();})(this)">Show ${episodes.length - INITIAL_EPISODE_LIMIT} older episode${episodes.length - INITIAL_EPISODE_LIMIT === 1 ? '' : 's'}</button>`
-      : '';
-
-    return `<div class="clockin-ep-list">${visible}${hidden}${moreBtn}</div>`;
-  }
-
-  function renderWorkerTimelineSection(punches, now) {
-    const cutoff = now - WINDOW_MS;
-    const episodes = groupIntoEpisodes(punches, cutoff);
-    if (episodes.length === 0) {
-      return `
-        <div class="clockin-worker-timeline">
-          ${renderTimeline([], now)}
-          <div class="clockin-no-punches">No clock-ins recorded in the last ${WINDOW_HOURS} hours.</div>
-        </div>
-      `;
-    }
-    const summaryLabel = episodes.length === 1
-      ? 'Show detail for 1 episode'
-      : `Show detail for ${episodes.length} episodes`;
-    return `
-      <div class="clockin-worker-timeline">
-        ${renderTimeline(episodes, now)}
-        <details class="clockin-ep-detail">
-          <summary>${summaryLabel}</summary>
-          ${renderEpisodeList(episodes, now)}
-        </details>
-      </div>
-    `;
-  }
-
-  /** Inline SVG for skill chips. 11×11 — small enough to fit inside
-   *  the existing .clockin-item rows next to the meta text without
-   *  visually competing with the "Last clock-in" / status pills. */
-  function skillIconSvg(kind) {
-    switch (kind) {
-      case 'production':
-        // Pickaxe — matches the in-game production icon.
-        return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4l6 6"/><path d="M3 21l11-11"/><path d="M9 3a9 9 0 0 1 12 12"/></svg>`;
-      case 'energy':
-        // Lightning bolt — matches the in-game energy icon.
-        return `<svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M13 2L4 14h7l-1 8 9-12h-7l1-8z"/></svg>`;
-      case 'strength':
-        return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8v8"/><path d="M18 8v8"/><path d="M3 10v4"/><path d="M21 10v4"/><path d="M6 12h12"/></svg>`;
-      case 'damage':
-        return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 3v4"/><path d="M12 17v4"/><path d="M3 12h4"/><path d="M17 12h4"/></svg>`;
-      default:
-        return '';
-    }
-  }
-
-  /** Skill items reuse the existing .clockin-item layout — same gap,
-   *  same font size, same colours — just with a tiny SVG instead of a
-   *  text label. Missing or zero values are silently omitted. */
-  function renderSkillItems(w) {
-    const skills = [];
-    if (w.production != null) skills.push({ kind: 'production', label: 'Production',  value: fmtSkill(w.production) });
-    if (w.energyMax  != null) skills.push({ kind: 'energy',     label: 'Max energy',  value: fmtSkill(w.energyMax)  });
-    if (w.strength != null && w.strength > 0) skills.push({ kind: 'strength', label: 'Strength', value: fmtSkill(w.strength) });
-    if (w.damage   != null && w.damage   > 0) skills.push({ kind: 'damage',   label: 'Damage',   value: fmtSkill(w.damage)   });
-    if (!skills.length) return '';
-    return skills.map(s => `
-      <span class="clockin-item clockin-skill" title="${escapeHtml(s.label)}: ${escapeHtml(s.value)}">
-        <span class="clockin-skill-icon" data-skill="${s.kind}">${skillIconSvg(s.kind)}</span>
-        <strong>${escapeHtml(s.value)}</strong>
-      </span>
-    `).join('');
-  }
-
-  /** Company chip — sits alongside the worker name. Uses the global
-   *  .icon-box class (defined for the advisor) and the shared ITEMS
-   *  table + iconHtml helper so the item icon styling stays identical
-   *  to the advisor cards. If we somehow don't have an itemCode, the
-   *  chip just shows the company name without an icon. */
-  function renderWorkerCompany(w) {
-    const c = w.company;
-    if (!c || !c.id) return '';
-    const itemIcon = (typeof iconHtml === 'function' && c.itemCode)
-      ? iconHtml(c.itemCode)
-      : '';
-    const nameHtml = c.name
-      ? escapeHtml(c.name)
-      : `Company ${escapeHtml(c.id).slice(-6)}`;
-    return `
-      <a class="clockin-company" href="${companyUrl(c.id)}" target="_blank" rel="noopener" title="Open ${escapeHtml(c.name || 'company')} in War Era">
-        ${itemIcon}
-        <span class="clockin-company-name">${nameHtml}</span>
-      </a>
-    `;
+      <div class="clockin-proj-grid">${[3, 6, 24].map(hours => `
+        <div class="clockin-proj-card">
+          <div class="clockin-proj-label">Next ${hours}h${unknown ? ' (known wages)' : ''}</div>
+          <div class="clockin-proj-value">${money(hourly * hours)}</div>
+        </div>`).join('')}</div>`;
   }
 
   function render() {
     if (!state) return;
     const now = Date.now();
-    const workers = state.workers.slice();
-
-    workers.forEach(w => {
-      const last = (w.punches || [])[0];
-      w._lastMs = last ? (now - last.at) : null;
-    });
-
-    let shown = workers;
-    if ($filterIdle.checked) {
-      shown = shown.filter(w => w._lastMs == null || w._lastMs >= ACTIVE_THRESHOLD_MS);
-    }
-    if ($sortIdle.checked) {
-      shown.sort((a, b) => (b._lastMs ?? Infinity) - (a._lastMs ?? Infinity));
-    } else {
-      shown.sort((a, b) => (a._lastMs ?? Infinity) - (b._lastMs ?? Infinity));
-    }
-
-    // Composite "Workers N (X active · Y idle)" — omit zero parts.
-    const activeCount = workers.filter(w => w._lastMs != null && w._lastMs < ACTIVE_THRESHOLD_MS).length;
-    const idleCount   = workers.filter(w => w._lastMs == null || w._lastMs >= WINDOW_MS).length;
-    const subParts = [];
-    if (activeCount > 0) subParts.push(`<span class="pos">${activeCount} active</span>`);
-    if (idleCount > 0)   subParts.push(`<span class="neg">${idleCount} idle</span>`);
-    const sub = subParts.length
-      ? `<span class="sub">(${subParts.join('<span class="sep">·</span>')})</span>`
-      : '';
-    $sumWorkers.innerHTML = `${workers.length}${sub}`;
+    const rows = state.rows;
+    const managers = rows.filter(r => r.manager);
+    const active = managers.filter(r => r.manager.isInactive === false).length;
+    const inactive = managers.filter(r => r.manager.isInactive === true).length;
+    const unknown = managers.length - active - inactive;
+    $sumWorkers.innerHTML = `${managers.length} <span class="sub">(${active} active · ${inactive} inactive${unknown ? ` · ${unknown} unknown` : ''} · ${rows.length - managers.length} vacancies)</span>`;
     $summary.style.display = '';
     $hint.classList.add('hidden');
+    renderProjection(rows);
 
-    // Projection panel (uses unfiltered workers — the projection is
-    // about your whole roster, not just the currently-shown subset).
-    renderProjection(workers, now);
-
+    let shown = rows.filter(r => !$filterIdle.checked || r.manager?.isInactive === true);
+    shown = shown.slice().sort((a, b) => {
+      const aTime = timestamp(a.profile?.dates?.lastConnectionAt);
+      const bTime = timestamp(b.profile?.dates?.lastConnectionAt);
+      if (aTime == null) return bTime == null ? 0 : 1;
+      if (bTime == null) return -1;
+      return $sortIdle.checked ? aTime - bTime : bTime - aTime;
+    });
     if (!shown.length) {
-      $workers.innerHTML = `<div class="status">No workers match the current filter.</div>`;
+      $workers.innerHTML = `<div class="status">${rows.length ? 'No managers match the current filter.' : 'No active companies found for this account.'}</div>`;
       return;
     }
-    $workers.innerHTML = shown.map(w => {
-      const cls = statusClass(w._lastMs);
-      const label = statusLabel(w._lastMs);
-      const ago = w._lastMs == null ? 'never' : fmtAgo(w._lastMs);
-      const nameLink = w.name
-        ? `<a href="${userUrl(w.id)}" target="_blank" rel="noopener">${escapeHtml(w.name)}</a>`
-        : `<span style="color:var(--muted)">user ${escapeHtml(w.id).slice(-6)}</span>`;
-      const externalIcon = `<a class="clockin-link-icon" href="${userUrl(w.id)}" target="_blank" rel="noopener" title="Open profile in War Era"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></svg></a>`;
-
-      const companyHtml = renderWorkerCompany(w);
-      const skillItems  = renderSkillItems(w);
-      return `
-        <div class="clockin-worker-card">
-          <div class="clockin-worker-head">
-            <div class="clockin-worker-name">${nameLink}${externalIcon}</div>
-            ${companyHtml}
-            <div class="clockin-worker-meta">
-              ${skillItems}
-              <span class="clockin-item"><span class="clockin-ago ${cls}">${escapeHtml(label)}</span></span>
-              <span class="clockin-item">Last clock-in: <strong>${escapeHtml(ago)}</strong></span>
-            </div>
+    $workers.innerHTML = shown.map(({ company, manager, profile }) => {
+      const status = managerStatus(manager);
+      const name = manager ? `<a href="${GAME_BASE}/user/${encodeURIComponent(manager.user)}" target="_blank" rel="noopener">${escapeHtml(profile?.username || `User ${manager.user.slice(-6)}`)}</a>` : 'No manager';
+      const wage = Number.isFinite(manager?.hourlyWage) ? `${money(manager.hourlyWage)}/h` : 'Wage unknown';
+      return `<div class="clockin-worker-card">
+        <div class="clockin-worker-head">
+          <div class="clockin-worker-name">${name}</div>
+          <a class="clockin-company" href="${GAME_BASE}/company/${encodeURIComponent(company._id)}" target="_blank" rel="noopener"><span class="clockin-company-name">${escapeHtml(company.name || 'Company')}</span></a>
+          <div class="clockin-worker-meta">
+            <span class="clockin-item"><span class="clockin-ago ${status.cls}">${status.label}</span></span>
+            ${manager ? `<span class="clockin-item">${wage}</span>
+              <span class="clockin-item">Bonus: <strong>${Number.isFinite(manager.productionBonusPercent) ? `+${manager.productionBonusPercent}%${manager.isInactive ? ' (inactive)' : ''}` : 'Unknown'}</strong></span>
+              <span class="clockin-item">Last login: <strong>${dateHtml(profile?.dates?.lastConnectionAt, now)}</strong></span>
+              <span class="clockin-item">Last manager care: <strong>${dateHtml(profile?.dates?.lastManagerCareAt, now)}</strong></span>
+              ${manager.unpaidHours > 0 ? `<span class="clockin-item neg">${manager.unpaidHours} unpaid hours</span>` : ''}` : ''}
           </div>
-          ${renderWorkerTimelineSection(w.punches || [], now)}
         </div>
-      `;
+      </div>`;
     }).join('');
   }
 
@@ -790,6 +257,7 @@ const ClockInTool = (() => {
   $sortIdle.addEventListener('change',   () => state && render());
 
   return {
+    loadRows,
     /**
      * Called by the router every time this view becomes active.
      * Idempotent: if ?u= differs from the current input, update the

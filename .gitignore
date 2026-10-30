@@ -30,3 +30,5 @@ __pycache__/
 
 .claude/
 .scratch/
+# Local planning tickets — kept on disk, never committed.
+tickets/

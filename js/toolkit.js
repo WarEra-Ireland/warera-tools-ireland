@@ -51,7 +51,7 @@ const ToolkitShell = (() => {
   // tool's own header (hidden in the shell) so the framing is consistent.
   const TOOL_INFO = {
     advisor:        { icon: '🏭', title: 'Migration Advisor', desc: `Find your companies outside Ireland, what their wage tax funds abroad, and what moving home is worth.` },
-    clockin:        { icon: '⏱',  title: 'Clock-In Monitor',  desc: `See when each of your workers last clocked in, on a 48-hour timeline, plus a payroll projection.` },
+    clockin:        { icon: '⏱',  title: 'Manager Check-In',  desc: `Check your company managers, their activity, last login and hourly pay.` },
     wealth:         { icon: '💰', title: 'Wealth Tracker',    desc: `Track any Irish player's wealth over time — total, or split into companies, items, money, equipment and weapons.` },
     'buddy-finder': { icon: '🤝', title: 'Buddy Finder',      desc: `Find a buddy for the Irish buddy system (you hire each other at minimum wage), or join the waiting list.` },
     products:       { icon: '🎯', title: 'Top products',    desc: `Compare product margins from the latest market trades. Rankings change, and switching affects employee specialisation and trait bonuses.` },

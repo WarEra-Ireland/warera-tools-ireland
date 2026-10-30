@@ -14,8 +14,7 @@
  *                    progress, what's waiting (hands, replacements,
  *                    mismatches) and the top three energy actions
  *                    (EmployeeTrainingTool.summary)
- *    ⏱ Clock-In    — each worker: status pill, last clock-in, stat chips,
- *                    plus 24h payroll
+ *    ⏱ Managers    — each company manager, activity status and hourly pay
  *    📈 Daily Profit— simplified projected income broken into rows
  *                    (companies + salary only — missions, case sales and
  *                    deductions are conditional, so they belong to the full
@@ -28,8 +27,8 @@
  *  via #dashboard (or #dashboard?u=<name>).
  *
  *  Reuse: the economic model (production-bonus maths, net-per-PP pricing,
- *  salary modelling) and the clock-in/status logic are ported from
- *  js/daily-profit.js and js/clockin.js, and the Migration card calls
+ *  salary modelling) is ported from js/daily-profit.js. Managers load via
+ *  ClockInTool.loadRows, and the Migration card calls
  *  AdvisorTool.loadPlacements, so the numbers agree with the full tools
  *  for everything this page actually shows.
  *
@@ -41,8 +40,6 @@
  *  honouring ?bypass=1.
  * ═══════════════════════════════════════════════════════════════════ */
 const DashboardTool = (() => {
-  const ACTIVE_MS = 24 * 3600 * 1000;  // < this since last clock-in → Active
-  const WINDOW_MS = 48 * 3600 * 1000;  // < this → Slowing; older/never → Idle
   const CLOCKIN_PREVIEW = 6;           // worker rows shown before "show more"
   const { FIDELITY_DAY1_PCT, FIDELITY_DAY5_PCT, META, ICON_FILE, skill, resolveUsername } = ProfitCore;
 
@@ -111,14 +108,6 @@ const DashboardTool = (() => {
     return v.toFixed(dp).replace(/\.0$/, '');
   };
   const pct = (v) => (v == null || !isFinite(v)) ? '–' : (v >= 0 ? '+' : '') + v.toFixed(1) + '%';
-  const fmtAgo = (ms) => {
-    if (ms == null || !isFinite(ms)) return 'never';
-    if (ms < 60_000) return 'just now';
-    if (ms < 3_600_000) return `${Math.floor(ms / 60_000)}m ago`;
-    if (ms < 86_400_000) return `${Math.floor(ms / 3_600_000)}h ago`;
-    return `${Math.floor(ms / 86_400_000)}d ago`;
-  };
-
   async function fetchJsonUrl(url) {
     const res = await fetch(url, { cache: 'no-cache' });
     if (!res.ok) { if (res.status === 404) return null; throw new Error(`HTTP ${res.status}`); }
@@ -127,12 +116,6 @@ const DashboardTool = (() => {
 
   /* ── Visual building blocks (toie style) ─────────────────────────── */
   function pill(label, kind) { return `<span class="dash-pill ${kind}">${escapeHtml(label)}</span>`; }
-  function statusPill(lastMs) {
-    if (lastMs == null)        return pill('Idle · never', 'loss');
-    if (lastMs < ACTIVE_MS)    return pill(`Active · ${fmtAgo(lastMs)}`, 'ok');
-    if (lastMs < WINDOW_MS)    return pill(`Slowing · ${fmtAgo(lastMs)}`, 'warn');
-    return pill(`Idle · ${fmtAgo(lastMs)}`, 'loss');
-  }
   const chip = (label, value) => `<span class="dash-chip"><i>${escapeHtml(label)}</i>${escapeHtml(String(value))}</span>`;
 
   /* ── Card scaffolding ────────────────────────────────────────────── */
@@ -140,7 +123,7 @@ const DashboardTool = (() => {
     { key: 'migration', icon: '🏭', title: 'Migration',     href: '#advisor' },
     { key: 'products',  icon: '🎯', title: 'Top products', href: '#products' },
     { key: 'training',  icon: '🎓', title: 'Employee Training', href: '#training' },
-    { key: 'clockin',   icon: '⏱',  title: 'Clock-In',      href: '#clockin' },
+    { key: 'clockin',   icon: '⏱',  title: 'Managers',      href: '#clockin' },
     { key: 'profit',    icon: '📈', title: 'Daily Profit',  href: '#profit'  },
     { key: 'wealth',    icon: '💰', title: 'Wealth Trend',  href: '#wealth'  },
     { key: 'buddy',     icon: '🤝', title: 'Buddy System',  href: '#buddy-finder' },
@@ -440,92 +423,33 @@ const DashboardTool = (() => {
   }
 
   /* ── Card: Clock-In ──────────────────────────────────────────────── */
-  async function fillClockin(full, companiesP, workersP) {
+  async function fillClockin(full) {
     try {
-      const workersData = await workersP;
-      // Build worker rows from the roster: id, wage, fidelity, company tag.
-      const rows = [];
-      (workersData?.workersPerCompany || []).forEach((entry) => {
-        const co = (entry && typeof entry.company === 'object') ? entry.company : null;
-        (entry.workers || []).forEach(w => {
-          const id = w?.user || (typeof w === 'string' ? w : null);
-          if (!id || id === full._id) return;
-          rows.push({ id, wage: typeof w?.wage === 'number' ? w.wage : null, fidelity: w?.fidelity || 0,
-                      coName: co?.name || null, coItem: co?.itemCode || null });
-        });
-      });
-      // De-dupe (a worker holds one contract).
-      const seen = new Set();
-      const workers = rows.filter(r => (seen.has(r.id) ? false : seen.add(r.id)));
-      if (!workers.length) { setBody('clockin', lead('No workers', 'Nobody is employed in your companies right now.')); return; }
-
-      // Profiles (name + skills) and latest clock-in / 24h pay, per worker.
-      const now = Date.now(), cutoff = now - ACTIVE_MS;
-      // Two procedures over the same worker list, so each becomes one set of
-      // tRPC batches rather than two requests per worker. The pair still runs
-      // concurrently, so this costs no extra wall-clock time.
-      const [lites, pages] = await Promise.all([
-        trpcManyValues('user.getUserLite',
-          workers.map(w => ({ userId: w.id }))),
-        trpcManyValues('transaction.getPaginatedTransactions',
-          workers.map(w => ({ userId: w.id, transactionType: 'wage', limit: 100 }))),
-      ]);
-      workers.forEach((w, index) => {
-        const lite = lites[index];
-        const page = pages[index];
-        w.name = lite?.username || null;
-        w.production = skill(lite, 'production');
-        w.energy = skill(lite, 'energy');
-        let last = null, paid = 0;
-        for (const tx of (page?.items || page?.data || [])) {
-          if (tx.sellerId !== w.id) continue;
-          if (full._id && tx.buyerId !== full._id) continue;
-          const t = new Date(tx.createdAt).getTime();
-          if (!isFinite(t)) continue;
-          if (last == null || t > last) last = t;
-          if (t >= cutoff) paid += (tx.money || 0);
-        }
-        w.lastMs = last == null ? null : now - last;
-        w.paid24 = paid;
-      });
-
-      const active = workers.filter(w => w.lastMs != null && w.lastMs < ACTIVE_MS).length;
-      const idle   = workers.length - active;
-      const payroll = workers.reduce((s, w) => s + (w.paid24 || 0), 0);
-      setNote('clockin', `${workers.length} worker${workers.length === 1 ? '' : 's'}`);
-
-      // Idle first, then most-recently-active.
-      workers.sort((a, b) => (b.lastMs ?? Infinity) - (a.lastMs ?? Infinity));
-      const rowHtml = (w) => {
-        const link = w.name
-          ? `<a href="${GAME_BASE}/user/${w.id}" target="_blank" rel="noopener">${escapeHtml(w.name)}</a>`
-          : `<span class="dash-muted">user ${escapeHtml(w.id).slice(-6)}</span>`;
-        const co = w.coName || w.coItem
-          ? `<span class="dash-tag">${w.coItem ? iconHtml(w.coItem) : ''}${escapeHtml(w.coName || itemName(w.coItem))}</span>` : '';
-        const chips = [
-          w.production ? chip('Prod', Math.round(w.production)) : '',
-          w.energy ? chip('Energy', Math.round(w.energy)) : '',
-          w.wage != null ? chip('Wage', w.wage) : '',
-          w.fidelity ? chip('Fid', w.fidelity) : '',
-        ].join('');
+      const rows = await ClockInTool.loadRows(full._id);
+      const contracts = rows.filter(r => r.manager);
+      const active = contracts.filter(r => r.manager.isInactive === false).length;
+      const inactive = contracts.filter(r => r.manager.isInactive === true).length;
+      setNote('clockin', `${contracts.length} manager contracts`);
+      if (!rows.length) {
+        setBody('clockin', lead('No companies', 'No active companies found for this account.'));
+        return;
+      }
+      const rowHtml = ({ company, manager, profile }) => {
+        const status = !manager ? pill('No manager', 'warn')
+          : manager.isInactive === true ? pill('Inactive', 'loss')
+          : manager.isInactive === false ? pill('Active', 'ok') : pill('Unknown', 'warn');
+        const name = manager ? escapeHtml(profile?.username || `User ${manager.user.slice(-6)}`) : 'Vacant';
         return `<div class="dash-row">
-          <div class="dash-row-main"><div class="dash-row-title">${link} ${co}</div>${statusPill(w.lastMs)}</div>
-          <div class="dash-chips">${chips}</div>
+          <div class="dash-row-main"><div class="dash-row-title">${name} <span class="dash-tag">${escapeHtml(company.name || 'Company')}</span></div>${status}</div>
+          <div class="dash-chips">${manager && Number.isFinite(manager.hourlyWage) ? chip('Hourly pay', `₿${manager.hourlyWage}`) : ''}</div>
         </div>`;
       };
-
-      const preview = workers.slice(0, CLOCKIN_PREVIEW).map(rowHtml).join('');
-      const rest = workers.slice(CLOCKIN_PREVIEW);
-      const more = rest.length
-        ? `<details class="dash-more"><summary>Show ${rest.length} more worker${rest.length === 1 ? '' : 's'}</summary>${rest.map(rowHtml).join('')}</details>`
-        : '';
+      const rest = rows.slice(CLOCKIN_PREVIEW);
       setBody('clockin', `
-        <div class="dash-statline">
-          <span class="dash-pos">${active} active</span> · <span class="${idle ? 'dash-neg' : 'dash-muted'}">${idle} idle</span>
-          <span class="dash-muted">· payroll 24h <strong>₿${fmtK(payroll)}</strong></span>
-        </div>
-        <div class="dash-rows">${preview}${more}</div>`);
-    } catch (e) { setError('clockin', `Couldn't load workers: ${e.message}`); }
+        <div class="dash-statline"><span class="dash-pos">${active} active</span> · <span class="dash-neg">${inactive} inactive</span> · ${rows.length - contracts.length} vacancies</div>
+        <div class="dash-rows">${rows.slice(0, CLOCKIN_PREVIEW).map(rowHtml).join('')}
+          ${rest.length ? `<details class="dash-more"><summary>Show ${rest.length} more companies</summary>${rest.map(rowHtml).join('')}</details>` : ''}</div>`);
+    } catch (e) { setError('clockin', `Couldn't load managers: ${e.message}`); }
   }
 
   /* ── Heavy shared load: economy (Profit + Migration) ─────────────── */
@@ -811,9 +735,8 @@ const DashboardTool = (() => {
       renderScaffold(full.username);
       rememberLoadedAccount(full.username);
 
-      // v0.27: the buddy, clock-in and economy cards are paused (their tools
-      // are, and worker.getWorkers is gone). Restore their fills here, with
-      // the companies/workers fetches they share, once those are rebuilt.
+      // The buddy and economy cards still depend on the removed worker API.
+      fillClockin(full);
       fillWealth(full);
       fillMU(full);
       fillMigration(full);
