@@ -56,7 +56,7 @@ const WealthMonitorTool = (() => {
   let historySnaps = [];              // the resolved player's snapshots
   let readingTimes = new Map();       // bucketKey -> time of the reading it shows
   const OPENING = 'opening';          // x-slot key for the range's first reading
-  const chart      = { user: null, metric: 'total', bucket: 'day', range: 'all' };
+  const chart      = { user: null, metric: 'total', ...loadWealthView() };
 
   // Helpers
   const wm_trpc = (endpoint, input) => trpc(endpoint, input, { retry: true });
@@ -280,7 +280,7 @@ const WealthMonitorTool = (() => {
     if (current && current.user._id === chart.user && current.wealth) {
       const w = current.wealth;
       snaps.push({
-        t: now.toISOString(),
+        t: now.toISOString(), live: true,
         companies: w.companies, items: w.items, money: w.money,
         equipments: w.equipments, weapons: w.weapons, total: w.total,
       });
@@ -640,15 +640,18 @@ const WealthMonitorTool = (() => {
     const b = e.target.closest('button'); if (!b) return;
     chart.range = b.dataset.range;
     chart.bucket = wealthBucketFor(chart.range, chart.bucket);
+    saveWealthView(chart.range, chart.bucket);
     syncRangeControls();
     renderChart();
   });
   $bucketSeg.addEventListener('click', e => {
     const b = e.target.closest('button'); if (!b || b.disabled) return;
     chart.bucket = b.dataset.bucket;
+    saveWealthView(chart.range, chart.bucket);
     syncRangeControls();
     renderChart();
   });
+  syncRangeControls();
 
   return {
     /**

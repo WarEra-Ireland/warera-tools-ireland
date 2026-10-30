@@ -1194,6 +1194,7 @@ function wealthWeekBucketKey(iso, now) {
 // Range choices, in display order. A bucket as wide as its range or wider
 // would hold every reading, so only narrower buckets are offered.
 const WEALTH_RANGES = [
+  { key: 'day',     label: '1D',  title: 'Latest daily snapshot to now', buckets: ['day'] },
   { key: 'week',    label: '1W',  title: 'Last week',     buckets: ['day'] },
   { key: 'month',   label: '1M',  title: 'Last month',    buckets: ['day', 'week'] },
   { key: '3months', label: '3M',  title: 'Last 3 months', buckets: ['day', 'week', 'month'] },
@@ -1211,11 +1212,32 @@ function wealthBucketFor(range, bucket) {
   return buckets.includes(bucket) ? bucket : buckets[buckets.length - 1];
 }
 
+// The chosen range and bucket persist across visits, shared by the dashboard
+// card and the Wealth page.
+const WEALTH_VIEW_KEY = 'warera:wealth-chart-view';
+
+function loadWealthView() {
+  let saved = null;
+  try { saved = JSON.parse(localStorage.getItem(WEALTH_VIEW_KEY) || 'null'); } catch { /* storage off */ }
+  const range = WEALTH_RANGES.some(r => r.key === saved?.range) ? saved.range : 'day';
+  return { range, bucket: wealthBucketFor(range, saved?.bucket) };
+}
+
+function saveWealthView(range, bucket) {
+  try { localStorage.setItem(WEALTH_VIEW_KEY, JSON.stringify({ range, bucket })); } catch { /* storage off */ }
+}
+
 // Filter before bucketing so an older reading cannot enter the selected range.
+// The day range opens at the latest stored (non-live) snapshot, so it shows
+// what was earned since the last daily log, however long ago that was.
 function wealthSnapshotsInRange(snapshots, range, now = new Date()) {
   if (range === 'all') return snapshots;
   let start;
-  if (range === 'week') {
+  if (range === 'day') {
+    const stored = snapshots.filter(s => !s.live).map(s => s.t).sort();
+    if (!stored.length) return snapshots;
+    start = new Date(stored[stored.length - 1]);
+  } else if (range === 'week') {
     start = wealthWeekBoundary(now, 1);
   } else {
     start = wealthMonthBoundary(now, range === '3months' ? 3 : 1);

@@ -165,7 +165,7 @@ const DashboardTool = (() => {
     ['equipments', 'Gear',      '#a78bfa'],
     ['weapons',    'Weapons',   '#f87171'],
   ];
-  const wealthState = { snaps: [], metric: 'total', bucket: 'day', range: 'all' };
+  const wealthState = { snaps: [], metric: 'total', ...loadWealthView() };
 
   async function fillWealth(full) {
     try {
@@ -174,9 +174,9 @@ const DashboardTool = (() => {
       const hist = await fetchJsonUrl(`data/wealth/${full._id}.json?t=${Math.floor(Date.now() / 30000)}`).catch(() => null);
       let snaps = (hist && Array.isArray(hist.snapshots)) ? hist.snapshots.filter(s => typeof s.total === 'number') : [];
       // Live "now" point carries every component so every metric tab matches.
-      snaps = snaps.concat([{ t: new Date().toISOString(), companies: w.companies, items: w.items, money: w.money, equipments: w.equipments, weapons: w.weapons, total: w.total }]);
+      snaps = snaps.concat([{ t: new Date().toISOString(), live: true, companies: w.companies, items: w.items, money: w.money, equipments: w.equipments, weapons: w.weapons, total: w.total }]);
       snaps.sort((a, b) => new Date(a.t) - new Date(b.t));
-      wealthState.snaps = snaps; wealthState.metric = 'total'; wealthState.bucket = 'day'; wealthState.range = 'all';
+      wealthState.snaps = snaps; wealthState.metric = 'total'; Object.assign(wealthState, loadWealthView());
 
       setNote('wealth', `${snaps.length} record${snaps.length === 1 ? '' : 's'}`);
 
@@ -324,9 +324,11 @@ const DashboardTool = (() => {
       } else if (group === 'range') {
         wealthState.range = val;
         wealthState.bucket = wealthBucketFor(val, wealthState.bucket);
+        saveWealthView(wealthState.range, wealthState.bucket);
         syncRangeControls();
       } else {
         wealthState.bucket = val;
+        saveWealthView(wealthState.range, wealthState.bucket);
         syncRangeControls();
       }
       renderWealth();
