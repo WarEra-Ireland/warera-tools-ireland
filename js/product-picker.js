@@ -2,7 +2,7 @@
  *  PRODUCT PICKER
  *
  *  What each company earns now, and what it would earn making something
- *  else. Built for v0.27 (docs/v0.27-update.md), laid out like the old
+ *  else. Built for v0.27, laid out like the old
  *  Daily Profit tool: projected income, profit by product, your companies.
  *
  *  Output comes from three sources, all in production points (PP):
@@ -26,8 +26,8 @@
  *  from: an employee is paid ppValue × expectation (70–130%) for each base
  *  point, and produces (1 + bonus) points for it. The bonus counted is the
  *  owner's Management and the manager (+2% a point, +44% together at most)
- *  plus +5% in a core region. Happiness and traits are per employee and
- *  can't be read with an API key.
+ *  plus +5% in a core region. The threshold excludes individual happiness,
+ *  traits and specialization.
  *
  *  Prices are the volume-weighted average of each item's latest market
  *  trades (transaction.getPaginatedTransactions, type "trading"). Trades
@@ -36,8 +36,8 @@
  *
  *  Switching product costs company.changeItemCost concrete. Employees also
  *  lose their specialization on the old product while they make the new
- *  one (it's saved per product). That isn't counted: it's per employee,
- *  employees move between companies, and the API can't read them.
+ *  one (it's saved per product). The full tool shows this progress from
+ *  employee rosters; switching estimates still hold output fixed.
  *
  *  Access: Irish citizens only (enforceIrishOnly). bypass=1 lifts it.
  * ═══════════════════════════════════════════════════════════════════ */
@@ -87,19 +87,17 @@ const ProductPickerTool = (() => {
   const $income     = document.getElementById('pp-income');
   const $prodCard   = document.getElementById('pp-products-card');
   const $prodTable  = document.getElementById('pp-products');
-  const $prodNote   = document.getElementById('pp-products-note');
   const $compCard   = document.getElementById('pp-companies-card');
   const $compTable  = document.getElementById('pp-companies');
-  const $howto      = document.getElementById('pp-howto');
   const $mobile     = document.getElementById('pp-mobile');
   const steps       = makeSteps(document.getElementById('pp-steps'));
   const setStatus   = makeStatus(document.getElementById('pp-status'));
 
   let model = null;
-  // What-if overrides for the income card's PP fields, and the product
-  // table's sort. Both reset when a new player loads.
+  // What-if output and table sorting reset when a new player loads.
   let overrides = {};
-  let sort = { key: 'total', dir: -1 };
+  let sort = { key: 'totalWithoutSelf', dir: -1 };
+  let companySort = { key: 'company', dir: 1 };
 
   const pp_trpc = (endpoint, input) => trpc(endpoint, input, { retry: true });
 
@@ -155,8 +153,9 @@ const ProductPickerTool = (() => {
    *
    * @param {{_id: string, username: string}} user
    * @param {function(number, string, Object):void} [step]
+   * @param {{includeSpecialisations?: boolean}} [options]
    */
-  async function loadModel(user, step = () => {}) {
+  async function loadModel(user, step = () => {}, { includeSpecialisations = false } = {}) {
     step(2, 'active', { sub: 'Fetching company list' });
     const full = user.skills?.management?.total != null ? user : await pp_trpc('user.getUserById', { userId: user._id });
     const [companyList, gameConfig, country, ppValue] = await Promise.all([
@@ -173,12 +172,13 @@ const ProductPickerTool = (() => {
       .filter(c => c && !c.disabledAt);
     if (!companies.length) throw new Error(`All of "${full.username}"'s companies are disabled`);
     const byCompany = companies.map(c => ({ companyId: c._id }));
-    const [statsSettled, managers, offers, regions] = await Promise.all([
+    const [statsSettled, managers, offers, regions, rosters] = await Promise.all([
       // Only Premium API keys can read this; a 403 means the proxy has none.
       trpcMany('work.getStatsByCompany', companies.map(c => ({ companyId: c._id, days: 2 }))),
       trpcManyValues('manager.getByCompanyId', byCompany),
       trpcManyValues('managerOffer.getByCompanyId', byCompany),
       trpcManyValues('region.getById', [...new Set(companies.map(c => c.region))].map(regionId => ({ regionId }))),
+      includeSpecialisations ? trpcManyValues('employee.getCompanyEmployees', byCompany) : [],
     ]);
     const managerIds = [...new Set(managers.map(m => m?.user).filter(Boolean))];
     const managerUsers = await trpcManyValues('user.getUserLite', managerIds.map(userId => ({ userId })));
@@ -196,6 +196,7 @@ const ProductPickerTool = (() => {
         aePP: aeLevels[company.activeUpgradeLevels?.automatedEngine]?.stats?.dailyProd || 0,
         ...lastFullDay(stats),
         statsMissing: stats == null,
+        employees: Array.isArray(rosters[i]) ? rosters[i] : null,
         manager,
         managerName: manager ? managerName[manager.user] || null : null,
         managerPct: manager?.productionBonusPercent || 0,
@@ -218,6 +219,9 @@ const ProductPickerTool = (() => {
       ppValue: typeof ppValue === 'number' && ppValue > 0 ? ppValue : null,
       changeItemCost: gameConfig?.company?.changeItemCost ?? CHANGE_ITEM_COST_FALLBACK,
       statsNeedPremium,
+      selfWorkEnergy: full.skills?.energy?.total ?? null,
+      selfWorkProduction: full.skills?.production?.total ?? null,
+      selfWorkEnergyCost: gameConfig?.user?.energyCostPerAction ?? null,
     };
   }
 
@@ -279,12 +283,15 @@ const ProductPickerTool = (() => {
       const mine = m.companies.filter(c => c.company.itemCode === code);
       if (!mg) return { code, mg, owned: mine.length };
       const maxEmployees = empPP * mg.perPP - costs;
+      const maxEngines = aePP * mg.perPP;
+      const maxSelf = selfPP * mg.perPP;
+      const totalWithoutSelf = maxEngines + Math.max(0, maxEmployees);
       return {
         code, mg, owned: mine.length,
-        maxEngines: aePP * mg.perPP,
+        maxEngines,
         maxEmployees,
-        maxSelf: selfPP * mg.perPP,
-        total: aePP * mg.perPP + Math.max(0, maxEmployees) + selfPP * mg.perPP,
+        maxSelf, totalWithoutSelf,
+        totalWithSelf: totalWithoutSelf + maxSelf,
         profitDay: (aePP + empPP + selfPP) * mg.perPP - costs,
         actual: mine.length ? mine.reduce((sum, c) => sum + profitAt(m, c, code), 0) : null,
         payOff: payOffLimit(m, code, m.mgmtPct + corePct),
@@ -311,6 +318,14 @@ const ProductPickerTool = (() => {
       cost: concrete != null ? m.changeItemCost * concrete : null,
     };
   }
+
+  const HELP = {
+    income: ['About projected income', '<p>Total per day and week includes engines and employees, minus wages and manager pay. It excludes self-work. Engines use their configured output; employee output and wages use the last full UTC day.</p><p>The estimate beneath Total adds one full energy bar spent on self-work at your best-margin owned product, using your Production stat. The weekly estimate assumes this each day. It assumes storage space and excludes energy regenerated while working.</p><p>Engine and employee inputs update income and product comparisons as you type, keeping their current product mix and costs. The self-work input starts at one full energy bar and affects the product comparison only. Company rows and Actual values keep the loaded figures.</p>'],
+    best: ['About the best product', '<p>The best product has the highest margin per production point at current market prices.</p><p>The switching gain uses your current output and costs. Changing products can reduce employee specialization, which is not included. Small gains may disappear as prices change.</p>'],
+    products: ['About product margins', '<p>Margin per production point (PP) is the sale price after market tax, minus input costs, divided by the PP needed to make it. Inputs use market prices even when you make them yourself.</p><p>Prices average the latest 100 trades, weighted by quantity. Trades older than 24 hours are excluded. Products without recent prices are omitted.</p><p>Max columns put all your output into that product. Without self-work adds engines and profitable employee output. With self-work adds Max self-work, using the PP input above. Both exclude employee output when it loses money. The default sort is Without self-work, highest first. Actual is what your companies making it earn now. Green rows are products you make. Click a heading to sort.</p><p>Employees pay off shows the highest wage expectation that earns a profit, using your Management and core-region bonus. Wages use the game’s PP value × wage expectation (70–130%). Bonuses increase output without increasing wages. This threshold excludes individual happiness, traits and specialisation.</p>'],
+    companies: ['About company profits and switching', '<p>Daily profit is output × the current product margin, minus wages and manager pay. Employee bonuses include your Management, the manager and a core region.</p><p>Gain per day compares the current product with the best product at the same output and costs. Switch cost is the concrete needed to change products. Companies start grouped by product, then ordered by company name. Click a column heading to sort; click again to reverse it.</p><p>Expand Specialisations to see each employee’s current bonus and saved progress on other products, capped at +20%. An unlisted product has no saved progress. Switching restores that product’s progress. Gains hold output fixed and do not include the change in specialisation.</p>'],
+  };
+  const help = key => sectionHelp(...HELP[key]);
 
   /* ── Rendering ─────────────────────────────────────────── */
   const num = (v, dp = 2) => v == null || !isFinite(v) ? '–'
@@ -395,46 +410,96 @@ const ProductPickerTool = (() => {
   }
 
   /** Money earned per source on each company's current product, and the total. */
-  function incomeSummary() {
-    const t = totals(model);
-    const earned = pick => model.companies.reduce((sum, c) => sum + pick(c) * (margin(model, c.company.itemCode)?.perPP ?? 0), 0);
-    const costs = t.wage + t.managerDay;
+  function incomeSummary(m = model, ov = {}) {
+    const actual = totals(m);
+    const t = {
+      ...actual,
+      aePP: ov.aePP ?? actual.aePP,
+      empPP: ov.empPP ?? actual.empPP,
+      selfPP: ov.selfPP ?? actual.selfPP,
+    };
+    const ownedMargins = m.companies.map(c => margin(m, c.company.itemCode)?.perPP).filter(v => v != null);
+    const fallbackMargin = ownedMargins.length ? Math.max(...ownedMargins) : 0;
+    const earned = key => {
+      const current = m.companies.reduce((sum, c) => sum + c[key] * (margin(m, c.company.itemCode)?.perPP ?? 0), 0);
+      return ov[key] == null ? current : t[key] * (actual[key] > 0 ? current / actual[key] : fallbackMargin);
+    };
+    const engines = earned('aePP'), employees = earned('empPP'), self = earned('selfPP');
+    const costs = actual.wage + actual.managerDay;
     return {
-      t, costs,
-      engines: earned(c => c.aePP), employees: earned(c => c.empPP), self: earned(c => c.selfPP),
-      total: earned(outputPP) - costs,
+      t, costs, engines, employees, self,
+      total: engines + employees + self - costs,
+      statsMissing: m.companies.some(c => c.statsMissing),
+      unpriced: m.companies.some(c => !margin(m, c.company.itemCode)),
     };
   }
 
+  /** One full energy bar spent on the best-margin product already owned. */
+  function selfWorkProjection(m) {
+    const energy = m.selfWorkEnergy, production = m.selfWorkProduction, cost = m.selfWorkEnergyCost;
+    if (![energy, production, cost].every(Number.isFinite) || energy < 0 || production < 0 || cost <= 0) return null;
+    let best = null;
+    for (const c of m.companies) {
+      const mg = margin(m, c.company.itemCode);
+      if (!mg) return null;
+      if (!best || mg.perPP > best.perPP) best = { company: c.company, perPP: mg.perPP };
+    }
+    if (!best) return null;
+    const actions = Math.floor(energy / cost);
+    const pp = actions * production;
+    return { energy, cost, actions, pp, profit: pp * best.perPP, company: best.company };
+  }
+
   function renderIncome() {
-    const { t, costs, engines, employees, self, total } = incomeSummary();
+    const t = totals(model);
+    overrides.selfPP ??= selfWorkProjection(model)?.pp ?? 0;
     const field = (id, label, value, suffix) => `
       <div class="dp-field">
         <label for="${id}">${label}</label>
         <input type="number" id="${id}" value="${Math.round(value)}" min="0" step="1">
         <span class="dp-suffix">${suffix}</span>
       </div>`;
-    const tile = (label, value, sub, cls = '') => `<div class="dp-inc ${cls}"><div class="dp-inc-label">${label}</div><div class="dp-inc-val">${value}</div><div class="dp-inc-sub">${sub}</div></div>`;
     $incomeHead.textContent = `Projected income · ${model.username}`;
     $assump.innerHTML = `
       ${field('pp-ae', 'Engine PP / day', overrides.aePP ?? t.aePP, 'automated engines')}
       ${field('pp-emp', 'Employee PP / day', overrides.empPP ?? t.empPP, 'last full day')}
-      ${field('pp-self', 'Self-work PP / day', overrides.selfPP ?? t.selfPP, 'last full day')}`;
-    $income.innerHTML = `
-      ${tile('Engines', money(engines), `${num(t.aePP, 0)} PP`)}
-      ${tile('Employees', money(employees), `${num(t.empPP, 0)} PP`)}
-      ${tile('Self-work', money(self), `${num(t.selfPP, 0)} PP`)}
-      ${tile('Wages + managers', '−' + money(costs), `employee tax ${num(model.taxes.income, 0)}% is withheld from wages`, 'dp-inc-deduct')}
-      ${tile('Total / day', money(total), `≈ ${money(total * 7)} / week`, total < 0 ? 'total dp-inc-deduct' : 'total')}`;
-    const bind = (id, key) => $assump.querySelector(`#${id}`).addEventListener('change', e => {
+      ${field('pp-self', 'Self-work PP / day', overrides.selfPP, 'product comparison only')}`;
+    renderIncomeTotals();
+    const bind = (id, key) => $assump.querySelector(`#${id}`).addEventListener('input', e => {
       const v = parseFloat(e.target.value);
       overrides[key] = isFinite(v) && v >= 0 ? v : 0;
+      renderIncomeTotals();
       renderProducts();
+      renderMobile();
     });
     bind('pp-ae', 'aePP');
     bind('pp-emp', 'empPP');
     bind('pp-self', 'selfPP');
     $incomeCard.classList.remove('hidden');
+  }
+
+  function incomeTotalValue(total) {
+    return `${money(total)}<small class="pp-total-week">≈ ${money(total * 7)}/week</small>`;
+  }
+
+  function incomeTotalNote(total) {
+    const projection = selfWorkProjection(model);
+    if (!projection) return 'Self-work estimate unavailable';
+    const withSelfWork = total + projection.profit;
+    return `With self-work: ${money(withSelfWork)}/day · ${money(withSelfWork * 7)}/week`;
+  }
+
+  const incomeTone = value => value > 0 ? 'pp-inc-positive' : value < 0 ? 'pp-inc-negative' : '';
+
+  function renderIncomeTotals() {
+    const { t, costs, engines, employees } = incomeSummary(model, overrides);
+    const total = engines + employees - costs;
+    const tile = (label, value, sub, cls = '') => `<div class="dp-inc ${cls}"><div class="dp-inc-label">${label}</div><div class="dp-inc-val">${value}</div><div class="dp-inc-sub">${sub}</div></div>`;
+    $income.innerHTML = `
+      ${tile('Engines', money(engines), `${num(t.aePP, 0)} PP`, incomeTone(engines))}
+      ${tile('Employees', money(employees), `${num(t.empPP, 0)} PP`, incomeTone(employees))}
+      ${tile('Wages + managers', '−' + money(costs), `employee tax ${num(model.taxes.income, 0)}% is withheld from wages`, 'dp-inc-deduct')}
+      ${tile('Total / day', incomeTotalValue(total), incomeTotalNote(total), total < 0 ? 'total dp-inc-deduct' : 'total')}`;
   }
 
   const PRODUCT_COLS = [
@@ -443,72 +508,113 @@ const ProductPickerTool = (() => {
     { key: 'maxEngines',   label: 'Max engines', title: 'If all your automated engines made this' },
     { key: 'maxEmployees', label: 'Max employees', title: 'If all your employees made this, minus wages and managers' },
     { key: 'maxSelf',      label: 'Max self-work', title: 'If all your self-work went into this' },
-    { key: 'total',        label: 'Total max', title: 'Max engines + max self-work, plus max employees when positive' },
+    { key: 'totalWithoutSelf', label: 'Without self-work', title: 'Max engines plus max employees when positive, per day' },
+    { key: 'totalWithSelf', label: 'With self-work', title: 'Total without self-work plus max self-work, per day' },
     { key: 'actual',       label: 'Actual / day', title: 'What your companies making this earn now' },
     { key: 'payOff',       label: 'Employees pay off', title: 'Highest wage expectation (70–130%) at which an employee still makes money on this product, with your Management and core-region bonus' },
   ];
   const sortValue = (r, key) => key === 'name' ? (ITEMS[r.code]?.name || r.code)
     : key === 'perPP' ? r.mg?.perPP : r[key];
 
+  function compareValues(a, b, dir) {
+    if (a == null && b == null) return 0;
+    if (a == null) return 1;
+    if (b == null) return -1;
+    return (typeof a === 'string' ? a.localeCompare(b) : a - b) * dir;
+  }
+
+  function sortableHead(columns, state) {
+    return `<thead><tr>${columns.map(c => {
+      const active = state.key === c.key;
+      const aria = active ? (state.dir === 1 ? 'ascending' : 'descending') : 'none';
+      const arrow = active ? (state.dir === 1 ? '▲' : '▼') : '↕';
+      return `<th class="dp-sortable${c.l ? ' dp-l' : ''}" aria-sort="${aria}"${c.title ? ` title="${escapeHtml(c.title)}"` : ''}><button type="button" class="pp-sort" data-sort-key="${c.key}">${c.label}<span class="dp-sort-arrow" aria-hidden="true">${arrow}</span></button></th>`;
+    }).join('')}</tr></thead>`;
+  }
+
+  function bindSorting(table, columns, state, update, renderTable) {
+    table.querySelectorAll('button[data-sort-key]').forEach(button => button.addEventListener('click', () => {
+      const key = button.dataset.sortKey;
+      const column = columns.find(c => c.key === key);
+      const focused = document.activeElement === button;
+      update({ key, dir: state.key === key ? -state.dir : column.dir || -1 });
+      renderTable();
+      if (focused) table.querySelector(`button[data-sort-key="${key}"]`).focus({ preventScroll: true });
+    }));
+  }
+
   function renderProducts() {
     const { rows } = productRows(model, overrides);
     const priced = rows.filter(r => r.mg);
-    priced.sort((a, b) => {
-      const va = sortValue(a, sort.key), vb = sortValue(b, sort.key);
-      if (va == null) return 1;
-      if (vb == null) return -1;
-      return (va > vb ? 1 : va < vb ? -1 : 0) * sort.dir;
-    });
+    priced.sort((a, b) => compareValues(sortValue(a, sort.key), sortValue(b, sort.key), sort.dir));
     $prodTable.innerHTML = `
-      <thead><tr>${PRODUCT_COLS.map(c => {
-        const active = sort.key === c.key;
-        const arrow = active ? `<span class="dp-sort-arrow">${sort.dir === 1 ? '▲' : '▼'}</span>` : '';
-        const aria = active ? (sort.dir === 1 ? 'ascending' : 'descending') : 'none';
-        return `<th class="dp-sortable${c.l ? ' dp-l' : ''}" data-sort-key="${c.key}" aria-sort="${aria}"${c.title ? ` title="${escapeHtml(c.title)}"` : ''}>${c.label}${arrow}</th>`;
-      }).join('')}</tr></thead>
+      ${sortableHead(PRODUCT_COLS, sort)}
       <tbody>${priced.map(r => `<tr class="${r.owned ? 'dp-owned' : ''}">
         <td class="dp-l">${productCell(r.code, r.owned ? `<span class="dp-pill" title="You have ${r.owned} compan${r.owned === 1 ? 'y' : 'ies'} making this">×${r.owned}</span>` : '')}</td>
         <td><strong>${num(r.mg.perPP, 3)}</strong></td>
         <td>${money(r.maxEngines)}</td>
-        <td>${signedMoney(r.maxEmployees)}</td>
+        <td>${r.maxEmployees < 0 ? signedMoney(r.maxEmployees) : money(r.maxEmployees)}</td>
         <td>${money(r.maxSelf)}</td>
-        <td><strong>${money(r.total)}</strong></td>
+        <td><strong class="${r.totalWithoutSelf > 0 ? 'pp-pos' : r.totalWithoutSelf < 0 ? 'pp-neg' : ''}">${money(r.totalWithoutSelf)}</strong></td>
+        <td><strong>${money(r.totalWithSelf)}</strong></td>
         <td>${r.actual == null ? muted('–') : money(r.actual)}</td>
         <td>${payOffHtml(r.payOff)}</td>
       </tr>`).join('')}</tbody>`;
-    $prodTable.querySelectorAll('th[data-sort-key]').forEach(th => th.addEventListener('click', () => {
-      const key = th.dataset.sortKey;
-      const col = PRODUCT_COLS.find(c => c.key === key);
-      sort = sort.key === key ? { key, dir: -sort.dir } : { key, dir: col.dir || -1 };
-      renderProducts();
-    }));
-    const unpriced = rows.length - priced.length;
-    $prodNote.innerHTML = [
-      `Margin / PP takes the ${num(model.taxes.market, 0)}% market tax off the sale price.`,
-      model.ppValue
-        ? `<strong>Employees pay off</strong> uses the game's value of a production point (${num(model.ppValue, 4)}), which sets every employee's wage: an employee whose wage expectation is above the shown % costs more than they make on that product.`
-        : 'The game\'s production point value is unavailable right now, so <strong>Employees pay off</strong> is blank.',
-      unpriced ? `${unpriced} product${unpriced === 1 ? ' has' : 's have'} no trades in the last 24 hours and ${unpriced === 1 ? 'is' : 'are'} left out.` : '',
-    ].filter(Boolean).join(' ');
+    bindSorting($prodTable, PRODUCT_COLS, sort, value => { sort = value; }, renderProducts);
     $prodCard.classList.remove('hidden');
   }
 
+  const COMPANY_COLS = [
+    { key: 'company', label: 'Product / company', l: true, dir: 1 },
+    { key: 'bonus', label: 'Employee bonus', l: true },
+    { key: 'manager', label: 'Manager', l: true, dir: 1 },
+    { key: 'engine', label: 'Engine PP' },
+    { key: 'employee', label: 'Employee PP' },
+    { key: 'payOff', label: 'Employees pay off', title: 'Highest wage expectation at which an employee still makes money on the current product, with this company’s bonuses' },
+    { key: 'wages', label: 'Wages' },
+    { key: 'profit', label: 'Profit / day' },
+    { key: 'best', label: 'Most profitable', l: true, dir: 1 },
+    { key: 'gain', label: 'Gain / day' },
+    { key: 'cost', label: 'Switch cost' },
+  ];
+
+  function companySortValue({ c, plan }, key) {
+    const switching = plan.gain != null && !plan.isBest;
+    switch (key) {
+      case 'company': return c.company.name || ITEMS[c.company.itemCode]?.name || c.company.itemCode;
+      case 'bonus': return c.empPP ? employeeBonusPct(model, c) : null;
+      case 'manager': return c.manager ? c.managerName || 'Unknown' : null;
+      case 'engine': return c.aePP;
+      case 'employee': return c.statsMissing ? null : c.empPP;
+      case 'payOff': return c.empPP ? payOffLimit(model, c.company.itemCode, employeeBonusPct(model, c)) : null;
+      case 'wages': return costDay(c) > 0 ? costDay(c) : null;
+      case 'profit': return plan.profitNow;
+      case 'best': return plan.best ? ITEMS[plan.best.code]?.name || plan.best.code : null;
+      case 'gain': return switching ? plan.gain : null;
+      case 'cost': return switching ? plan.cost : null;
+    }
+  }
+
   function renderCompanies() {
+    const rows = model.companies.map(c => ({ c, plan: companyPlan(model, c) }));
+    const byProductAndName = (a, b, dir = 1) => {
+      const product = c => ITEMS[c.company.itemCode]?.name || c.company.itemCode;
+      return product(a.c).localeCompare(product(b.c)) * dir
+        || companySortValue(a, 'company').localeCompare(companySortValue(b, 'company'), undefined, { numeric: true, sensitivity: 'base' }) * dir;
+    };
+    rows.sort((a, b) => companySort.key === 'company'
+      ? byProductAndName(a, b, companySort.dir)
+      : compareValues(companySortValue(a, companySort.key), companySortValue(b, companySort.key), companySort.dir) || byProductAndName(a, b));
     $compTable.innerHTML = `
-      <thead><tr>
-        <th class="dp-l">Company</th><th class="dp-l">Employee bonus</th><th class="dp-l">Manager</th>
-        <th>Engine PP</th><th>Employee PP</th>
-        <th title="Highest wage expectation at which an employee still makes money here, on this company's current product with its own bonus">Employees pay off</th>
-        <th>Wages</th><th>Profit / day</th><th class="dp-l">Most profitable</th><th>Gain / day</th><th>Switch cost</th>
-      </tr></thead>
-      <tbody>${model.companies.map(c => {
+      ${sortableHead(COMPANY_COLS, companySort)}
+      <tbody>${rows.map(({ c, plan }, index) => {
         const { company } = c;
-        const plan = companyPlan(model, c);
         const itemName = ITEMS[company.itemCode]?.name;
         const label = company.name && company.name !== itemName ? `<span class="dp-cat">${escapeHtml(company.name)}</span>` : '';
         const switching = plan.gain != null && !plan.isBest;
-        return `<tr>
-          <td class="dp-l"><a href="${companyUrlFor(company._id)}" target="_blank" rel="noopener">${productCell(company.itemCode, label)}</a>${statusTags(c)}</td>
+        const groupStart = companySort.key === 'company' && index > 0 && rows[index - 1].c.company.itemCode !== company.itemCode;
+        return `<tr${groupStart ? ' class="pp-company-group-start"' : ''}>
+          <td class="dp-l"><a href="${companyUrlFor(company._id)}" target="_blank" rel="noopener">${productCell(company.itemCode, label)}</a>${statusTags(c)}${specialisationsHtml(c)}</td>
           <td class="dp-l">${bonusChips(c)}</td>
           <td class="dp-l">${managerHtml(c)}</td>
           <td>${num(c.aePP, 0)}</td>
@@ -521,7 +627,29 @@ const ProductPickerTool = (() => {
           <td>${switching ? money(plan.cost) : muted('–')}</td>
         </tr>`;
       }).join('')}</tbody>`;
+    bindSorting($compTable, COMPANY_COLS, companySort, value => { companySort = value; }, renderCompanies);
     $compCard.classList.remove('hidden');
+  }
+
+  function specialisationsHtml(c) {
+    if (!c.employees) return '<div class="pp-spec-status">Specialisations unavailable</div>';
+    if (!c.employees.length) return '<div class="pp-spec-status">No employees</div>';
+    const current = c.company.itemCode;
+    return `<details class="pp-spec"><summary>Specialisations · ${c.employees.length} employee${c.employees.length === 1 ? '' : 's'}</summary>
+      <ul>${c.employees.map(emp => {
+        const saved = emp.specializations;
+        const currentBonus = emp.productionBonus?.contributions?.find(b => b.source === 'specialization')?.percent;
+        const products = [...new Set([current, ...Object.keys(saved || {})])];
+        return `<li><strong>${escapeHtml(emp.name || 'Unnamed employee')}</strong>
+          <div class="pp-spec-products">${products.map(code => {
+            const progress = code === current && Number.isFinite(currentBonus) ? currentBonus : saved ? saved[code] ?? 0 : null;
+            const bonus = Number.isFinite(progress) ? `+${num(Math.min(20, progress), 0)}%` : 'unavailable';
+            return `<span${code === current ? ' class="pp-spec-current"' : ''}>${escapeHtml(ITEMS[code]?.name || code)} ${bonus}${code === current ? ' · current' : ''}</span>`;
+          }).join('')}</div>
+          ${!saved ? '<div class="pp-spec-status">Saved progress unavailable</div>' : ''}
+        </li>`;
+      }).join('')}</ul>
+    </details>`;
   }
 
   /* ── Phone layout ──────────────────────────────────────────
@@ -538,14 +666,15 @@ const ProductPickerTool = (() => {
 
   function renderMobile() {
     const name = code => escapeHtml(ITEMS[code]?.name || code);
-    const priced = productRows(model).rows.filter(r => r.mg);
+    const priced = productRows(model, overrides).rows.filter(r => r.mg);
     const { best, switchCount, switchGain } = bestSummary();
     const plans = model.companies.map(c => ({ c, plan: companyPlan(model, c) }));
-    const { t, costs, engines, employees, self, total } = incomeSummary();
+    const { t, costs, engines, employees } = incomeSummary(model, overrides);
+    const total = engines + employees - costs;
     const tile = (label, value, sub, cls = '') => `<div class="pp-m-tile ${cls}"><span>${label}</span><b>${value}</b><span>${sub}</span></div>`;
 
     const bestCard = best ? `
-      <div class="pp-m-card pp-m-best">
+      <div class="pp-m-card pp-m-best section-help-card">${help('best')}
         <div class="pp-m-sub">Best product right now</div>
         <div class="pp-m-best-name">${iconBox(best.code)}<span>${name(best.code)}</span></div>
         <div class="pp-m-sub">${num(best.mg.perPP, 3)} per production point${best.owned ? ` · you make ×${best.owned}` : ''} · employees pay off: ${payOffHtml(best.payOff)}</div>
@@ -553,14 +682,13 @@ const ProductPickerTool = (() => {
       </div>` : '';
 
     const incomeCard = `
-      <div class="pp-m-card">
+      <div class="pp-m-card section-help-card">${help('income')}
         <h3>Projected income</h3>
         <div class="pp-m-tiles">
-          ${tile('Engines', money(engines), `${num(t.aePP, 0)} PP`)}
-          ${tile('Employees', money(employees), `${num(t.empPP, 0)} PP`)}
-          ${tile('Self-work', money(self), `${num(t.selfPP, 0)} PP`)}
-          ${tile('Wages + managers', `<span class="pp-neg">−${money(costs)}</span>`, 'last full day')}
-          ${tile('Total / day', `<span class="${total < 0 ? 'pp-neg' : 'pp-pos'}">${money(total)}</span>`, `≈ ${money(total * 7)} / week`, `pp-m-total${total < 0 ? ' neg' : ''}`)}
+          ${tile('Engines', money(engines), `${num(t.aePP, 0)} PP`, incomeTone(engines))}
+          ${tile('Employees', money(employees), `${num(t.empPP, 0)} PP`, incomeTone(employees))}
+          ${tile('Wages + managers', `<span class="pp-neg">−${money(costs)}</span>`, 'last full day', 'pp-m-cost')}
+          ${tile('Total / day', `<span class="${total < 0 ? 'pp-neg' : 'pp-pos'}">${incomeTotalValue(total)}</span>`, incomeTotalNote(total), `pp-m-total${total < 0 ? ' neg' : ''}`)}
         </div>
       </div>`;
 
@@ -569,14 +697,14 @@ const ProductPickerTool = (() => {
         <span class="pp-m-rank">${i + 1}</span>${iconBox(r.code)}
         <div class="pp-m-grow">
           <div class="pp-m-name">${name(r.code)}</div>
-          <div class="pp-m-sub">${r.owned ? `<span class="pp-m-mine">you make ×${r.owned}</span> · ` : ''}${money(r.total)}/day max</div>
+          <div class="pp-m-sub">${r.owned ? `<span class="pp-m-mine">you make ×${r.owned}</span> · ` : ''}<span class="${r.totalWithoutSelf > 0 ? 'pp-pos' : r.totalWithoutSelf < 0 ? 'pp-neg' : ''}">${money(r.totalWithoutSelf)}/day</span> without self-work</div>
+          <div class="pp-m-sub">${money(r.totalWithSelf)}/day with self-work</div>
         </div>
         <div class="pp-m-right"><strong>${num(r.mg.perPP, 3)}</strong>${payOffHtml(r.payOff)}</div>
       </div>`;
     const productsCard = `
-      <div class="pp-m-card">
+      <div class="pp-m-card section-help-card">${help('products')}
         <h3>Best products</h3>
-        <div class="pp-m-sub">Margin per production point, after market tax.</div>
         <div class="pp-m-list">${priced.slice(0, MOBILE_PRODUCTS).map(productRow).join('')}</div>
         ${priced.length > MOBILE_PRODUCTS ? `<details class="pp-m-more"><summary>Show all ${priced.length}</summary>
           <div class="pp-m-list">${priced.slice(MOBILE_PRODUCTS).map((r, i) => productRow(r, i + MOBILE_PRODUCTS)).join('')}</div></details>` : ''}
@@ -585,7 +713,7 @@ const ProductPickerTool = (() => {
     const companyCard = ({ c, plan }) => {
       const code = c.company.itemCode;
       return `
-      <div class="pp-m-card">
+      <div class="pp-m-card section-help-card pp-m-company">${help('companies')}
         <div class="pp-m-row pp-m-head">${iconBox(code)}
           <div class="pp-m-grow">
             <a class="pp-m-name" href="${companyUrlFor(c.company._id)}" target="_blank" rel="noopener">${escapeHtml(c.company.name || ITEMS[code]?.name || code)}</a>
@@ -601,6 +729,7 @@ const ProductPickerTool = (() => {
           <div class="pp-m-wide"><span>Manager</span>${mobileManagerLine(c)}</div>
           <div><span>Employees pay off</span>${c.empPP ? payOffHtml(payOffLimit(model, code, employeeBonusPct(model, c))) : '–'}</div>
         </div>
+        ${specialisationsHtml(c)}
         ${plan.gain != null && !plan.isBest ? `<div class="pp-m-switch">Switch to <strong>${name(plan.best.code)}</strong>: ${signedMoney(plan.gain)}/day · costs ${money(plan.cost)} once</div>` : ''}
       </div>`;
     };
@@ -624,7 +753,11 @@ const ProductPickerTool = (() => {
     renderProducts();
     renderCompanies();
     renderMobile();
-    $howto.classList.remove('hidden');
+    [[$incomeCard, 'income'], [$bestCard, 'best'], [$prodCard, 'products'], [$compCard, 'companies']].forEach(([card, key]) => {
+      card.classList.add('section-help-card');
+      card.querySelector('.section-help')?.remove();
+      card.insertAdjacentHTML('afterbegin', help(key));
+    });
   }
 
   async function run() {
@@ -637,7 +770,7 @@ const ProductPickerTool = (() => {
 
     $go.disabled = true;
     $hint.classList.add('hidden');
-    [$bestCard, $incomeCard, $prodCard, $compCard, $mobile, $howto].forEach(el => el.classList.add('hidden'));
+    [$bestCard, $incomeCard, $prodCard, $compCard, $mobile].forEach(el => el.classList.add('hidden'));
     setStatus('');
     steps.reset();
     try {
@@ -645,8 +778,10 @@ const ProductPickerTool = (() => {
       const user = await resolveUser(username);
       enforceIrishOnly(user.country, user.username);
       steps.setStep(1, 'done', { count: `→ ${user.username}` });
-      model = await loadModel(user, steps.setStep);
+      model = await loadModel(user, steps.setStep, { includeSpecialisations: true });
       overrides = {};
+      sort = { key: 'totalWithoutSelf', dir: -1 };
+      companySort = { key: 'company', dir: 1 };
       rememberLoadedAccount(model.username);
       steps.fadeOut(400);
       render();
@@ -664,7 +799,7 @@ const ProductPickerTool = (() => {
   $username.addEventListener('keydown', e => { if (e.key === 'Enter') run(); });
 
   return {
-    ITEMS, loadModel, productRows, companyPlan,
+    ITEMS, loadModel, productRows, companyPlan, incomeSummary, selfWorkProjection,
     /**
      * Called by the router (or the home shell) whenever the view becomes
      * active. Re-runs only when ?u= differs from the loaded name.

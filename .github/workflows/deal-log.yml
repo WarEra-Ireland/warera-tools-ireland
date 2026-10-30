@@ -5,7 +5,7 @@ name: Tax deal logger
 # taxlog.yml/tax_log.py — a change here can never affect that cron.
 
 on:
-  # Paused for v0.27: worker.getWorkers is gone (docs/v0.27-update.md).
+  # Paused for v0.27: worker.getWorkers is gone.
   # schedule:
     # Same retry-window shape as taxlog.yml: one entry per day, only written
     # when real data is seen. An outage run writes nothing and exits, so the

@@ -2,7 +2,7 @@
  *  COMPANY MIGRATION ADVISOR ("Bring it home")
  *
  *  v0.27 removed specialisation, deposits and party ethics, so the only
- *  location levers left are (docs/v0.27-update.md):
+ *  location levers left are:
  *
  *    core region  — +5% employee output when the company sits in a core
  *                   region. Read as region.country === region.initialCountry

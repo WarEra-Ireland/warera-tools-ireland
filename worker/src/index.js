@@ -142,6 +142,26 @@ function basicCount(keys) {
   return keys.filter(k => isBasic(k, now)).length;
 }
 
+/*
+ *  Account-scoped procedures answer for whoever owns the API key. Through
+ *  this proxy that's a random key from the pool, so they'd hand the pool
+ *  owners' employees, events and jobs to anyone who asked, and a different
+ *  account each time. Mutations would act on those accounts. Neither is
+ *  forwarded. Tools that need a player's own data call the game API from the
+ *  browser with that player's key instead.
+ *
+ *  Matches getMe, getMine and getMy* in any namespace, every
+ *  employeeEvent procedure (getHistory only answers for the key's own
+ *  employees), and the inventory procedures that answer for the key
+ *  owner only.
+ */
+const ACCOUNT_SCOPED = [
+  /\.get(?:Me|Mine|My)(?![a-z])/, /^employeeEvent\./,
+  // Owner-scoped without the naming: they take no input and answer for the key.
+  /^inventory\.(?:getManageableInventories(?:EntitiesIds)?|equippedItems)(?![a-z])/,
+];
+const accountScoped = procs => procs.find(p => ACCOUNT_SCOPED.some(re => re.test(p)));
+
 // tRPC batches name several procedures in one path: /a.b,c.d?batch=1.
 function procedures(path) {
   let decoded = path.replace(/^\//, '');
@@ -364,6 +384,13 @@ export default {
       }, 200, origin);
     }
     if (url.pathname.startsWith('/trpc/')) {
+      if (request.method !== 'GET' && request.method !== 'HEAD') {
+        return json({ error: { message: 'Only queries (GET) are proxied; mutations would act on the pool keys\' accounts' } }, 405, origin);
+      }
+      const blocked = accountScoped(procedures(url.pathname.slice('/trpc'.length)));
+      if (blocked) {
+        return json({ error: { message: `${blocked} answers for the API key's owner, so it isn't proxied. Call it with your own key.` } }, 403, origin);
+      }
       const keys = apiKeys(env);
       if (!keys.length) return json({ error: 'game API token not configured' }, 503, origin);
       return proxy(request, env, origin, GAME_API, '/trpc', keys);

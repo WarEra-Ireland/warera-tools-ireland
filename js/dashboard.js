@@ -629,10 +629,15 @@ const DashboardTool = (() => {
       const others = plans.filter(p => p.gain != null && !p.isBest);
       const gain = others.reduce((sum, p) => sum + p.gain, 0);
       const cost = others.reduce((sum, p) => sum + (p.cost ?? 0), 0);
-      const making = n - others.length;
-      const statline = !others.length
-        ? `<span class="dash-pos">✓ All ${n} compan${n === 1 ? 'y makes' : 'ies make'} it already</span>`
-        : `${making ? `${making} of ${n} companies make it. Switching the other ${others.length}` : `None of your companies make it. Switching ${others.length === 1 ? 'it' : `all ${others.length}`}`}: <strong>+₿${fmtK(gain, 2)}/day</strong> for about ₿${fmtK(cost, 2)} in switch costs.`;
+      const making = best.owned;
+      const switchSummary = others.length ? `
+        <div class="dash-product-switch">
+          <div class="dash-product-switch-title">Switch ${others.length} compan${others.length === 1 ? 'y' : 'ies'}</div>
+          <dl class="dash-product-metrics">
+            <div><dt>Daily gain</dt><dd class="dash-pos">+₿${fmtK(gain, 2)}</dd></div>
+            <div><dt>One-time cost</dt><dd>≈ ₿${fmtK(cost, 2)}</dd></div>
+          </dl>
+        </div>` : '';
 
       const missing = model.companies.filter(c => c.statsMissing).length;
       const warn = missing
@@ -646,18 +651,22 @@ const DashboardTool = (() => {
             <div class="dash-row-title"><span class="dash-rank">${i + 1}</span>${iconHtml(r.code)} <strong>${escapeHtml(name(r.code))}</strong>${r.owned ? ' ' + pill(`You make ×${r.owned}`, 'ok') : ''}</div>
             <span class="dash-top-v">${r.mg.perPP.toFixed(3)}<small>/PP</small></span>
           </div>
-          <div class="dash-sub small">₿${fmtK(r.profitDay)}/day if all your companies made it${i ? ` · ${pct((r.mg.perPP / best.mg.perPP - 1) * 100)} vs best` : ''}</div>
         </div>`;
 
       setBody('products', `
         ${warn}
-        <div class="dash-lead dash-pick">${iconHtml(best.code)} ${escapeHtml(name(best.code))}</div>
-        <div class="dash-sub">Most profitable right now, at ${best.mg.perPP.toFixed(3)} per production point on the latest market trades.</div>
-        <div class="dash-statline">${statline}</div>
-        <div class="dash-top">
-          <div class="dash-top-h">Top products <span>margin per PP</span></div>
-          <div class="dash-rows">${ranked.slice(0, 3).map(topRow).join('')}</div>
+        <div class="dash-row-main">
+          <div class="dash-product-heading">
+            <div class="dash-lead dash-pick">${iconHtml(best.code)} ${escapeHtml(name(best.code))}</div>
+            ${making ? pill(`You make ×${making}`, 'ok') : ''}
+          </div>
+          <span class="dash-top-v" title="Margin per production point, based on recent market trades">${best.mg.perPP.toFixed(3)}<small>/PP</small></span>
         </div>
+        ${switchSummary}
+        ${ranked.length > 1 ? `<div class="dash-top">
+          <div class="dash-top-h">Top products <span>margin per PP</span></div>
+          <div class="dash-rows">${ranked.slice(1, 3).map((r, i) => topRow(r, i + 1)).join('')}</div>
+        </div>` : ''}
         <a class="dash-cta" href="#products?u=${encodeURIComponent(full.username)}">Compare every product →</a>`);
     } catch (e) { setError('products', `Couldn't load products: ${e.message}`); }
   }

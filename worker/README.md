@@ -15,8 +15,19 @@ headers the upstream APIs don't send.
 | `/notify-discord` | `$DISCORD_WEBHOOK_URL` | webhook URL is the secret |
 | `/healthz` | - | reports pool size and how many keys are cooling |
 
-`/trpc` is a transparent proxy: method, path, query and body go upstream
-unchanged, and the upstream status and body come back unchanged.
+`/trpc` is a transparent proxy for queries: path and query go upstream
+unchanged, and the upstream status and body come back unchanged. Two
+exceptions, both refused before a key is picked:
+
+- **Mutations** (anything but GET/HEAD) get a 405. They would act on the
+  accounts that own the pooled keys.
+- **Account-scoped procedures** get a 403: `getMe`, `getMine` and `getMy*` in any
+  namespace (`employee.getMyEmployees`, `manager.getMyJob`…) and all of
+  `employeeEvent.*`. They answer for whoever owns the key, so through the pool
+  they'd leak the key owners' data, a different account per request. Tools that
+  need a player's own data (the training page's events view) call
+  `api2.warera.io` straight from the browser with the player's key, which the
+  game API allows cross-origin.
 `shared.js` reads tRPC's own error envelope and keys its retry
 logic off the HTTP status, so rewriting it would break it.
 
@@ -78,10 +89,11 @@ and `search.searchAnything` all answer unauthenticated. The rest return
 Known token-gated endpoints in use here: `transaction.getPaginatedTransactions`
 (wealth/tax logs). `worker.getWorkers` (clock-in wages) was removed in v0.27
 and now returns 404. The new `work.getStatsByCompany` / `work.getStatsByUserId`
-are token-gated but readable. Some endpoints refuse tokens outright with 403
-"API tokens cannot access this endpoint" and only work from a logged-in browser
-session. Since v0.27 that covers all `employee.*`, `employeeEvent.*`, `tool.getMine`
-and every "my" endpoint. See `docs/v0.27-update.md`.
+are token-gated but readable. At the v0.27 launch the employee endpoints refused tokens
+with 403 "API tokens cannot access this endpoint"; on 2026-10-27 they were opened
+to tokens. `employee.getCompanyEmployees`, `getCompanyRoster`, `getCompanyEstimate`,
+`getManagerPointValue` and `getById` work for any company or employee. The
+`getMy*` and `employeeEvent.*` ones work too but are blocked here (see Routes).
 
 Note the game API **403s on an empty User-Agent**. The Worker always sends its
 own, and does not forward the browser's.

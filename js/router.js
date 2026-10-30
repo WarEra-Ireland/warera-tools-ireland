@@ -9,6 +9,7 @@
  *    #advisor?u=toie      Migration Advisor auto-running for "toie"
  *    #clockin             Employee Clock-In Monitor (empty)
  *    #clockin?u=toie      Clock-In Monitor auto-running for "toie"
+ *    #training            Employee Training card guide (no username)
  *
  *  Params live inside the hash (after a literal '?') so the whole route
  *  is portable as one fragment and survives static hosting that doesn't
@@ -33,7 +34,7 @@
 (() => {
   const VALID = new Set([
     'home', 'community', 'gov', 'mu', 'buddy-finder', 'donation-draw',
-    'advisor', 'clockin', 'softcap', 'products', 'profit', 'profit-dev', 'wealth', 'buddy', 'battle-orders',  'beer',
+    'advisor', 'clockin', 'softcap', 'products', 'training', 'profit', 'profit-dev', 'wealth', 'buddy', 'battle-orders',  'beer',
     'dashboard', 'roster', 'tax', 'tax-dev', 'tax-partner', 'factory-tax', 'tax-deals', 'partners', 'partner-guide',
   ]);
   const LANDING = new Set(['dashboard', 'home', 'community', 'gov', 'beer', 'partners']);
@@ -67,6 +68,7 @@
     clockin: ClockInTool,
     softcap: GearSoftcapTool,
     products: ProductPickerTool,
+    training: EmployeeTrainingTool,
     profit: DailyProfitTool,
     'profit-dev': DailyProfitDevTool,
     wealth: WealthMonitorTool,

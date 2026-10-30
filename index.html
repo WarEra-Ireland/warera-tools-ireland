@@ -24,7 +24,7 @@
 })();
 </script>
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 3 2'%3E%3Crect width='1' height='2' fill='%23009A49'/%3E%3Crect x='1' width='1' height='2' fill='white'/%3E%3Crect x='2' width='1' height='2' fill='%23FF7900'/%3E%3C/svg%3E" />
-<link rel="stylesheet" href="styles.css?v=20261027c" />
+<link rel="stylesheet" href="styles.css?v=20261030b" />
 <link rel="stylesheet" href="community.css?v=20260906c" />
 </head>
 <body>
@@ -82,6 +82,7 @@
             <button class="stg-tab" data-stg-tab="clockin" role="tab">⏱ <span>Clock-In</span></button>
             <button class="stg-tab" data-stg-tab="buddy-finder" role="tab">🤝 <span>Buddy Finder</span></button>
             <button class="stg-tab" data-stg-tab="products" role="tab">🎯 <span>Product Picker</span></button>
+            <a class="stg-tab" href="#training" role="tab">🎓 <span>Employee Training</span></a>
             <button class="stg-tab" data-stg-tab="profit" role="tab">📈 <span>Daily Profit</span></button>
             <a class="stg-tab" href="#factory-tax" role="tab">🧾 <span>Factory Tax</span></a>
             <button class="stg-tab" data-stg-tab="wealth" role="tab">💰 <span>Wealth tracker</span></button>
@@ -746,7 +747,6 @@
 
     <div class="bf-card hidden" id="pp-income-card">
       <h3 id="pp-income-head">Projected income</h3>
-      <p class="bf-card-sub">Per day at current prices. Employee output, wages and self-work are from the last full day. Edit the PP fields to model a what-if; the product table follows them.</p>
       <div class="dp-assump" id="pp-assump"></div>
       <div class="dp-income" id="pp-income"></div>
     </div>
@@ -755,33 +755,130 @@
 
     <div class="bf-card hidden" id="pp-products-card">
       <h3>Profit by product</h3>
-      <p class="bf-card-sub"><strong>Margin / PP</strong> is what one production point earns making that product. The <strong>Max</strong> columns are what you'd make if all of that output went to this product. Rows highlighted green are products you already make. Click a heading to sort.</p>
       <div class="dp-table-wrap"><table class="dp-table" id="pp-products"></table></div>
-      <p class="dp-note" id="pp-products-note"></p>
     </div>
 
     <div class="bf-card hidden" id="pp-companies-card">
       <h3>Your companies</h3>
-      <p class="bf-card-sub">What each company earns now, and the most profitable product it could make instead. <strong>Switch cost</strong> is the concrete to change product. Whether a switch is worth it is your call.</p>
       <div class="dp-table-wrap"><table class="dp-table" id="pp-companies"></table></div>
     </div>
 
     <!-- Phone layout: shown instead of the three cards above below 720px. -->
     <div class="hidden" id="pp-mobile"></div>
 
-    <details class="howto hidden" id="pp-howto">
-      <summary>How this works</summary>
-      <div class="howto-body">
-        <ul>
-          <li>Since War Era v0.27 there are no region production bonuses, so a product's <strong>margin per PP</strong> is the same everywhere: its sale price after market tax, minus its inputs, divided by the production points it takes.</li>
-          <li><strong>Prices</strong> are the volume-weighted average of each item's latest 100 market trades. Trades older than 24 hours are ignored, so an item nobody has traded in a day has no price rather than a stale one. <strong>Inputs</strong> are valued at market price even if you make them yourself, since you could sell them instead.</li>
-          <li><strong>Engine output</strong> is the game's rate for each automated engine level. <strong>Employee output, wages and self-work</strong> come from the last full day (<code>work.getStatsByCompany</code>), because employees move between companies.</li>
-          <li><strong>Employees pay off</strong> uses the game's value of a production point, which sets every employee's wage: they're paid that value × their wage expectation (70% to 130%) for each point they make before bonuses. Your Management, the manager and a core region add to their output but not their wage. Happiness and traits also change it, but they can't be read with an API key, so they're left out.</li>
-          <li><strong>Switching</strong> costs 5 concrete. Employees also lose their specialization on the old product while they make the new one; it's saved per product, so switching back restores it. That isn't counted, since it depends on each employee.</li>
-          <li>Prices move. A product that's 2% ahead today may not be tomorrow, so small gains rarely justify a switch.</li>
-        </ul>
+  </section>
+
+  <!-- ─── Employee Training view ─────────────────────────────────────
+       Tabs over the loaded account's employees: where to spend energy,
+       which card to keep, who to replace, hiring, assignments and events.
+       The tab and employee live in the hash; see js/employee-training.js. -->
+  <section class="view" data-view="training">
+    <div class="tool-header">
+      <div class="title-block">
+        <h2><span>🎓</span> Employee Training</h2>
       </div>
-    </details>
+    </div>
+    <div class="stg-idbar">
+      <div class="stg-idbar-row">
+        <input id="tr-username" type="text" placeholder="In-game username" aria-label="In-game username" autocomplete="off" spellcheck="false" />
+        <button id="tr-load" class="btn-primary">Load</button>
+      </div>
+      <div class="stg-recent hidden" id="tr-recent"></div>
+    </div>
+    <div id="tr-steps" class="steps hidden" role="status" aria-live="polite">
+      <div class="step" data-state="pending" data-step="1">
+        <div class="step-icon"></div>
+        <div class="step-body"><div class="step-title">Finding user</div><div class="step-sub"></div></div>
+        <div class="step-count"></div>
+      </div>
+      <div class="step" data-state="pending" data-step="2">
+        <div class="step-icon"></div>
+        <div class="step-body"><div class="step-title">Loading companies</div><div class="step-sub"></div></div>
+        <div class="step-count"></div>
+      </div>
+      <div class="step" data-state="pending" data-step="3">
+        <div class="step-icon"></div>
+        <div class="step-body"><div class="step-title">Loading employees</div><div class="step-sub"></div></div>
+        <div class="step-count"></div>
+      </div>
+      <div class="step" data-state="pending" data-step="4">
+        <div class="step-icon"></div>
+        <div class="step-body"><div class="step-title">Calculating total profit</div><div class="step-sub"></div></div>
+        <div class="step-count"></div>
+      </div>
+      <div class="step" data-state="pending" data-step="5">
+        <div class="step-icon"></div>
+        <div class="step-body"><div class="step-title">Preparing overview</div><div class="step-sub"></div></div>
+        <div class="step-count"></div>
+      </div>
+    </div>
+    <div id="tr-status" class="status hidden"></div>
+    <div id="tr-hint" class="hint">Enter your War Era username above to load your employees and companies. Everything on this page works from them.</div>
+
+    <div class="tr-shell hidden" id="tr-shell">
+    <nav class="tr-tabs" role="tablist" aria-label="Employee training" id="tr-tabs">
+      <button type="button" role="tab" class="tr-tab" id="tr-tab-overview" data-tab="overview" aria-controls="tr-pane-overview" aria-selected="false" tabindex="-1">Overview<span class="tr-tab-count" data-count></span></button>
+      <button type="button" role="tab" class="tr-tab" id="tr-tab-employees" data-tab="employees" aria-controls="tr-pane-employees" aria-selected="false" tabindex="-1">Employees<span class="tr-tab-count" data-count></span></button>
+      <button type="button" role="tab" class="tr-tab" id="tr-tab-train" data-tab="train" aria-controls="tr-pane-train" aria-selected="false" tabindex="-1">Train<span class="tr-tab-count" data-count></span></button>
+      <button type="button" role="tab" class="tr-tab" id="tr-tab-traits" data-tab="traits" aria-controls="tr-pane-traits" aria-selected="false" tabindex="-1">Traits<span class="tr-tab-count" data-count></span></button>
+      <button type="button" role="tab" class="tr-tab" id="tr-tab-keep" data-tab="keep" aria-controls="tr-pane-keep" aria-selected="false" tabindex="-1">Keep or replace<span class="tr-tab-count" data-count></span></button>
+      <button type="button" role="tab" class="tr-tab" id="tr-tab-hire" data-tab="hire" aria-controls="tr-pane-hire" aria-selected="false" tabindex="-1">Hire<span class="tr-tab-count" data-count></span></button>
+      <button type="button" role="tab" class="tr-tab" id="tr-tab-assignments" data-tab="assignments" aria-controls="tr-pane-assignments" aria-selected="false" tabindex="-1">Assignments<span class="tr-tab-count" data-count></span></button>
+      <button type="button" role="tab" class="tr-tab" id="tr-tab-events" data-tab="events" aria-controls="tr-pane-events" aria-selected="false" tabindex="-1">Events<span class="tr-tab-count" data-count></span></button>
+      <button type="button" role="tab" class="tr-tab" id="tr-tab-reference" data-tab="reference" aria-controls="tr-pane-reference" aria-selected="false" tabindex="-1">Reference<span class="tr-tab-count" data-count></span></button>
+    </nav>
+    <div class="tr-pane" id="tr-pane-overview" data-pane="overview" role="tabpanel" aria-labelledby="tr-tab-overview" hidden>
+      <div id="tr-team"></div>
+    </div>
+    <div class="tr-pane" id="tr-pane-employees" data-pane="employees" role="tabpanel" aria-labelledby="tr-tab-employees" hidden>
+      <span class="tr-help"><button type="button" class="tr-help-trigger" aria-expanded="false">ⓘ <span>What the numbers mean</span></button><span class="tr-help-content" role="tooltip" hidden><strong>Profit/h</strong> is output at current product prices minus wages. Stats show hired and trained points, then the change from traits (Production from traits costs no extra wages). <strong>Next training</strong> is the average best card of their next hand, in PP over their working life. Happiness changes output by 1% a point away from 50, and below 30 an employee may quit.</span></span>
+      <div id="tr-roster"></div>
+    </div>
+    <div class="tr-work" id="tr-work" hidden>
+    <aside class="tr-side" id="tr-side" aria-label="Employees by company"></aside>
+    <div class="tr-work-main">
+    <div class="tr-pick" id="tr-pick" hidden></div>
+    <div class="tr-emp-head" id="tr-emp-head"></div>
+    <div class="tr-pane" id="tr-pane-train" data-pane="train" role="tabpanel" aria-labelledby="tr-tab-train" hidden>
+      <div id="tr-calc-body" aria-live="polite"></div>
+    </div>
+    <div class="tr-pane" id="tr-pane-traits" data-pane="traits" role="tabpanel" aria-labelledby="tr-tab-traits" hidden>
+      <div id="tr-traits-body"></div>
+    </div>
+    <div class="tr-pane" id="tr-pane-keep" data-pane="keep" role="tabpanel" aria-labelledby="tr-tab-keep" hidden>
+      <div id="tr-fire-body"></div>
+    </div>
+    </div>
+    </div>
+    <div class="tr-pane" id="tr-pane-hire" data-pane="hire" role="tabpanel" aria-labelledby="tr-tab-hire" hidden>
+      <div id="tr-recruit-body"></div>
+    </div>
+    <div class="tr-pane" id="tr-pane-assignments" data-pane="assignments" role="tabpanel" aria-labelledby="tr-tab-assignments" hidden>
+      <div id="tr-assignments-body" data-worker="js/employee-planner-worker.js?v=20261029a"></div>
+    </div>
+    <div class="tr-pane" id="tr-pane-events" data-pane="events" role="tabpanel" aria-labelledby="tr-tab-events" hidden>
+      <div id="tr-events-body"></div>
+    </div>
+    <div class="tr-pane" id="tr-pane-reference" data-pane="reference" role="tabpanel" aria-labelledby="tr-tab-reference" hidden>
+      <div class="tr-section-heading" id="tr-reference-heading"><h3 class="tr-pane-title">Which card to take</h3></div>
+      <p class="tr-calc-sub">Trait cards have guide positions. Use Train for your employee's actual hand.</p>
+      <div class="tr-flags" id="tr-flags"></div>
+      <div class="tr-ladder" id="tr-ladder"></div>
+      <h3 class="tr-pane-title" id="tr-howto" tabindex="-1">How this works</h3>
+      <dl class="tr-howto">
+        <dt>Values</dt>
+        <dd>Values show the production points (PP) an employee adds before retiring at 65, after wages. Multiply PP by the game's PP value to convert to money. Employees age one year per day, so a 30-year-old has 35 working days left. Product prices use the last day of trades, minus market tax and input costs.</dd>
+        <dt>Energy</dt>
+        <dd>Training, hiring and replacing each cost 10 energy. Next actions ranks them by value. Training uses the average value of the best card in the next hand. Hiring uses the best candidate in a fresh set. Replacing subtracts the value of keeping the employee and the cost of firing from the new hire's value. The value of spending 10 energy elsewhere comes from the last training a full bar can cover. Drawing a hand spends the energy and counts as the day's training. <strong>I took this</strong> applies the chosen card locally until you reload.</dd>
+        <dt>Traits</dt>
+        <dd>Production from traits adds no wages. Trait values account for the product, region and coworkers, including effects on coworkers. Specialist takes the company's good when gained and keeps that good on a move. Diamond in the Rough's random stat uses an average of its outcomes. Specialization grows by 1% per day on the same product, up to 20%.</dd>
+        <dt>Keep or replace, and hiring</dt>
+        <dd>Keeping an employee includes their output, traits, remaining trainings and the value their traits add to coworkers. Replacing them uses the best candidate from a fresh set, minus the cost of coworkers' lost happiness and the hire's energy. Both values subtract what a new hire would earn in the slot over the same working days. A full company cannot hire. Fire an employee, reload, then hire into the free slot. Candidates you enter use the same calculation. Hidden stats and traits use averages. The wage narrows the possible values of hidden Production.</dd>
+        <dt>Happiness and events</dt>
+        <dd>Each happiness point above or below 50 changes output by 1%. Below 30 happiness, an employee may quit. Event choices combine their cost with the average value of their outcomes, using the game's odds. Values include changes to happiness, output, time away, stats, wages and traits.</dd>
+      </dl>
+    </div>
+    </div>
   </section>
 
   <!-- ─── Gear Softcap Advisor view ──────────────────────────────────
@@ -888,7 +985,8 @@
     </div>
   </div>
 
-  <div class="spa-card spa-stats-card">
+  <div class="spa-card spa-stats-card section-help-card">
+    <span id="spa-help"></span>
     <div class="spa-stats-inputs">
       <h3>Your stats</h3>
       <div class="spa-assump">
@@ -952,18 +1050,6 @@
       <div class="spa-leftover" id="spa-optimal-leftover"></div>
     </div>
   </div>
-
-  <details class="howto">
-    <summary>How this works</summary>
-    <div class="howto-body">
-      <ul>
-        <li>You get <strong>4 skill points per level</strong>. Some of those have to go into <code>Companies limit</code> and <code>Management</code> first, based on how many companies you own and workers you manage.</li>
-        <li>Whatever's left gets optimized across <code>Entrepreneurship</code>, <code>Energy</code>, and <code>Production</code> to maximize your production points per hour.</li>
-        <li><strong>Eco Mode</strong> is a steadier split that never asks you to take back a point you've already spent — better for normal play where you're not resetting every level-up.</li>
-        <li>Any SP left over after the recommended allocation isn't wasted — it's shown as <em>saved for your next level-up</em>, where it will unlock the next upgrade.</li>
-      </ul>
-    </div>
-  </details>
 </section>
 
   <!-- ─── Employee Clock-In Monitor view ────────────────────────── -->
@@ -1747,17 +1833,24 @@ Please transfer: ₿X</pre>
 </footer>
 
 <!-- Load order matters: shared first, tools next, router last. -->
-<script src="js/shared.js?v=20261027"></script>
+<script src="js/shared.js?v=20261030"></script>
+<script src="js/section-help.js?v=20261029a"></script>
 <script src="js/profit-core.js?v=20260906c"></script>
-<script src="js/mu.js?v=20261026"></script>
+<script src="js/mu.js?v=20261030"></script>
 <script src="js/buddy-finder.js?v=20261026"></script>
-<script src="js/advisor.js?v=20261026b"></script>
+<script src="js/advisor.js?v=20261030"></script>
 <script src="js/clockin.js?v=20261026"></script>
 <script src="js/wealth.js?v=20261026"></script>
-<script src="js/product-picker.js?v=20261027d"></script>
+<script src="js/product-picker.js?v=20261030"></script>
+<script src="js/employee-core.js?v=20261030j"></script>
+<script src="js/employee-planner.js?v=20261030d"></script>
+<script src="js/employee-assignments.js?v=20261030d"></script>
+<script src="js/employee-event-data.js?v=20261030"></script>
+<script src="js/employee-events.js?v=20261030"></script>
+<script src="js/employee-training.js?v=20261030o"></script>
 <script src="js/daily-profit.js?v=20261026"></script>
 <script src="js/daily-profit-dev.js?v=20261026"></script>
-<script src="js/dashboard.js?v=20261027"></script>
+<script src="js/dashboard.js?v=20261029f"></script>
 <script src="js/donation-draw.js?v=20261026"></script>
 <script src="js/irish-tax.js?v=20260906c"></script>
 <script src="js/irish-tax-dev.js?v=20260906c"></script>
@@ -1767,12 +1860,12 @@ Please transfer: ₿X</pre>
 <script src="js/buddy.js?v=20260906c"></script>
 <script src="js/battle-orders.js?v=20260906c"></script>
 <script src="js/beer.js?v=20260906c"></script>
-<script src="js/roster.js?v=20261026b"></script>
+<script src="js/roster.js?v=20261030"></script>
 <script src="js/no-resets-table.js?v=20260906c"></script>
 <script src="js/sp-advisor-core.js?v=20260906c"></script>
-<script src="js/sp-advisor.js?v=20261026"></script>
+<script src="js/sp-advisor.js?v=20261030"></script>
 <script src="js/softcap.js?v=20261026"></script>
-<script src="js/toolkit.js?v=20261026e"></script>
-<script src="js/router.js?v=20261026c"></script>
+<script src="js/toolkit.js?v=20261027"></script>
+<script src="js/router.js?v=20261027"></script>
 </body>
 </html>

@@ -4,7 +4,7 @@ An Irish player's toolkit for [War Era](https://app.warera.io/). Live at [we.haw
 
 This is a static site: plain HTML, CSS, and vanilla JavaScript with no build step, no framework, and no bundler. You edit files, refresh the page, done. Everything runs in the browser. The only backend is a thin Cloudflare Worker that proxies the game's API and holds a couple of secrets.
 
-> **Game version note.** War Era v0.27 (2026-10-25) replaced the player job market with NPC employees and removed Entrepreneurship, specialisation, deposits and party ethics. Several tools below were built on the old mechanics and are now broken or obsolete. [`docs/v0.27-update.md`](docs/v0.27-update.md) has the change list and per-tool impact.
+> **Game version note.** War Era v0.27 (2026-10-25) replaced the player job market with NPC employees and removed Entrepreneurship, specialisation, deposits and party ethics. Several tools below were built on the old mechanics and are now broken or obsolete.
 
 ## Quick start
 
@@ -17,11 +17,25 @@ python3 -m http.server 8000
 
 Any static server works (`npx serve`, VS Code Live Server, etc.). There is nothing to install and nothing to compile.
 
+On `localhost` the site calls a local Worker at `http://localhost:8787` (see [`worker/README.md`](worker/README.md)):
+
+```bash
+cd worker && npx wrangler dev --port 8787 --ip 127.0.0.1   # needs worker/.dev.vars with a game API key
+```
+
+The production Worker only accepts the live site's origin, so previews on another host (e.g. Tailscale) pass `?proxy=<worker origin>`, which sticks for the tab: `https://<host>:8000/?proxy=https://<host>:8787#training`. That origin must also be in `.dev.vars` `ALLOWED_ORIGINS`.
+
 ## How a contributor should think about this
 
 The site is one HTML page with several hidden "views". A hash router shows one view at a time. Each tool is a self-contained script that the router switches on when its view becomes visible. Shared plumbing (the API client, formatting helpers, the loading-step UI) lives in one file that every tool depends on.
 
 If you understand `shared.js` and the tool pattern below, you understand the whole codebase.
+
+## Section explanations
+
+Put explanations in an ⓘ tooltip at the top right of the section they explain. Use `sectionHelp(label, content)` from `js/section-help.js` inside a `.section-help-card`. The shared helper supports hover, keyboard focus, click or tap, Escape, and outside-click dismissal. Keep it available in desktop and phone layouts.
+
+Use short paragraphs about the current calculation, assumptions, and limits. Keep essential warnings visible. Avoid separate “How this works” panels, repeated explanatory subtitles, API endpoint names, and game-update announcements in user-facing help.
 
 ## File structure
 
@@ -37,6 +51,9 @@ js/
   softcap.js      Gear Softcap Advisor
   buddy-finder.js Buddy Finder (public)
   daily-profit.js Daily Profit calculator
+  product-picker.js Product Picker (best product per company, v0.27)
+  employee-core.js  Training card value model, no DOM (also runs in Node)
+  employee-training.js Employee Training (#training)
   wealth.js       Wealth tracker
   donation-draw.js Ireland Donation Draw
   mu.js           Irish Military Units
@@ -45,6 +62,7 @@ js/
   beer.js         Bunker monitor (encrypted, BEER password)
   router.js       Loaded last. Hash routing + view switching.
 images/           Item icons used by the advisor and clock-in tools
+worker/           Cloudflare Worker: the API proxy with the key pool
 ```
 
 Script load order in `index.html` matters and is fixed: `shared.js` first, then the tools, then `router.js` last. Shared helpers must exist before any tool runs, and the router must run after every tool global is defined.
@@ -177,7 +195,7 @@ Abroad cards compare "employee output from location" (core bonus minus tax rate)
 
 Shows when each of an employer's workers last clocked in, on a 48-hour timeline, plus a payroll projection.
 
-> **v0.27:** player workers no longer exist and `worker.getWorkers` returns 404. Companies run on NPC employees paid hourly and automatically, so this tool is obsolete. See [`docs/v0.27-update.md`](docs/v0.27-update.md).
+> **v0.27:** player workers no longer exist and `worker.getWorkers` returns 404. Companies run on NPC employees paid hourly and automatically, so this tool is obsolete.
 
 Wage transactions are the source of truth. A clock-in is inferred from a wage payment, because every work cycle pays a timestamped wage. Wages are modelled as trades: `sellerId` is the worker (sold their labour), `buyerId` is the employer (bought it). Two filters are applied to each transaction and both matter: the worker must be the seller (drops their own outgoing payroll if they also employ people), and the employer must be the buyer (drops wages from other employers, since a worker can now hold multiple contracts).
 
@@ -201,7 +219,7 @@ One limitation, stated in the tool's how-to: `totalAfterSoftCap` is the only val
 
 A self-service tool for Irish citizens to find a buddy-system partner, or join a waiting list. Distinct from the MoE-only Buddy System Monitor, which is an admin oversight dashboard.
 
-> **v0.27:** players can no longer employ each other. Managing a company is the only player-to-player job left, so reciprocal buddy pairs can't form and `worker.getWorkers` is gone. This applies to Buddy System Monitor too. See [`docs/v0.27-update.md`](docs/v0.27-update.md).
+> **v0.27:** players can no longer employ each other. Managing a company is the only player-to-player job left, so reciprocal buddy pairs can't form and `worker.getWorkers` is gone. This applies to Buddy System Monitor too.
 
 Matching pipeline: resolve the user, pull all Irish citizens and their skill profiles, pull worker rosters to detect who already employs whom, classify each mutual pair as balanced or imbalanced, then rank candidates in three tiers (waitlist members first, then members of imbalanced pairs, then everyone unpaired), sorted by skill closeness within each tier. People in balanced pairs are skipped, since pairing them would break a working arrangement.
 
@@ -233,11 +251,17 @@ Both are password-encrypted (see Access control). Buddy System Monitor is the Mo
 
 Estimates a player's daily profit across their companies and employees: engine vs staff throughput, wages, fidelity, daily/weekly missions, case sales, and per-product net margins (with country tax and production-bonus lookups). The economic model was validated formula-by-formula against Adro's spreadsheet — direct questions about the model go to Adro.
 
-> **v0.27:** the model's inputs (`worker.getWorkers`, `workOffer.*`, fidelity, self-work tax, Entrepreneurship, deposits) are gone. Employee wages are now set by the employee and paid hourly, so the model needs rebuilding. See [`docs/v0.27-update.md`](docs/v0.27-update.md).
+> **v0.27:** the model's inputs (`worker.getWorkers`, `workOffer.*`, fidelity, self-work tax, Entrepreneurship, deposits) are gone. Employee wages are now set by the employee and paid hourly, so the model needs rebuilding.
 
 ### Wealth tracker (`wealth.js`)
 
 Charts any Irish citizen's wealth over time. A scheduled GitHub Action (`wealth_log.py`) snapshots every citizen's public wealth once a day into `data/wealth/<userId>.json`; the page fetches only the one file for the player being viewed, so it scales to hundreds of citizens. The wealth breakdown (companies, items, money, equipment, weapons) is the same public figure shown on an in-game profile.
+
+### Employee Training (`employee-training.js`, `employee-core.js`)
+
+**Assign tools and employees to companies** compares manual tool inventory and employee placements across the loaded companies. It accounts for product and coworker traits, happiness, saved specialization, Creature of Habit and tool expiry, then lists the recommended moves, swaps and equipment with the reasons for each. Companies it cannot reproduce exactly are left unchanged and out of the totals.
+
+Which training card to keep. A quick reference ranks the cards of each rarity (a hand is always one rarity), with flags for the common exceptions. Loading a username reads every employee of the player's companies through the company employee endpoints (`employee.getCompanyEmployees`, `getCompanyEstimate`), shows a workforce summary with profit at today's prices, ranks where the next 10 energy is best spent (training each employee or hiring into a company with a free slot), compares typed-in candidates (hire, reroll or wait), ranks who is worth keeping against the best of a fresh candidate set (fire, replace or keep, with the bar a candidate must beat), and fills a calculator that ranks an exact hand for one employee. A hand an employee was dealt but hasn't picked from is read from the API (`pendingTraining.offers`) and listed above the energy ranking, so the player never types it in. Management fills from the account. Pending employee events need the player's own API key, sent from the browser straight to the game API, never through the proxy.
 
 ### Bunker monitor (`beer.js`)
 

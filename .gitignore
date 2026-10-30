@@ -27,3 +27,6 @@ worker/.wrangler/
 # Python bytecode
 __pycache__/
 *.pyc
+
+.claude/
+.scratch/

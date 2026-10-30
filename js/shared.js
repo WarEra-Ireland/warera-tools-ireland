@@ -57,7 +57,7 @@ const IRELAND_COUNTRY_ID = '6813b6d446e731854c7ac7fe';
 
 /*
  *  v0.27 pause. War Era v0.27 replaced the player job market with NPC
- *  employees (docs/v0.27-update.md), which broke every tool below. Their
+ *  employees, which broke every tool below. Their
  *  views show a notice instead of activating, and links to them are greyed
  *  out. The notice's "Continue anyway" button runs the tool regardless, for
  *  this page load only. Delete a route from this set once it's rebuilt.

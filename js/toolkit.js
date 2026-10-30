@@ -366,7 +366,9 @@ const ToolkitShell = (() => {
   // what's inside before typing a name. Clicking one pre-selects it.
   // Landing cards, grouped into sections (same style as the Community tab).
   const PREVIEW_CATS = [
-    { title: '🏭 Production', tools: ['advisor', 'clockin'] },
+    { title: '🏭 Production', tools: ['advisor', 'clockin'], links: [
+      { href: '#training', icon: '🎓', title: 'Employee Training', desc: `Which training card to keep, ranked by what it earns over the employee's working life. Plus a calculator for close calls.` },
+    ] },
     { title: '💰 Profits',    tools: ['products', 'buddy-finder', 'profit', 'wealth'], links: [
       { href: '#factory-tax', icon: '🧾', title: 'Factory Tax', desc: `Irish-owned factories that employ workers, grouped by the country they're based in — and the income tax that country takes off those wages.` },
     ] },

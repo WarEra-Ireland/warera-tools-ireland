@@ -30,6 +30,11 @@
  *     user.getUserLite. Never falls back to a fuzzy top result.
  * ═══════════════════════════════════════════════════════════════════ */
 const SkillPointAdvisorTool = (() => {
+  document.getElementById('spa-help').outerHTML = sectionHelp('About skill point allocations',
+    '<p>You get 4 skill points per level. The calculator reserves Companies and Management points for the entered companies and workers, then splits the rest across Entrepreneurship, Energy and Production to maximize production points per hour. Eco recommendations follow a path without resets; leftover points are saved for a later upgrade.</p>' +
+    '<p>Management gives +2% employee production per point. Each level shifts training rarity from Common to Uncommon +1, Rare +0.6, Epic +0.3 and Legendary +0.1 percentage points, and adds 2 percentage points to standard employee event checks. Event chances stay between 5% and 90%.</p>' +
+    '<p>The allocation calculation does not value these employee benefits or recommend extra Management points for them.</p>');
+
   const $level     = document.getElementById('spa-level');
   const $companies = document.getElementById('spa-companies');
   const $workers    = document.getElementById('spa-workers');

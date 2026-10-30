@@ -1,7 +1,7 @@
 name: Tax logger
 
 on:
-  # Paused for v0.27: worker.getWorkers is gone (docs/v0.27-update.md).
+  # Paused for v0.27: worker.getWorkers is gone.
   # schedule:
     # Daily, with built-in retries. The script records ONE entry per day and
     # only writes when it actually sees wage data — an outage run writes
