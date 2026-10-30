@@ -718,12 +718,9 @@ const GearSoftcapTool = (() => {
     // are preserved, otherwise the Irish-only gate stops seeing the flag
     // once the run rewrites the hash. replaceState doesn't fire hashchange,
     // so this can't loop back into activate().
-    const params = new URLSearchParams(location.hash.split('?')[1] || '');
+    const params = hashParams();
     params.set('u', username);
-    const newHash = `#softcap?${params.toString()}`;
-    if (location.hash !== newHash) {
-      history.replaceState(null, '', newHash + location.search);
-    }
+    writeHash('softcap', params);
 
     $go.disabled = true;
     setStatus('');

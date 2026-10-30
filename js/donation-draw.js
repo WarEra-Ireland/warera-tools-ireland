@@ -122,10 +122,7 @@ const IrelandDonationDrawTool = (() => {
       end: config.endIso,
       min: config.minimumText,
     });
-    const hash = `#donation-draw?${params.toString()}`;
-    if (location.hash !== hash) {
-      history.replaceState(null, '', `${location.pathname}${location.search}${hash}`);
-    }
+    writeHash('donation-draw', params);
   }
 
   function toLocalInput(ms) {

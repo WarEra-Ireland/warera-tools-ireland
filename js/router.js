@@ -33,7 +33,7 @@
 (() => {
   const VALID = new Set([
     'home', 'community', 'gov', 'mu', 'buddy-finder', 'donation-draw',
-    'advisor', 'clockin', 'softcap', 'profit', 'profit-dev', 'wealth', 'buddy', 'battle-orders',  'beer',
+    'advisor', 'clockin', 'softcap', 'products', 'profit', 'profit-dev', 'wealth', 'buddy', 'battle-orders',  'beer',
     'dashboard', 'roster', 'tax', 'tax-dev', 'tax-partner', 'factory-tax', 'tax-deals', 'partners', 'partner-guide',
   ]);
   const LANDING = new Set(['dashboard', 'home', 'community', 'gov', 'beer', 'partners']);
@@ -66,6 +66,7 @@
     advisor: AdvisorTool,
     clockin: ClockInTool,
     softcap: GearSoftcapTool,
+    products: ProductPickerTool,
     profit: DailyProfitTool,
     'profit-dev': DailyProfitDevTool,
     wealth: WealthMonitorTool,
@@ -88,14 +89,6 @@
     const view = (qIdx >= 0 ? raw.slice(0, qIdx) : raw) || DEFAULT_VIEW;
     const queryStr = qIdx >= 0 ? raw.slice(qIdx + 1) : '';
     return { view, params: new URLSearchParams(queryStr) };
-  }
-
-  function writeHash(name, params) {
-    const queryStr = params ? params.toString() : '';
-    const newHash = queryStr ? `#${name}?${queryStr}` : `#${name}`;
-    if (location.hash !== newHash) {
-      history.replaceState(null, '', newHash + location.search);
-    }
   }
 
   function setView(name, { updateHash = true, params = new URLSearchParams() } = {}) {

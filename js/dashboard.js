@@ -8,6 +8,8 @@
  *
  *    🏭 Migration  — every company with its current region/bonus/tax and
  *                    a verdict ("✓ Best placed" or "→ Country · +X%")
+ *    🎯 Products   — the most profitable product, how many companies make
+ *                    it, and the top three by margin (ProductPickerTool)
  *    ⏱ Clock-In    — each worker: status pill, last clock-in, stat chips,
  *                    plus 24h payroll
  *    📈 Daily Profit— simplified projected income broken into rows
@@ -132,6 +134,7 @@ const DashboardTool = (() => {
   /* ── Card scaffolding ────────────────────────────────────────────── */
   const CARDS = [
     { key: 'migration', icon: '🏭', title: 'Migration',     href: '#advisor' },
+    { key: 'products',  icon: '🎯', title: 'Product Picker', href: '#products' },
     { key: 'clockin',   icon: '⏱',  title: 'Clock-In',      href: '#clockin' },
     { key: 'profit',    icon: '📈', title: 'Daily Profit',  href: '#profit'  },
     { key: 'wealth',    icon: '💰', title: 'Wealth Trend',  href: '#wealth'  },
@@ -608,6 +611,57 @@ const DashboardTool = (() => {
     }
   }
 
+  /* ── Card: Product Picker ── (most profitable product, from the full
+   *  tool's own loader and maths so the two can't disagree) ─────────── */
+  async function fillProducts(full) {
+    try {
+      const PP = ProductPickerTool;
+      const name = code => PP.ITEMS[code]?.name || code;
+      const model = await PP.loadModel(full);
+      const { rows } = PP.productRows(model);
+      const ranked = rows.filter(r => r.mg);
+      if (!ranked.length) { setBody('products', lead('–', 'No market prices available right now.')); return; }
+      const best = ranked[0];
+      const n = model.companies.length;
+      setNote('products', `${n} compan${n === 1 ? 'y' : 'ies'}`);
+
+      const plans = model.companies.map(c => PP.companyPlan(model, c));
+      const others = plans.filter(p => p.gain != null && !p.isBest);
+      const gain = others.reduce((sum, p) => sum + p.gain, 0);
+      const cost = others.reduce((sum, p) => sum + (p.cost ?? 0), 0);
+      const making = n - others.length;
+      const statline = !others.length
+        ? `<span class="dash-pos">✓ All ${n} compan${n === 1 ? 'y makes' : 'ies make'} it already</span>`
+        : `${making ? `${making} of ${n} companies make it. Switching the other ${others.length}` : `None of your companies make it. Switching ${others.length === 1 ? 'it' : `all ${others.length}`}`}: <strong>+₿${fmtK(gain, 2)}/day</strong> for about ₿${fmtK(cost, 2)} in switch costs.`;
+
+      const missing = model.companies.filter(c => c.statsMissing).length;
+      const warn = missing
+        ? `<div class="dash-warn">${pill('⚠ Employee data missing', 'warn')}<span>${model.statsNeedPremium
+            ? 'Employee output and wages need a Premium API key, and the data proxy has none right now.'
+            : `Couldn't load output history for ${missing} of ${n} companies.`} Profit figures leave employees out.</span></div>`
+        : '';
+
+      const topRow = (r, i) => `<div class="dash-row top">
+          <div class="dash-row-main">
+            <div class="dash-row-title"><span class="dash-rank">${i + 1}</span>${iconHtml(r.code)} <strong>${escapeHtml(name(r.code))}</strong>${r.owned ? ' ' + pill(`You make ×${r.owned}`, 'ok') : ''}</div>
+            <span class="dash-top-v">${r.mg.perPP.toFixed(3)}<small>/PP</small></span>
+          </div>
+          <div class="dash-sub small">₿${fmtK(r.profitDay)}/day if all your companies made it${i ? ` · ${pct((r.mg.perPP / best.mg.perPP - 1) * 100)} vs best` : ''}</div>
+        </div>`;
+
+      setBody('products', `
+        ${warn}
+        <div class="dash-lead dash-pick">${iconHtml(best.code)} ${escapeHtml(name(best.code))}</div>
+        <div class="dash-sub">Most profitable right now, at ${best.mg.perPP.toFixed(3)} per production point on the latest market trades.</div>
+        <div class="dash-statline">${statline}</div>
+        <div class="dash-top">
+          <div class="dash-top-h">Top products <span>margin per PP</span></div>
+          <div class="dash-rows">${ranked.slice(0, 3).map(topRow).join('')}</div>
+        </div>
+        <a class="dash-cta" href="#products?u=${encodeURIComponent(full.username)}">Compare every product →</a>`);
+    } catch (e) { setError('products', `Couldn't load products: ${e.message}`); }
+  }
+
   /* ── Card: Migration ── (companies outside Irish core regions) ────── */
   async function fillMigration(full) {
     try {
@@ -677,7 +731,7 @@ const DashboardTool = (() => {
       const full = await db_trpc('user.getUserById', { userId: lite._id });
       if (!full) throw new Error(`Couldn't load profile for ${lite.username}.`);
 
-      try { history.replaceState(null, '', `#dashboard?u=${encodeURIComponent(full.username)}`); } catch {}
+      try { writeHash('dashboard', new URLSearchParams({ u: full.username })); } catch {}
       rememberUsername(full.username);   // verified canonical name → recent chips
       renderScaffold(full.username);
       rememberLoadedAccount(full.username);
@@ -688,6 +742,7 @@ const DashboardTool = (() => {
       fillWealth(full);
       fillMU(full);
       fillMigration(full);
+      fillProducts(full);
     } catch (e) {
       $grid.innerHTML = '';
       const friendly = isTransientError(e)

@@ -1982,6 +1982,64 @@ input[type="password"]:focus { outline: none; border-color: #3a4350; }
  *  <section class="view" data-view="profit"> for index.html on merge.
  * ═══════════════════════════════════════════════════════════════════ */
 #dp-stats-card.hidden, #dp-table-card.hidden { display: none; }
+#pp-best-card.hidden, #pp-income-card.hidden, #pp-products-card.hidden, #pp-companies-card.hidden { display: none; }
+.pp-best { display: flex; align-items: center; justify-content: space-between; gap: 18px 32px; flex-wrap: wrap; }
+.pp-best-main { display: flex; align-items: center; gap: 14px; }
+.pp-best-main .icon-box { width: 52px; height: 52px; }
+.pp-best-main .icon-box img { width: 46px; height: 46px; }
+.pp-best-label { font-size: 12px; color: var(--muted); }
+.pp-best-name { font-size: 28px; font-weight: 800; line-height: 1.15; }
+.pp-best-facts { display: flex; flex-wrap: wrap; gap: 14px 30px; }
+.pp-best-facts > div > span { display: block; font-size: 11px; color: var(--muted); margin-bottom: 3px; }
+.pp-best-facts b { font-size: 16px; font-variant-numeric: tabular-nums; }
+.pp-pos { color: var(--accent); }
+.pp-neg { color: var(--danger); }
+.pp-chips, .pp-tags { display: inline-flex; flex-wrap: wrap; gap: 4px; }
+.pp-tags { display: flex; margin-top: 4px; }
+.pp-tags .dash-pill { font-size: 10px; padding: 1px 7px; }
+.pp-chip { font-size: 10.5px; padding: 1px 7px; border-radius: 999px; background: rgba(251,191,36,.12); color: var(--warn); white-space: nowrap; }
+.pp-chip.off { background: var(--panel-2); color: var(--muted); }
+.pp-mgr small { display: block; color: var(--muted); font-size: 11px; }
+
+/* Product Picker phone layout (#pp-mobile), shown instead of the cards below 720px. */
+#pp-mobile { display: none; }
+@media (max-width: 720px) {
+  #pp-best-card, #pp-income-card, #pp-products-card, #pp-companies-card { display: none !important; }
+  #pp-mobile:not(.hidden) { display: flex; flex-direction: column; gap: 12px; margin-bottom: 16px; }
+}
+.pp-m-card { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; }
+.pp-m-card h3 { margin: 0 0 8px; font-size: 15px; }
+.pp-m-heading { margin: 6px 2px 0; font-size: 15px; }
+.pp-m-sub { color: var(--muted); font-size: 12px; }
+.pp-m-gap { margin-top: 8px; }
+.pp-m-best { text-align: center; padding: 16px 14px; }
+.pp-m-best-name { display: flex; align-items: center; justify-content: center; gap: 12px; margin: 8px 0 6px; font-size: 26px; font-weight: 800; }
+.pp-m-best-name .icon-box { width: 44px; height: 44px; }
+.pp-m-best-name .icon-box img { width: 40px; height: 40px; }
+.pp-m-tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.pp-m-tile { background: var(--panel-2); border: 1px solid var(--border); border-radius: 10px; padding: 9px 11px; }
+.pp-m-tile b { display: block; font-size: 16px; font-variant-numeric: tabular-nums; }
+.pp-m-tile > span { font-size: 11px; color: var(--muted); }
+.pp-m-tile.pp-m-total { grid-column: 1 / -1; border-color: rgba(74,222,128,.35); }
+.pp-m-tile.pp-m-total.neg { border-color: rgba(248,113,113,.35); }
+.pp-m-list > * + * { border-top: 1px solid var(--border); }
+.pp-m-row { display: flex; align-items: center; gap: 10px; padding: 10px 0; }
+.pp-m-row .icon-box { width: 26px; height: 26px; flex: none; }
+.pp-m-head { padding-top: 0; }
+.pp-m-rank { width: 16px; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.pp-m-grow { flex: 1; min-width: 0; }
+.pp-m-name { display: block; font-weight: 600; font-size: 14px; color: var(--text); text-decoration: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pp-m-mine { color: var(--link); }
+.pp-m-right { display: flex; flex-direction: column; align-items: flex-end; gap: 3px; font-variant-numeric: tabular-nums; }
+.pp-m-profit { font-size: 17px; }
+.pp-m-more summary { padding: 8px 0 2px; color: var(--link); font-size: 13px; cursor: pointer; }
+.pp-m-kv { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px 6px; margin-top: 8px; font-size: 12px; font-variant-numeric: tabular-nums; }
+.pp-m-kv span { display: block; color: var(--muted); font-size: 10.5px; }
+.pp-m-kv .pp-m-wide { grid-column: span 2; }
+.pp-m-switch { margin-top: 8px; font-size: 12px; padding: 7px 9px; border-radius: 8px; background: rgba(96,165,250,.08); }
+#pp-companies td a { color: inherit; text-decoration: none; }
+#pp-products td, #pp-companies td { vertical-align: middle; }
+#pp-products .dp-prod, #pp-companies .dp-prod { vertical-align: middle; }
 
 .dp-assump { display: flex; flex-wrap: wrap; gap: 14px 22px; align-items: flex-start; }
 .dp-field { display: flex; flex-direction: column; gap: 4px; }
@@ -2002,6 +2060,8 @@ input[type="password"]:focus { outline: none; border-color: #3a4350; }
 .dp-inc .dp-inc-sub { font-size: 11px; color: var(--muted); margin-top: 2px; }
 .dp-inc.total { border-color: rgba(74,222,128,.35); }
 .dp-inc.total .dp-inc-val { color: var(--accent); }
+.dp-inc.total.dp-inc-deduct { border-color: rgba(248,113,113,.35); }
+.dp-inc.total.dp-inc-deduct .dp-inc-val { color: var(--danger); }
 .dp-inc-chk { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
 .dp-inc-chk input { accent-color: var(--accent); cursor: pointer; margin: 0; flex: none; }
 .dp-inc-off { opacity: .55; }
@@ -2152,6 +2212,7 @@ table.dp-table th.dp-sortable .dp-sort-arrow { margin-left: 3px; opacity: .7; }
 /* Lead figure: present but not shouting — harmonised across every card. */
 .dash-lead { font-size: 20px; font-weight: 600; line-height: 1.15; letter-spacing: -.2px; font-variant-numeric: tabular-nums; color: var(--text); }
 .dash-lead small { font-size: 12px; font-weight: 500; color: var(--muted); margin-left: 3px; }
+.dash-lead.dash-pick { display: flex; align-items: center; gap: 8px; }
 .dash-sub { color: var(--muted); font-size: 12.5px; margin-top: 6px; line-height: 1.45; }
 .dash-sub.small { font-size: 11.5px; margin-top: 3px; }
 .dash-sub a, .dash-row-title a { color: var(--link); text-decoration: none; }
@@ -2168,6 +2229,7 @@ table.dp-table th.dp-sortable .dp-sort-arrow { margin-left: 3px; opacity: .7; }
 .dash-pill.ok   { background: rgba(74,222,128,.15);  color: var(--accent); }
 .dash-pill.warn { background: rgba(251,191,36,.15);  color: var(--warn); }
 .dash-pill.loss { background: rgba(248,113,113,.14); color: var(--danger); }
+.dash-pill.info { background: rgba(96,165,250,.15); color: var(--link); }
 
 /* Stat chips. */
 .dash-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }

@@ -747,13 +747,9 @@ const ClockInTool = (() => {
     // Update the hash so this view is shareable. Preserve any extra
     // params (like bypass=1) the user came in with so they survive the
     // re-write — otherwise the gate can't see them after the run starts.
-    const existingQuery = location.hash.split('?')[1] || '';
-    const params = new URLSearchParams(existingQuery);
+    const params = hashParams();
     params.set('u', u);
-    const newHash = `#clockin?${params.toString()}`;
-    if (location.hash !== newHash) {
-      history.replaceState(null, '', newHash + location.search);
-    }
+    writeHash('clockin', params);
 
     running = true;
     $run.disabled = true;
@@ -771,10 +767,9 @@ const ClockInTool = (() => {
       // canonical form so refresh-by-URL stays stable. Same param-preserving
       // pattern as above.
       if (state?.ownerUsername && state.ownerUsername !== u) {
-        const q = new URLSearchParams(location.hash.split('?')[1] || '');
+        const q = hashParams();
         q.set('u', state.ownerUsername);
-        const fixed = `#clockin?${q.toString()}`;
-        if (location.hash !== fixed) history.replaceState(null, '', fixed + location.search);
+        writeHash('clockin', q);
       }
     } catch (e) {
       steps.markActiveAsError(e.message);

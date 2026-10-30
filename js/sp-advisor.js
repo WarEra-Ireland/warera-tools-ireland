@@ -214,10 +214,7 @@ const SkillPointAdvisorTool = (() => {
     // Match the shell's hash-rewrite contract (same as advisor/clockin/etc.):
     // write our own canonical-username hash so the shell's guard folds it
     // back into #home?u=...&tool=sp-advisor and commits it to the recent list.
-    const newHash = `#sp-advisor?u=${encodeURIComponent(user.username)}`;
-    if (location.hash !== newHash) {
-      history.replaceState(null, '', newHash + location.search);
-    }
+    writeHash('sp-advisor', new URLSearchParams({ u: user.username }));
   }
 
   function selectedBuildType() {

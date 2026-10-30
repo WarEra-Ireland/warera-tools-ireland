@@ -394,7 +394,7 @@ const RosterTool = (() => {
       return;
     }
     countryKey = key;
-    try { history.replaceState(null, '', `#roster?country=${encodeURIComponent(countryKey)}`); } catch {}
+    try { writeHash('roster', new URLSearchParams({ country: countryKey })); } catch {}
     updateTitle(countryKey);
     if ($search) $search.value = '';
     if ($dropdown) { $dropdown.classList.add('hidden'); $dropdown.innerHTML = ''; }
@@ -1081,7 +1081,7 @@ const RosterTool = (() => {
         || new URLSearchParams(location.search).get(k);
       const c = (get('country') || DEFAULT_COUNTRY).toLowerCase();
       countryKey = COUNTRIES[c] ? c : DEFAULT_COUNTRY;
-      try { history.replaceState(null, '', `#roster?country=${encodeURIComponent(countryKey)}`); } catch {}
+      try { writeHash('roster', new URLSearchParams({ country: countryKey })); } catch {}
       run();
     },
   };

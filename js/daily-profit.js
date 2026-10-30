@@ -85,7 +85,7 @@ const DailyProfitTool = (() => {
       if (!user) { steps.markActiveAsError('No user found'); throw new Error(`No War Era user found with username "${raw}".`); }
       enforceIrishOnly(user.country ?? user.countryId, user.username);
       steps.setStep(1, 'done', { count: `→ ${user.username}` });
-      try { window.history.replaceState(null, '', `#profit?u=${encodeURIComponent(user.username)}`); } catch {}
+      try { writeHash('profit', new URLSearchParams({ u: user.username })); } catch {}
       rememberUsername(user.username);
 
       // Steps 2–3: companies, workers, market and bonuses

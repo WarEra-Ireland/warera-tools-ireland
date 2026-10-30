@@ -148,14 +148,33 @@ function formatDate(v) {
   return d.toISOString().slice(0, 10);
 }
 
+/*
+ *  Hash routing. A route lives in the fragment as #view?params (see
+ *  router.js). The page's real query string (?bypass=1, ?proxy=…) sits
+ *  before the fragment and has to stay there, so writes rebuild the whole
+ *  URL rather than appending location.search after the hash.
+ *  replaceState doesn't fire hashchange, so a tool can call writeHash from
+ *  inside activate() without looping.
+ */
+function hashParams() {
+  return new URLSearchParams(location.hash.split('?')[1] || '');
+}
+
+function writeHash(view, params) {
+  const qs = params ? params.toString() : '';
+  const hash = qs ? `#${view}?${qs}` : `#${view}`;
+  if (location.hash !== hash) {
+    history.replaceState(null, '', location.pathname + location.search + hash);
+  }
+}
+
 /**
  * Read the bypass flag from the URL. Lifts Irish-only restrictions
  * for admin/debugging. Works whether the param sits inside the hash
  * (e.g. #clockin?u=foo&bypass=1) or before it (?bypass=1#clockin).
  */
 function hasBypassFlag() {
-  const hashQuery = location.hash.split('?')[1] || '';
-  return new URLSearchParams(hashQuery).get('bypass') === '1'
+  return hashParams().get('bypass') === '1'
       || new URLSearchParams(location.search).get('bypass') === '1';
 }
 
@@ -463,7 +482,8 @@ function _trpcResolvable(endpoint) {
  * attempt, any remaining item errors are returned as rejected results.
  *
  * @param {string} endpoint tRPC procedure name, e.g. `user.getUserLite`.
- * @param {Object|Object[]} [inputOrInputs={}] One input, or an input array when batching.
+ * @param {Object|Object[]|null} [inputOrInputs={}] One input, or an input array when batching.
+ *   Pass null for a procedure that takes no input at all: those reject even {}.
  * @param {Object} [options]
  * @param {boolean} [options.batch=false] Send all array entries in one HTTP batch.
  * @param {boolean} [options.retry=false] Retry transient failures, up to three attempts.
@@ -571,6 +591,8 @@ async function _trpcExec(endpoint, inputOrInputs = {}, {
   let url;
   if (batch) {
     url = _trpcBatchUrl(endpoint, inputOrInputs);
+  } else if (inputOrInputs === null) {
+    url = `${API_BASE}/${endpoint}`;
   } else {
     url = `${API_BASE}/${endpoint}?input=${encodeURIComponent(JSON.stringify(inputOrInputs))}`;
   }

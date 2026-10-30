@@ -169,7 +169,7 @@ const WealthMonitorTool = (() => {
       // Shareable URL + remember the verified name as a quick-pick chip.
       // The hash rewrite (same shape as the other tools) is what the home
       // shell's hash guard folds back into #home?u=…&tool=wealth.
-      try { window.history.replaceState(null, '', `#wealth?u=${encodeURIComponent(user.username)}`); } catch {}
+      try { writeHash('wealth', new URLSearchParams({ u: user.username })); } catch {}
       rememberUsername(user.username);
 
       steps.setStep(2, 'active', { sub: 'Fetching wealth & history' });

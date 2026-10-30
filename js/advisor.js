@@ -417,13 +417,9 @@ const AdvisorTool = (() => {
     // replaceState keeps back-button history intact and (unlike a real
     // navigation) does not fire hashchange, so this won't trigger a
     // re-activation loop.
-    const existingQuery = location.hash.split('?')[1] || '';
-    const params = new URLSearchParams(existingQuery);
+    const params = hashParams();
     params.set('u', username);
-    const newHash = `#advisor?${params.toString()}`;
-    if (location.hash !== newHash) {
-      history.replaceState(null, '', newHash + location.search);
-    }
+    writeHash('advisor', params);
 
     $go.disabled = true;
     $hint.classList.add('hidden');

@@ -388,13 +388,9 @@ const BuddyFinderTool = (() => {
       enforceIrishOnly(getCountry(me), me.username);
 
       // Persist canonical username in URL for shareable links.
-      const existingQuery = location.hash.split('?')[1] || '';
-      const params = new URLSearchParams(existingQuery);
+      const params = hashParams();
       params.set('u', me.username);
-      const newHash = `#buddy-finder?${params.toString()}`;
-      if (location.hash !== newHash) {
-        history.replaceState(null, '', newHash + location.search);
-      }
+      writeHash('buddy-finder', params);
       // Keep the waitlist input in sync so the user doesn't have to retype.
       if (!$wlInput.value) $wlInput.value = me.username;
 

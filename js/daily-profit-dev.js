@@ -214,7 +214,7 @@ const DailyProfitDevTool = (() => {
       if (!user) { steps.markActiveAsError('No user found'); throw new Error(`No War Era user found with username "${raw}".`); }
       enforceIrishOnly(user.country ?? user.countryId, user.username);
       steps.setStep(1, 'done', { count: `→ ${user.username}` });
-      try { window.history.replaceState(null, '', `#profit-dev?u=${encodeURIComponent(user.username)}`); } catch {}
+      try { writeHash('profit-dev', new URLSearchParams({ u: user.username })); } catch {}
       rememberUsername(user.username);
 
       // Step 2: companies + workers

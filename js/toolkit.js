@@ -32,14 +32,15 @@
 const ToolkitShell = (() => {
   const DEFAULT_TOOL       = 'wealth';   // first tab; used when no name yet
   const DEFAULT_AFTER_LOAD = 'wealth';   // user typed a name, show their data
-  const TOOLS              = ['advisor', 'clockin', 'buddy-finder', 'profit', 'wealth', 'mu', 'softcap', 'sp-advisor'];
-  const USERNAME_DRIVEN    = new Set(['buddy-finder', 'advisor', 'clockin', 'profit', 'wealth', 'softcap', 'sp-advisor']);
+  const TOOLS              = ['advisor', 'clockin', 'buddy-finder', 'products', 'profit', 'wealth', 'mu', 'softcap', 'sp-advisor'];
+  const USERNAME_DRIVEN    = new Set(['buddy-finder', 'advisor', 'clockin', 'products', 'profit', 'wealth', 'softcap', 'sp-advisor']);
 
   const MODULES = {
     mu:             () => MUTool,
     'buddy-finder': () => BuddyFinderTool,
     advisor:        () => AdvisorTool,
     clockin:        () => ClockInTool,
+    products:       () => ProductPickerTool,
     profit:         () => DailyProfitTool,
     wealth:         () => WealthMonitorTool,
     softcap:        () => GearSoftcapTool,
@@ -53,6 +54,7 @@ const ToolkitShell = (() => {
     clockin:        { icon: '⏱',  title: 'Clock-In Monitor',  desc: `See when each of your workers last clocked in, on a 48-hour timeline, plus a payroll projection.` },
     wealth:         { icon: '💰', title: 'Wealth Tracker',    desc: `Track any Irish player's wealth over time — total, or split into companies, items, money, equipment and weapons.` },
     'buddy-finder': { icon: '🤝', title: 'Buddy Finder',      desc: `Find a buddy for the Irish buddy system (you hire each other at minimum wage), or join the waiting list.` },
+    products:       { icon: '🎯', title: 'Product Picker',    desc: `Which product each of your companies should make, from margins on the latest market trades.` },
     profit:         { icon: '📈', title: 'Daily Profit',      desc: `Your projected daily profit — companies, salary, missions and case sales — plus which products pay best per production point.` },
     mu:             { icon: '🇮🇪', title: 'Irish Military Units', desc: `Military Units owned by Irish citizens, based in Ireland, with a majority-Irish roster.` },
     softcap:        { icon: '🛡️', title: 'Gear Softcap Advisor', desc: `Armor and dodge round to whole percentages, so gear points above a threshold buy nothing. Find the cheapest chest, pants and boots that hit the same effective percentage.` },
@@ -146,18 +148,13 @@ const ToolkitShell = (() => {
 
   /* ── URL sync ───────────────────────────────────────────
    *  Author the address bar so the view is shareable/deep-linkable as
-   *  #home?u=<name>&tool=<active>. Uses the native replaceState (set up
-   *  by installHashGuard) so it bypasses the guard's tool-hash transform.
-   *  replaceState doesn't fire hashchange, so no re-activation loop. */
+   *  #home?u=<name>&tool=<active>. A #home hash passes through the hash
+   *  guard untouched, so the shared writeHash is safe here. */
   function writeStagingHash() {
     const params = new URLSearchParams();
     if (state.username) params.set('u', state.username);
     if (state.active)   params.set('tool', state.active);
-    const qs  = params.toString();
-    const url = qs ? `#home?${qs}` : '#home';
-    if (location.hash !== url) {
-      (nativeReplace || history.replaceState).call(history, null, '', url + location.search);
-    }
+    writeHash('home', params);
   }
 
   /* ── Hash guard ─────────────────────────────────────────
@@ -177,9 +174,11 @@ const ToolkitShell = (() => {
     nativeReplace = history.replaceState.bind(history);
     history.replaceState = function (s, t, url) {
       if (typeof url === 'string') {
-        const m = url.match(/^#(mu|buddy-finder|advisor|clockin|profit|wealth|softcap|sp-advisor)\b/);
+        // Tools write a full path + query + hash, so read the hash off it.
+        const target = new URL(url, location.href);
+        const m = target.hash.match(/^#(mu|buddy-finder|advisor|clockin|products|profit|wealth|softcap|sp-advisor)\b/);
         if (m) {
-          const q = url.split('?')[1] || '';
+          const q = target.hash.split('?')[1] || '';
           const u = new URLSearchParams(q).get('u');
           if (u) {
             state.username = u;            // adopt the canonical casing
@@ -189,7 +188,7 @@ const ToolkitShell = (() => {
           const params = new URLSearchParams();
           if (u) params.set('u', u);
           params.set('tool', m[1]);
-          url = `#home?${params.toString()}`;
+          url = `${target.pathname}${target.search}#home?${params.toString()}`;
         }
       }
       return nativeReplace(s, t, url);
@@ -368,7 +367,7 @@ const ToolkitShell = (() => {
   // Landing cards, grouped into sections (same style as the Community tab).
   const PREVIEW_CATS = [
     { title: '🏭 Production', tools: ['advisor', 'clockin'] },
-    { title: '💰 Profits',    tools: ['buddy-finder', 'profit', 'wealth'], links: [
+    { title: '💰 Profits',    tools: ['products', 'buddy-finder', 'profit', 'wealth'], links: [
       { href: '#factory-tax', icon: '🧾', title: 'Factory Tax', desc: `Irish-owned factories that employ workers, grouped by the country they're based in — and the income tax that country takes off those wages.` },
     ] },
     { title: '⚔️ Combat',   tools: ['mu', 'softcap'], links: [
