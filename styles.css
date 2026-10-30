@@ -2024,7 +2024,7 @@ input[type="password"]:focus { outline: none; border-color: #3a4350; }
 .pp-spec-products > .pp-spec-current { color: var(--text); border: 1px solid var(--border); }
 .pp-spec-status { margin-top: 5px; font-size: 11px; color: var(--muted); }
 
-/* Product Picker phone layout (#pp-mobile), shown instead of the cards below 720px. */
+/* Top products phone layout (#pp-mobile), shown instead of the cards below 720px. */
 #pp-mobile { display: none; }
 @media (max-width: 720px) {
   #pp-best-card, #pp-income-card, #pp-products-card, #pp-companies-card { display: none !important; }

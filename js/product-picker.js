@@ -1,5 +1,5 @@
 /* ═══════════════════════════════════════════════════════════════════
- *  PRODUCT PICKER
+ *  TOP PRODUCTS
  *
  *  What each company earns now, and what it would earn making something
  *  else. Built for v0.27, laid out like the old
@@ -147,7 +147,7 @@ const ProductPickerTool = (() => {
 
   /**
    * Companies, their output, costs and managers, and live prices for one
-   * player. Also used by the dashboard's Product Picker card, so progress
+   * player. Also used by the dashboard's Top products card, so progress
    * goes through an optional makeSteps().setStep-shaped callback (steps 2
    * and 3).
    *
@@ -321,9 +321,9 @@ const ProductPickerTool = (() => {
 
   const HELP = {
     income: ['About projected income', '<p>Total per day and week includes engines and employees, minus wages and manager pay. It excludes self-work. Engines use their configured output; employee output and wages use the last full UTC day.</p><p>The estimate beneath Total adds one full energy bar spent on self-work at your best-margin owned product, using your Production stat. The weekly estimate assumes this each day. It assumes storage space and excludes energy regenerated while working.</p><p>Engine and employee inputs update income and product comparisons as you type, keeping their current product mix and costs. The self-work input starts at one full energy bar and affects the product comparison only. Company rows and Actual values keep the loaded figures.</p>'],
-    best: ['About the best product', '<p>The best product has the highest margin per production point at current market prices.</p><p>The switching gain uses your current output and costs. Changing products can reduce employee specialization, which is not included. Small gains may disappear as prices change.</p>'],
+    best: ['About the highest margin', '<p>This product has the highest margin per production point at current market prices. Rankings change over time.</p><p>This is a price snapshot, not a recommendation to switch your workforce. Changing products affects employee specialisation and trait bonuses. For example, Labourer favours raw resources and penalises manufactured goods; Craftsman does the reverse. Company comparisons hold output fixed and do not include these changes.</p>'],
     products: ['About product margins', '<p>Margin per production point (PP) is the sale price after market tax, minus input costs, divided by the PP needed to make it. Inputs use market prices even when you make them yourself.</p><p>Prices average the latest 100 trades, weighted by quantity. Trades older than 24 hours are excluded. Products without recent prices are omitted.</p><p>Max columns put all your output into that product. Without self-work adds engines and profitable employee output. With self-work adds Max self-work, using the PP input above. Both exclude employee output when it loses money. The default sort is Without self-work, highest first. Actual is what your companies making it earn now. Green rows are products you make. Click a heading to sort.</p><p>Employees pay off shows the highest wage expectation that earns a profit, using your Management and core-region bonus. Wages use the game’s PP value × wage expectation (70–130%). Bonuses increase output without increasing wages. This threshold excludes individual happiness, traits and specialisation.</p>'],
-    companies: ['About company profits and switching', '<p>Daily profit is output × the current product margin, minus wages and manager pay. Employee bonuses include your Management, the manager and a core region.</p><p>Gain per day compares the current product with the best product at the same output and costs. Switch cost is the concrete needed to change products. Companies start grouped by product, then ordered by company name. Click a column heading to sort; click again to reverse it.</p><p>Expand Specialisations to see each employee’s current bonus and saved progress on other products, capped at +20%. An unlisted product has no saved progress. Switching restores that product’s progress. Gains hold output fixed and do not include the change in specialisation.</p>'],
+    companies: ['About company profits and switching', '<p>Daily profit is output × the current product margin, minus wages and manager pay. Employee bonuses include your Management, the manager and a core region.</p><p>Gain per day compares the current product with the best product at the same output and costs. Switch cost is the concrete needed to change products. Companies start grouped by product, then ordered by company name. Click a column heading to sort; click again to reverse it.</p><p>Expand Specialisations to see each employee’s current bonus and saved progress on other products, capped at +20%. An unlisted product has no saved progress. Switching restores that product’s progress. Potential gains hold output fixed and exclude changes to specialisation and trait bonuses. Labourer favours raw resources and penalises manufactured goods; Craftsman does the reverse.</p>'],
   };
   const help = key => sectionHelp(...HELP[key]);
 
@@ -384,27 +384,23 @@ const ProductPickerTool = (() => {
     return muted('None');
   }
 
-  /** The best-margin product, and what switching every company that
-   *  isn't making its best product would add per day. */
+  /** The product with the highest current margin per production point. */
   function bestSummary() {
-    const best = productRows(model).rows.find(r => r.mg) || null;
-    const gains = model.companies.map(c => companyPlan(model, c)).filter(p => p.gain > 0 && !p.isBest);
-    return { best, switchCount: gains.length, switchGain: gains.reduce((sum, p) => sum + p.gain, 0) };
+    return { best: productRows(model).rows.find(r => r.mg) || null };
   }
 
   function renderBest() {
-    const { best, switchCount, switchGain } = bestSummary();
+    const { best } = bestSummary();
     if (!best) { $bestCard.classList.add('hidden'); return; }
     const fact = (label, value) => `<div><span>${label}</span><b>${value}</b></div>`;
     $bestCard.innerHTML = `
       <div class="pp-best-main">${iconBox(best.code)}
-        <div><div class="pp-best-label">Best product right now</div><div class="pp-best-name">${escapeHtml(ITEMS[best.code]?.name || best.code)}</div></div>
+        <div><div class="pp-best-label">Highest margin right now</div><div class="pp-best-name">${escapeHtml(ITEMS[best.code]?.name || best.code)}</div></div>
       </div>
       <div class="pp-best-facts">
         ${fact('Margin', `${num(best.mg.perPP, 3)} / PP`)}
         ${fact('Employees pay off', payOffHtml(best.payOff))}
         ${fact('You make it', best.owned ? `×${best.owned}` : 'not yet')}
-        ${switchCount ? fact(`Switching ${switchCount} compan${switchCount === 1 ? 'y' : 'ies'}`, `${signedMoney(switchGain)}/day`) : ''}
       </div>`;
     $bestCard.classList.remove('hidden');
   }
@@ -573,8 +569,8 @@ const ProductPickerTool = (() => {
     { key: 'payOff', label: 'Employees pay off', title: 'Highest wage expectation at which an employee still makes money on the current product, with this company’s bonuses' },
     { key: 'wages', label: 'Wages' },
     { key: 'profit', label: 'Profit / day' },
-    { key: 'best', label: 'Most profitable', l: true, dir: 1 },
-    { key: 'gain', label: 'Gain / day' },
+    { key: 'best', label: 'Highest margin', l: true, dir: 1 },
+    { key: 'gain', label: 'Potential gain / day' },
     { key: 'cost', label: 'Switch cost' },
   ];
 
@@ -667,7 +663,7 @@ const ProductPickerTool = (() => {
   function renderMobile() {
     const name = code => escapeHtml(ITEMS[code]?.name || code);
     const priced = productRows(model, overrides).rows.filter(r => r.mg);
-    const { best, switchCount, switchGain } = bestSummary();
+    const { best } = bestSummary();
     const plans = model.companies.map(c => ({ c, plan: companyPlan(model, c) }));
     const { t, costs, engines, employees } = incomeSummary(model, overrides);
     const total = engines + employees - costs;
@@ -675,10 +671,9 @@ const ProductPickerTool = (() => {
 
     const bestCard = best ? `
       <div class="pp-m-card pp-m-best section-help-card">${help('best')}
-        <div class="pp-m-sub">Best product right now</div>
+        <div class="pp-m-sub">Highest margin right now</div>
         <div class="pp-m-best-name">${iconBox(best.code)}<span>${name(best.code)}</span></div>
         <div class="pp-m-sub">${num(best.mg.perPP, 3)} per production point${best.owned ? ` · you make ×${best.owned}` : ''} · employees pay off: ${payOffHtml(best.payOff)}</div>
-        ${switchCount ? `<div class="pp-m-sub pp-m-gap">Switching ${switchCount} compan${switchCount === 1 ? 'y' : 'ies'} adds ${signedMoney(switchGain)}/day</div>` : ''}
       </div>` : '';
 
     const incomeCard = `
@@ -730,7 +725,7 @@ const ProductPickerTool = (() => {
           <div><span>Employees pay off</span>${c.empPP ? payOffHtml(payOffLimit(model, code, employeeBonusPct(model, c))) : '–'}</div>
         </div>
         ${specialisationsHtml(c)}
-        ${plan.gain != null && !plan.isBest ? `<div class="pp-m-switch">Switch to <strong>${name(plan.best.code)}</strong>: ${signedMoney(plan.gain)}/day · costs ${money(plan.cost)} once</div>` : ''}
+        ${plan.gain != null && !plan.isBest ? `<div class="pp-m-switch">At current prices, <strong>${name(plan.best.code)}</strong>: ${signedMoney(plan.gain)}/day at unchanged output · switch costs ${money(plan.cost)}</div>` : ''}
       </div>`;
     };
 

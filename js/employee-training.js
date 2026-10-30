@@ -21,11 +21,11 @@
  *      picked from yet (pendingTraining.offers).
  *    • Product prices: each product's margin per PP (sale price after
  *      market tax, minus inputs, over its production points, from the
- *      latest trades, as in the Product Picker) over the game's value of
+ *      latest trades, as in the Top products) over the game's value of
  *      a PP. 1.00× is an average product.
  *
  *  Access: loading employees is for Irish citizens (enforceIrishOnly), like
- *  the Product Picker. bypass=1 lifts it.
+ *  the Top products. bypass=1 lifts it.
  * ═══════════════════════════════════════════════════════════════════ */
 const EmployeeTrainingTool = (() => {
   const EC = EmployeeCore;

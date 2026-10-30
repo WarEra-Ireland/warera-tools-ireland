@@ -134,7 +134,7 @@ const DashboardTool = (() => {
   /* ── Card scaffolding ────────────────────────────────────────────── */
   const CARDS = [
     { key: 'migration', icon: '🏭', title: 'Migration',     href: '#advisor' },
-    { key: 'products',  icon: '🎯', title: 'Product Picker', href: '#products' },
+    { key: 'products',  icon: '🎯', title: 'Top products', href: '#products' },
     { key: 'clockin',   icon: '⏱',  title: 'Clock-In',      href: '#clockin' },
     { key: 'profit',    icon: '📈', title: 'Daily Profit',  href: '#profit'  },
     { key: 'wealth',    icon: '💰', title: 'Wealth Trend',  href: '#wealth'  },
@@ -611,7 +611,7 @@ const DashboardTool = (() => {
     }
   }
 
-  /* ── Card: Product Picker ── (most profitable product, from the full
+  /* ── Card: Top products ── (most profitable product, from the full
    *  tool's own loader and maths so the two can't disagree) ─────────── */
   async function fillProducts(full) {
     try {
@@ -625,19 +625,7 @@ const DashboardTool = (() => {
       const n = model.companies.length;
       setNote('products', `${n} compan${n === 1 ? 'y' : 'ies'}`);
 
-      const plans = model.companies.map(c => PP.companyPlan(model, c));
-      const others = plans.filter(p => p.gain != null && !p.isBest);
-      const gain = others.reduce((sum, p) => sum + p.gain, 0);
-      const cost = others.reduce((sum, p) => sum + (p.cost ?? 0), 0);
       const making = best.owned;
-      const switchSummary = others.length ? `
-        <div class="dash-product-switch">
-          <div class="dash-product-switch-title">Switch ${others.length} compan${others.length === 1 ? 'y' : 'ies'}</div>
-          <dl class="dash-product-metrics">
-            <div><dt>Daily gain</dt><dd class="dash-pos">+₿${fmtK(gain, 2)}</dd></div>
-            <div><dt>One-time cost</dt><dd>≈ ₿${fmtK(cost, 2)}</dd></div>
-          </dl>
-        </div>` : '';
 
       const missing = model.companies.filter(c => c.statsMissing).length;
       const warn = missing
@@ -662,7 +650,7 @@ const DashboardTool = (() => {
           </div>
           <span class="dash-top-v" title="Margin per production point, based on recent market trades">${best.mg.perPP.toFixed(3)}<small>/PP</small></span>
         </div>
-        ${switchSummary}
+        <p class="dp-muted">Current prices only. Rankings change, and switching products affects employee specialisation and trait bonuses.</p>
         ${ranked.length > 1 ? `<div class="dash-top">
           <div class="dash-top-h">Top products <span>margin per PP</span></div>
           <div class="dash-rows">${ranked.slice(1, 3).map((r, i) => topRow(r, i + 1)).join('')}</div>

@@ -51,7 +51,7 @@ js/
   softcap.js      Gear Softcap Advisor
   buddy-finder.js Buddy Finder (public)
   daily-profit.js Daily Profit calculator
-  product-picker.js Product Picker (best product per company, v0.27)
+  product-picker.js Top products (best product per company, v0.27)
   employee-core.js  Training card value model, no DOM (also runs in Node)
   employee-training.js Employee Training (#training)
   wealth.js       Wealth tracker

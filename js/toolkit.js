@@ -54,7 +54,7 @@ const ToolkitShell = (() => {
     clockin:        { icon: '⏱',  title: 'Clock-In Monitor',  desc: `See when each of your workers last clocked in, on a 48-hour timeline, plus a payroll projection.` },
     wealth:         { icon: '💰', title: 'Wealth Tracker',    desc: `Track any Irish player's wealth over time — total, or split into companies, items, money, equipment and weapons.` },
     'buddy-finder': { icon: '🤝', title: 'Buddy Finder',      desc: `Find a buddy for the Irish buddy system (you hire each other at minimum wage), or join the waiting list.` },
-    products:       { icon: '🎯', title: 'Product Picker',    desc: `Which product each of your companies should make, from margins on the latest market trades.` },
+    products:       { icon: '🎯', title: 'Top products',    desc: `Compare product margins from the latest market trades. Rankings change, and switching affects employee specialisation and trait bonuses.` },
     profit:         { icon: '📈', title: 'Daily Profit',      desc: `Your projected daily profit — companies, salary, missions and case sales — plus which products pay best per production point.` },
     mu:             { icon: '🇮🇪', title: 'Irish Military Units', desc: `Military Units owned by Irish citizens, based in Ireland, with a majority-Irish roster.` },
     softcap:        { icon: '🛡️', title: 'Gear Softcap Advisor', desc: `Armor and dodge round to whole percentages, so gear points above a threshold buy nothing. Find the cheapest chest, pants and boots that hit the same effective percentage.` },
