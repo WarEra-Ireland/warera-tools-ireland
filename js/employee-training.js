@@ -327,10 +327,10 @@ const EmployeeTrainingTool = (() => {
   // slots: `pendingTraining.offers` on every employee record. Offers look
   // like { card, rarity, stat, delta } for drills, { card, rarity, delta }
   // for Negotiation (the wage drop) and Second wind, and name the trait in
-  // `traitTo` for a habit. Rehab names its `trait`; a habit pair's `traits` are
-  // assumed by analogy, not yet seen. Mentoring names the held `trait` and
-  // the step up it becomes, `traitTo` (from the game's card face). An offer that matches no card of the
-  // rarity leaves its slot empty and counts it in `missing`.
+  // `traitTo` for a habit. Two new habits is a legendary habit with a second
+  // trait in `traitTo2`. Rehab names its `trait`. Mentoring names the held
+  // `trait` and the step up it becomes, `traitTo`. An offer that matches no
+  // card of the rarity leaves its slot empty and counts it in `missing`.
   function pendingHand(emp) {
     const offers = emp.pendingTraining?.offers;
     if (!Array.isArray(offers) || !offers.length) return null;
@@ -340,8 +340,9 @@ const EmployeeTrainingTool = (() => {
     const codeOf = t => typeof t === 'string' ? t : t?.code;
     let missing = 0;
     const slots = offers.slice(0, 3).map(o => {
-      const codes = (o.card === 'mentoring' ? [o.trait, o.traitTo] : o.traits || [o.traitTo ?? o.trait]).map(codeOf).filter(Boolean);
-      const k = kinds.findIndex(kind => kind.card === o.card && (
+      const card = o.card === 'habit' && o.traitTo2 ? 'habitPair' : o.card;
+      const codes = (card === 'mentoring' ? [o.trait, o.traitTo] : [o.traitTo ?? o.trait, o.traitTo2]).map(codeOf).filter(Boolean);
+      const k = kinds.findIndex(kind => kind.card === card && (
         kind.card === 'drill' ? kind.stat === o.stat && kind.delta === o.delta
           : kind.card === 'habit' || kind.card === 'rehab' ? EC.TRAIT[codes[0]]?.polarity === kind.polarity
             : true));
