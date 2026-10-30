@@ -37,11 +37,22 @@ const STRIPPED = new Set([
  *  A key that does come back 429 is parked in `cooling` and skipped until it
  *  expires. That map is per-isolate, so each isolate relearns a bad key within
  *  a request or two.
+ *
+ *  Some procedures (work.getStatsByCompany, work.getStatsByUserId) only answer
+ *  keys whose account has Premium, and 403 "Premium required" otherwise. The
+ *  pool learns both sides from those errors: the procedure goes into
+ *  `premiumProcedures`, and the key into `basicKeys` so requests for premium
+ *  procedures skip it. Basic keys still serve everything else. The key mark
+ *  expires, because an account can buy Premium again.
  */
 const cooling = new Map(); // key -> epoch ms at which it may be used again
+const basicKeys = new Map(); // key -> epoch ms until which it's treated as non-Premium
+const premiumProcedures = new Set();
 
 const COOL_DEFAULT_MS = 60_000;
 const COOL_MAX_MS     = 300_000;
+const BASIC_KEY_TTL_MS = 3_600_000;
+const PREMIUM_REQUIRED = 'Premium required';
 
 // Accepts either the multi-key secret or the original single-key one, so a
 // deploy that has not had WARERA_API_KEYS set yet keeps working.
@@ -66,8 +77,27 @@ function isCooling(key, now) {
  *  a rate-limited key still has a chance of succeeding (the window may have
  *  rolled over), which beats returning an error we invented ourselves.
  */
-function pickKey(keys, tried) {
+function isBasic(key, now) {
+  const until = basicKeys.get(key);
+  if (until === undefined) return false;
+  if (until <= now) {
+    basicKeys.delete(key);
+    return false;
+  }
+  return true;
+}
+
+/*
+ *  For a request that needs Premium, keys known to lack it are dropped first,
+ *  unless that leaves none: then the request goes out anyway and the client
+ *  sees the game's own "Premium required" error.
+ */
+function pickKey(keys, tried, needsPremium = false) {
   const now = Date.now();
+  if (needsPremium) {
+    const premium = keys.filter(k => !isBasic(k, now));
+    if (premium.length) keys = premium;
+  }
   const fresh = keys.filter(k => !tried.includes(k) && !isCooling(k, now));
   const untried = fresh.length ? fresh : keys.filter(k => !tried.includes(k));
   const pool = untried.length ? untried : keys;
@@ -105,6 +135,32 @@ function soonestCooldownSecs(keys) {
 function coolingCount(keys) {
   const now = Date.now();
   return keys.filter(k => isCooling(k, now)).length;
+}
+
+function basicCount(keys) {
+  const now = Date.now();
+  return keys.filter(k => isBasic(k, now)).length;
+}
+
+// tRPC batches name several procedures in one path: /a.b,c.d?batch=1.
+function procedures(path) {
+  let decoded = path.replace(/^\//, '');
+  try { decoded = decodeURIComponent(decoded); } catch { /* keep it raw */ }
+  return decoded.split(',').filter(Boolean);
+}
+
+/*
+ *  Procedures a 403/207 body says need Premium. A whole-request failure is a
+ *  single error envelope; a batch is an array with one envelope per item.
+ */
+function premiumFailures(text) {
+  if (!text.includes(PREMIUM_REQUIRED)) return [];
+  let parsed;
+  try { parsed = JSON.parse(text); } catch { return []; }
+  return (Array.isArray(parsed) ? parsed : [parsed])
+    .filter(item => item?.error?.message === PREMIUM_REQUIRED)
+    .map(item => item.error.data?.path)
+    .filter(Boolean);
 }
 
 /*
@@ -168,16 +224,20 @@ async function proxy(request, env, origin, base, prefix, keys = null) {
   const hasBody = request.method !== 'GET' && request.method !== 'HEAD';
   const body = hasBody ? await request.arrayBuffer() : undefined;
 
-  // One retry on 429, on a different key. More than that would just queue up
-  // behind a limit that is ours in aggregate, and the client retries too.
+  // One retry on 429 or "Premium required", on a different key. More than
+  // that would just queue up behind a limit that is ours in aggregate, and
+  // the client retries too.
   const maxAttempts = keys ? Math.min(2, keys.length) : 1;
+  const procs = procedures(path);
   const tried = [];
   let upstream;
+  let bufferedBody = null;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     let key = null;
     if (keys) {
-      key = pickKey(keys, tried);
+      const needsPremium = procs.some(p => premiumProcedures.has(p));
+      key = pickKey(keys, tried, needsPremium);
       tried.push(key);
       headers.set('x-api-key', key);
     }
@@ -189,7 +249,22 @@ async function proxy(request, env, origin, base, prefix, keys = null) {
       return json({ error: { message: `upstream unreachable: ${err.message}` } }, 502, origin);
     }
 
-    if (upstream.status !== 429 || !key) break;
+    bufferedBody = null;
+    if (!key) break;
+
+    if (upstream.status === 403 || upstream.status === 207) {
+      bufferedBody = await upstream.text();
+      const failed = premiumFailures(bufferedBody);
+      if (!failed.length) break;
+      failed.forEach(p => premiumProcedures.add(p));
+      basicKeys.set(key, Date.now() + BASIC_KEY_TTL_MS);
+      // Retry only if some untried key might have Premium.
+      const now = Date.now();
+      if (!keys.some(k => !tried.includes(k) && !isBasic(k, now))) break;
+      continue;
+    }
+
+    if (upstream.status !== 429) break;
 
     markCooling(key, upstream.headers.get('Retry-After'));
     // Last attempt: pass the 429 through, so shared.js sees the real status.
@@ -202,6 +277,12 @@ async function proxy(request, env, origin, base, prefix, keys = null) {
   const out = new Headers(upstream.headers);
   for (const [name, value] of corsHeaders(origin)) out.set(name, value);
   out.delete('set-cookie');
+  // A body read for inspection is already decoded, so its length and
+  // encoding headers no longer describe it.
+  if (bufferedBody !== null) {
+    out.delete('content-length');
+    out.delete('content-encoding');
+  }
 
   // Pool-wide 429: tell the client how long the whole pool is parked for, so
   // it can say something better than "HTTP 429". Upstream's own Retry-After
@@ -209,7 +290,7 @@ async function proxy(request, env, origin, base, prefix, keys = null) {
   if (upstream.status === 429 && keys && !out.has('Retry-After')) {
     out.set('Retry-After', String(soonestCooldownSecs(keys)));
   }
-  return new Response(upstream.body, { status: upstream.status, headers: out });
+  return new Response(bufferedBody ?? upstream.body, { status: upstream.status, headers: out });
 }
 
 // GitHub repository_dispatch
@@ -277,6 +358,9 @@ export default {
         token: keys.length > 0,
         keys: keys.length,
         cooling: coolingCount(keys),
+        // Keys seen answering "Premium required" in this isolate.
+        basic: basicCount(keys),
+        premiumProcedures: [...premiumProcedures],
       }, 200, origin);
     }
     if (url.pathname.startsWith('/trpc/')) {

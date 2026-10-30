@@ -19,6 +19,11 @@ GITHUB_REPO = "hawtre/warera-tools-ireland"
 #                                              #   spread evenly across them.
 #                                              #   WARERA_API_KEY (singular) is
 #                                              #   still read as a fallback.
+#                                              #   At least one must belong to a
+#                                              #   Premium account: some
+#                                              #   procedures (work.getStats*)
+#                                              #   refuse other keys, and the
+#                                              #   pool routes them accordingly.
 #   wrangler secret put GITHUB_DISPATCH_TOKEN  # optional: fine-grained PAT,
 #                                              #   Contents:read + Actions:write
 #   wrangler secret put DISCORD_WEBHOOK_URL    # optional: Discord webhook
