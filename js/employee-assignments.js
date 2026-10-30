@@ -206,9 +206,9 @@ const EmployeeAssignments = (() => {
     };
   }
 
-  // onResult hears the latest comparison for the page's Next actions:
+  // onResult hears the latest comparison for the page's Next actions and card values:
   // { running: true } while it searches, then { gain, days, horizon, changes,
-  // cancelled, moves }, or null when there is none (inputs changed, or it failed).
+  // cancelled, moves, tools } (tools: the registered tools it gives out), or null when there is none (inputs changed, or it failed).
   function mount(root, { getTeam, getMarket, productName = code => code, productIcon = code => esc(productName(code)), companyName = () => null, onResult = () => {}, onSettings = () => {} }) {
     let account = null, settings = defaults(), notices = [], worker = null, runId = 0, best = null, running = null, chartData = null;
     let draft = null;
@@ -360,12 +360,12 @@ const EmployeeAssignments = (() => {
       const n = Number(r.quantity), h = Number(r.hours);
       el.innerHTML = `${icon(r.type)}<span><b>${Number.isInteger(n) && n > 1 ? `${n} × ` : ''}${esc(cap(r.type))}${r.bonus !== '' ? ` +${esc(r.bonus)}%` : ''}</b><br><small class="tr-muted">${h > 0 ? `${esc(r.hours)} h ≈ ${num(h / 24, 1)} days of work` : 'Enter the hours left'}</small></span>`;
     }
-    function openTool(rowId, errors = []) {
+    function openTool(rowId, errors = [], type = '') {
       const row = settings.inventory.find(r => r.id === rowId);
-      draft = row ? { row: { ...row }, isNew: false, back: `[data-tool-edit="${CSS.escape(row.id)}"]` } : { row: { ...blank(), type: '' }, isNew: true, back: '[data-tool-add]' };
+      draft = row ? { row: { ...row }, isNew: false, back: `[data-tool-edit="${CSS.escape(row.id)}"]` } : { row: { ...blank(), type }, isNew: true, back: '[data-tool-add]' };
       drawDialog(); dialog.showModal();
       showFieldErrors(errors, dialog);
-      (dialog.querySelector('[aria-invalid="true"]') || dialog.querySelector(draft.isNew ? '[data-dialog-type]' : `#plan-${CSS.escape(draft.row.id)}-bonus`))?.focus();
+      (dialog.querySelector('[aria-invalid="true"]') || dialog.querySelector(draft.isNew && !type ? '[data-dialog-type]' : `#plan-${CSS.escape(draft.row.id)}-bonus`))?.focus();
     }
     function openEquipped(id, errors = []) {
       const e = equippedOf(getTeam()).find(e => e._id === id);
@@ -456,7 +456,8 @@ const EmployeeAssignments = (() => {
       const changedIds = new Set(changed.map(a => a.employee));
       const moved = changed.filter(a => a.company !== emp(a.employee).company);
       onResult({ gain: result.gain, days, horizon: settings.horizon, changes: changed.length, cancelled,
-        moves: moved.map(a => ({ employee: a.employee, to: a.company })) });
+        moves: moved.map(a => ({ employee: a.employee, to: a.company })),
+        tools: changed.filter(a => a.tool && a.tool !== (emp(a.employee).equipped?.id || null)).map(a => ({ employee: a.employee, tool: tool(a.tool) })) });
       const delta = id => row(proposed, id).value - row(baseline, id).value;
       const newTool = id => { const a = final.get(id); return a.tool && a.tool !== (emp(id).equipped?.id || null) ? tool(a.tool) : null; };
       const toolText = t => `${esc(cap(t.type))} +${esc(num(t.bonus, 0))}%`;
@@ -654,6 +655,8 @@ const EmployeeAssignments = (() => {
       refresh,
       run,
       cardSettings: () => JSON.parse(JSON.stringify(settings)),
+      // From a card's tool prompt: the Add tool dialog with its type chosen.
+      addTool: type => openTool(null, [], EP.TOOL_TYPES[type] ? type : ''),
       // Opened from the roster: focus the planner's Compare button.
       reveal() {
         root.querySelector('[data-plan-run]')?.focus({ preventScroll: true });

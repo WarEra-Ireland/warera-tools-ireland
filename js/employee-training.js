@@ -426,6 +426,16 @@ const EmployeeTrainingTool = (() => {
   const ARG_SHORT = { production: 'Prod', responsibility: 'Resp', luck: 'Luck', match: 'its product', other: 'other good' };
 
   let cardPricer = null, cardRevision = null;
+
+  // Handy and Improviser hang on holding a tool. Card values start from the
+  // registered tools the assignment plan hands out, and may give the employee
+  // another that suits their company (EmployeePlanner cardSession).
+  const TOOL_TRAITS = ['handy', 'improviser'];
+  const plannedTool = id => plan && !plan.running ? (plan.tools || []).find(x => x.employee === id)?.tool || null : null;
+  const plannedTools = () => Object.fromEntries((plan && !plan.running ? plan.tools || [] : []).map(x => [x.employee, x.tool.id]));
+  const withTool = ctx => ({ ...ctx, situation: { ...ctx.situation, hasTool: true } });
+  const spareTools = () => assignments?.cardSettings().inventory || [];
+  const toolTypeFor = code => Object.keys(EmployeePlanner.TOOL_TYPES).find(t => EmployeePlanner.TOOL_TYPES[t].includes(code)) || null;
   const cardKey = c => JSON.stringify(Object.fromEntries(Object.entries(c).filter(([k]) => k !== 'value')));
   function prepareCardPricing() {
     if (!cardPricer) cardPricer = EmployeeAssignments.createCardPricer({
@@ -447,7 +457,8 @@ const EmployeeTrainingTool = (() => {
   }
   function pricingJob(emp, entry, cards, feed = false) {
     const inp = inputsFor(emp, entry);
-    return { subjectId: emp._id, cards, options: { employee: { ...employeeOf(inp), potentialMax: emp.potentialMax }, context: contextOf(inp), feed } };
+    return { subjectId: emp._id, cards, options: { employee: { ...employeeOf(inp), potentialMax: emp.potentialMax },
+      context: plannedTool(emp._id) ? withTool(contextOf(inp)) : contextOf(inp), feed, assigned: plannedTools() } };
   }
   function selectedPricing(cards, kind) {
     const pricer = prepareCardPricing();
@@ -472,6 +483,7 @@ const EmployeeTrainingTool = (() => {
   // Each slot's card with its value and, for traits rolled on gain, the
   // outcomes. Unpriced cards have value null.
   function pricedHand(e, ctx) {
+    if (plannedTool(input.pick)) ctx = withTool(ctx);
     const rows = (input.hand?.slots || []).map((h, slot) => {
       const c = slotCard(h);
       if (!c) return null;
@@ -610,10 +622,30 @@ const EmployeeTrainingTool = (() => {
 
     $calc.innerHTML = `
       ${note ? `<div class="tr-hand">${note}</div>` : ''}
+      ${toolLine(hand)}
       ${v.html}
       ${hand.length ? `<div class="tr-hand-row">${handCards(hand, v.best)}
         ${help('What the card values mean', `Each value is the extra profit per day the card adds, at the PP money value, averaged over the employee's remaining working days. Below it are the production points the card adds before retirement, counting coworkers and moves between your companies. ${escapeHtml(hand.scope)} Wild card averages every eligible trait equally, excluding held traits, conflicts, gender mismatches and partner traits. Wages use hired and trained Production; Negotiation reduces wage expectation before Greedy or Modest applies.`)}</div>` : ''}
       ${warnings.length ? `<ul class="tr-facts">${warnings.map(w => `<li class="tr-warn">${w}</li>`).join('')}</ul>` : ''}`;
+  }
+
+  // Over a hand where holding a tool changes a card's value (the employee
+  // holds Handy or Improviser, or a card gives or takes one): which tool the
+  // values count, or a prompt to register one that suits their company.
+  function toolLine(hand) {
+    const { emp, entry } = findEmployee(input.pick);
+    const codes = hand.flatMap(({ c }) => c.card === 'habitPair' ? c.codes || [] : c.card === 'mentoring' ? [c.code, c.to]
+      : c.card === 'habit' || c.card === 'rehab' ? [c.code] : []);
+    if (emp.toolItem || ![...(emp.traits || []).map(t => t.code), ...codes].some(code => TOOL_TRAITS.includes(code))) return '';
+    const who = escapeHtml(emp.name), planned = plannedTool(emp._id), type = toolTypeFor(entry.company.itemCode);
+    const suits = spareTools().filter(r => r.type === type).reduce((n, r) => n + (Number(r.quantity) || 0), 0);
+    const add = type ? ` <button type="button" class="tr-link" data-add-tool="${type}">Add a ${type}</button>` : '';
+    const text = planned ? `The assignment plan gives ${who} ${escapeHtml(planned.name)}; card values count it.`
+      : plan?.running ? 'The assignment plan is still placing your tools.'
+        : suits ? `Card values may give ${who} ${suits === 1 ? `your registered ${type}` : `one of your ${suits} registered ${type}s`}, for its remaining hours, when a card makes it worth more to them.`
+          : type ? `No ${type} registered, so ${who} is valued without a tool. Have one?${add}`
+            : `Nothing you can register suits this company, so ${who} is valued without a tool.`;
+    return `<p class="tr-tool-for tr-muted">${text}</p>`;
   }
 
   /* ── Your employees ──────────────────────────────────────── */
@@ -1076,6 +1108,8 @@ const EmployeeTrainingTool = (() => {
         sub: `${escapeHtml(m)}: −1 Production there instead of +3 · ${where(entry)}${to.planned ? ' · the planner\'s move'
           : to.company ? ` · try ${companyLabelHtml(to.company)}${team.companies.find(x => x.company === to.company).employees.length >= headcountCap(to.company) ? ' (full, so a swap)' : ''}` : ''}` });
     }
+    if (!spareTools().length) groups.check.push({ icon: '🧰', go: { tab: 'assignments', tools: true }, what: 'Enter your spare tools',
+      sub: 'Equipped tools come from the game. Spare ones need entering so assignments and card values can place them' });
 
     for (const { emp, entry } of all) {
       if (doneToday(emp) && !pendingHand(emp)) groups.done.push({ go: { tab: 'train', emp: emp._id }, what: escapeHtml(emp.name),
@@ -1088,7 +1122,7 @@ const EmployeeTrainingTool = (() => {
     const heads = { now: 'Do now', energy: `Spend energy${energyHead}`, check: 'Check' };
     let n = 0;
     const item = (a, done) => a.cut ? `<li class="tr-act-cut">${a.expand ? `<button type="button" class="tr-act-more" data-next-actions-toggle aria-expanded="${nextActionsExpanded}" aria-controls="tr-next-actions">${escapeHtml(a.cut)}</button>` : escapeHtml(a.cut)}</li>`
-      : `<li><button type="button" class="tr-act${a.go.tab === 'train' ? ' tr-act-training' : a.go.tab === 'keep' ? ' tr-act-replacement' : ''}${done ? ' done' : ''}" data-go-tab="${a.go.tab}"${a.go.emp ? ` data-go-emp="${a.go.emp}"` : ''}${a.go.company ? ` data-go-company="${a.go.company}"` : ''}>
+      : `<li><button type="button" class="tr-act${a.go.tab === 'train' ? ' tr-act-training' : a.go.tab === 'keep' ? ' tr-act-replacement' : ''}${done ? ' done' : ''}" data-go-tab="${a.go.tab}"${a.go.emp ? ` data-go-emp="${a.go.emp}"` : ''}${a.go.tools ? ' data-go-tools' : ''}${a.go.company ? ` data-go-company="${a.go.company}"` : ''}>
           <span class="tr-act-rank">${done ? '✓' : ++n}</span><span class="tr-act-icon" aria-hidden="true">${a.icon || ''}</span>
           <span class="tr-act-main">${a.what}<small>${a.sub}</small></span>
           ${a.value ? `<span class="tr-act-value">${a.value}<small>${a.unit}</small></span>` : ''}</button></li>`;
@@ -1189,7 +1223,8 @@ const EmployeeTrainingTool = (() => {
   let feedMemo = { revision: null, batch: null, rows: [] };
   function feedRows() {
     const pricer = prepareCardPricing();
-    if (feedMemo.revision !== cardRevision) {
+    const revision = JSON.stringify([cardRevision, plan && !plan.running ? plan.tools : null]);
+    if (feedMemo.revision !== revision) {
       const rows = energyFeed();
       const trains = rows.filter(r => r.kind === 'train');
       const jobs = trains.map(r => {
@@ -1199,8 +1234,8 @@ const EmployeeTrainingTool = (() => {
           .map(({ value, ...c }) => c);
         return job;
       });
-      const batch = jobs.length ? pricer.request('feed', jobs, 2) : { status: 'fallback', reason: 'No trainings available.' };
-      feedMemo = { revision: cardRevision, batch, rows, jobs, published: false };
+      const batch = jobs.length ? pricer.request(JSON.stringify(['feed', jobs]), jobs, 2) : { status: 'fallback', reason: 'No trainings available.' };
+      feedMemo = { revision, batch, rows, jobs, published: false };
     }
     const { batch, jobs } = feedMemo;
     if (batch.status === 'done' && !feedMemo.published) {
@@ -2018,7 +2053,7 @@ const EmployeeTrainingTool = (() => {
     assignments = EmployeeAssignments.mount(document.getElementById('tr-assignments-body'), {
       getTeam: () => team, getMarket: () => market, productName, productIcon,
       companyName: id => { const x = team?.companies.find(c => c.company._id === id); return x ? companyName(x.company) : null; },
-      onResult: result => { plan = result; renderTeam(); renderFire(); },
+      onResult: result => { plan = result; renderResult(); renderTeam(); renderFire(); },
       onSettings: () => { renderResult(); renderTeam(); },
     });
     $load.addEventListener('click', () => runLoad($username.value));
@@ -2057,7 +2092,9 @@ const EmployeeTrainingTool = (() => {
         if (b.dataset.goEmp) selectEmployee(b.dataset.goEmp, b.dataset.goTab);
         else showTab(b.dataset.goTab, { reveal: true });
         if (b.dataset.goTab === 'assignments' && b.dataset.goEmp) focusPlanStep(b.dataset.goEmp);
+        if (b.dataset.goTools !== undefined) document.querySelector('#tr-assignments-body [data-tool-add]')?.focus();
       }
+      else if (b.dataset.addTool) { showTab('assignments', { reveal: true }); assignments.addTool(b.dataset.addTool); }
       else if (b.dataset.planOpen !== undefined) { showTab('assignments', { reveal: true }); assignments.reveal(); }
       else if (b.dataset.sideEmp) selectEmployee(b.dataset.sideEmp);
       else if (b.dataset.took !== undefined) takeSlot(+b.dataset.took);

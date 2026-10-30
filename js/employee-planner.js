@@ -452,7 +452,11 @@ const EmployeePlanner = (() => {
     const tools = new Map(s.tools.map(t => [t.id, t]));
     const fingerprint = e => JSON.stringify([e.id, e.traits.filter(t => !['luckyCharm', 'jinx', 'recruiter', 'trainer'].includes(t.code)),
       e.production, e.responsibility, e.wage, e.climberRaise]);
-    function price(subjectId, cards, { budget = 80000, employee = {}, context = {}, feed = false } = {}) {
+    // `assigned` maps employees to the registered tools the assignment plan
+    // gives them (equipped tools always stay). The subject may also take any
+    // registered tool that suits their company, from its holder if it has one,
+    // so a card like Handy is priced with the tool it would earn.
+    function price(subjectId, cards, { budget = 80000, employee = {}, context = {}, feed = false, assigned = {} } = {}) {
       const subject = s.employees.find(e => e.id === subjectId);
       const reason = errors[0] || !subject && 'Employee is not in this workforce.'
         || s.companies.find(c => c.id === subject?.company)?.excluded
@@ -463,17 +467,32 @@ const EmployeePlanner = (() => {
         gender: subject.gender, product: companies.find(c => c.id === subject.company).product } };
       const e = { ...EC.DEFAULT_EMPLOYEE, ...employee, ...subject,
         wageExpectation: employee.wageExpectation ?? subject.wage / (subject.production / 4 * (snapshot.ppValue || 1)) };
-      let state = subjects.get(subjectId);
+      const toolOf = x => x.equipped ? tools.get(x.equipped.id) : tools.get(assigned[x.id]) || null;
+      const stateKey = JSON.stringify([subjectId, assigned]);
+      let state = subjects.get(stateKey);
       if (!state) {
         const menu = localPlans(s, subject, snapshot.allowMoves !== false);
-        state = { ...menu, best: null, quotes: new Map() }; subjects.set(subjectId, state);
+        // One plan per kind of registered tool the subject could take: a free
+        // unit if there is one, else the planned holder's.
+        const here = companies.find(c => c.id === subject.company), own = toolOf(subject);
+        const holderOf = new Map(Object.entries(assigned).map(([id, t]) => [t, id]));
+        const kinds = new Map();
+        if (!subject.equipped) for (const t of s.tools.filter(t => !t.holder && t.hours > 0 && compatible(t, here)).sort(byId)) {
+          const k = `${t.type}|${t.bonus}|${t.hours}`;
+          if (own && k === `${own.type}|${own.bonus}|${own.hours}`) continue;
+          if (!kinds.has(k) || (kinds.get(k).from && !holderOf.has(t.id))) kinds.set(k, { tool: t.id, from: holderOf.get(t.id) || null });
+        }
+        const toolPlans = [...kinds.values()].map(x => ({ key: `tool:${x.tool}`, kind: 'tool', changes: [], ...x }));
+        state = { plans: [menu.plans[0], ...toolPlans, ...menu.plans.slice(1)], total: menu.total + toolPlans.length, best: null, quotes: new Map() };
+        subjects.set(stateKey, state);
       }
       const project = (variant, plan) => {
         const changed = new Map(plan.changes);
+        const toolIn = x => x.id === subjectId ? (plan.tool ? tools.get(plan.tool) : toolOf(x)) : plan.from === x.id ? null : toolOf(x);
         const groups = companies.map(c => {
           const members = s.employees.filter(x => (changed.get(x.id) || x.company) === c.id)
-            .map(x => ({ e: x.id === subjectId ? variant : x, tool: tools.get(x.equipped?.id) })).sort((a, b) => byId(a.e, b.e));
-          const key = c.id + ':' + members.map(m => fingerprint(m.e)).join('|');
+            .map(x => ({ e: x.id === subjectId ? variant : x, tool: toolIn(x) })).sort((a, b) => byId(a.e, b.e));
+          const key = c.id + ':' + members.map(m => fingerprint(m.e) + (m.tool ? `@${m.tool.id}:${m.tool.hours}` : '')).join('|');
           if (!cache.has(key)) {
             if (++used > budget) throw new Error('Projection budget reached.');
             if (cache.size >= CARD_CACHE_CAP) cache.delete(cache.keys().next().value);
@@ -499,7 +518,9 @@ const EmployeePlanner = (() => {
         }
         return result;
       };
+      const nameOf = id => s.employees.find(x => x.id === id).name;
       const explain = plan => ({ ...plan, description: plan.kind === 'stay' ? 'stay in current arrangement'
+        : plan.kind === 'tool' ? `give ${subject.name} ${tools.get(plan.tool).name}${plan.from ? ` from ${nameOf(plan.from)}` : ''}`
         : `${plan.kind}: ${plan.changes.map(([id, co]) => `${s.employees.find(x => x.id === id).name} to ${s.companies.find(c => c.id === co).name} (${s.companies.find(c => c.id === co).product})`).join('; ')}` });
       try {
         state.best ||= best(e);
