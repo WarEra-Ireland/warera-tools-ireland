@@ -3000,26 +3000,6 @@ html[data-theme="light"] {
   --tr-co-1: #2a78d6; --tr-co-2: #eb6834; --tr-co-3: #1baf7a; --tr-co-4: #eda100;
   --tr-co-5: #e87ba4; --tr-co-6: #008300; --tr-co-7: #6250d6; --tr-co-8: #e34948;
 }
-.tr-flags { display: flex; flex-wrap: wrap; gap: 6px; margin: 16px 0; }
-.tr-flag { min-height: 32px; border-radius: 999px; padding: 6px 12px; font-size: 12px; color: var(--muted); background: var(--panel); }
-.tr-flag[aria-pressed="true"] { border-color: var(--warn); color: var(--warn); }
-.tr-ladder { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }
-.tr-tier h3 { margin: 0 0 8px; font-size: 13px; letter-spacing: .08em; text-transform: uppercase; color: var(--tier); }
-.tr-row { display: flex; gap: 8px; overflow-x: auto; padding: 10px 0 6px 16px; scroll-snap-type: x mandatory; }
-.tr-card {
-  flex: 0 0 112px; scroll-snap-align: start; position: relative; text-align: center;
-  background: var(--panel); border: 1px solid var(--border); border-top: 3px solid var(--tier);
-  border-radius: 10px; padding: 10px 6px 12px;
-}
-.tr-card.skip { opacity: .4; }
-.tr-card.moved { box-shadow: 0 0 0 1px var(--warn); }
-.tr-rank {
-  position: absolute; top: -10px; left: -7px; width: 22px; height: 22px; border-radius: 50%;
-  display: grid; place-items: center; background: var(--tier); color: var(--bg); font-size: 12px; font-weight: 700;
-}
-.tr-kind { font-size: 11px; color: var(--muted); }
-.tr-val { margin-top: 3px; font-size: 16px; font-weight: 700; }
-.tr-val.small { font-size: 13px; font-weight: 600; }
 .tr-stat-production { color: var(--tr-prod); }
 .tr-stat-responsibility { color: var(--tr-resp); }
 .tr-stat-luck { color: var(--tr-luck); }
@@ -3196,9 +3176,6 @@ html[data-theme="light"] {
   .tr-emps-open .tr-use { flex: 1; margin: 0; min-height: 36px; }
   .tr-emps-filters .tr-field { flex: 1 1 140px; min-width: 0; }
 }
-.tr-key-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 0 0 12px; }
-.tr-key-row input[type="password"] { flex: 1 1 240px; }
-.tr-remember { display: flex; gap: 6px; align-items: center; font-size: 13px; color: var(--muted); }
 
 /* Hand ranker: the dealt hand drawn like the game's, value as a footer. */
 .tr-who { max-width: 560px; margin: 0 0 6px; }
@@ -3433,27 +3410,6 @@ html[data-theme="light"] {
 }
 
 /* Trait chart: tiers of chips, scaled by +1 trait Production. */
-.tr-chip {
-  display: inline-flex; gap: 5px; align-items: center; margin: 2px 4px 2px 0; padding: 2px 9px;
-  border: 1px solid var(--border); border-radius: 999px; background: var(--panel); font-size: 12px; color: var(--text);
-}
-.tr-chip small { color: var(--muted); font-variant-numeric: tabular-nums; }
-.tr-chip.held { border-color: var(--text); }
-.tr-chip.blocked { opacity: .45; }
-.tr-chip button { padding: 0 2px; border: 0; background: none; color: var(--muted); font-size: 14px; line-height: 1; cursor: pointer; }
-.tr-chip.tr-pol-negative { border-left: 3px solid var(--danger); }
-.tr-chip.tr-pol-mixed { border-left: 3px solid var(--warn); }
-.tr-chip.tr-pol-positive { border-left: 3px solid var(--accent); }
-.tr-trait-cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px 20px; margin-bottom: 8px; }
-.tr-trait-cols h4 { margin: 0 0 6px; font-size: 13px; }
-.tr-trait-cols h4.good { color: var(--accent); }
-.tr-trait-cols h4.bad { color: var(--danger); }
-.tr-tierrow { display: grid; grid-template-columns: 30px 1fr; gap: 8px; align-items: start; margin: 4px 0; }
-.tr-tierrow > span {
-  display: grid; place-items: center; min-height: 26px; border-radius: 6px; font-weight: 800; font-size: 13px; color: #111;
-}
-.tr-tier-S { background: #4ade80; } .tr-tier-A { background: #a3e635; } .tr-tier-B { background: #facc15; }
-.tr-tier-C { background: #fb923c; } .tr-tier-D { background: #9ca3af; } .tr-tier-0 { background: var(--border); color: var(--muted) !important; }
 
 /* Training tabs: one pane per job, the employee picker over the employee tabs. */
 .tr-shell.hidden { display: none; }
@@ -3483,9 +3439,6 @@ html[data-theme="light"] {
 .tr-pane details > summary { cursor: pointer; }
 .tr-pane-title { margin: 0 0 6px; font-size: 14px; }
 .tr-pane-title:not(:first-child) { margin-top: 18px; }
-.tr-howto { margin: 0; max-width: 72ch; font-size: 13px; line-height: 1.6; }
-.tr-howto dt { margin-top: 10px; font-weight: 700; }
-.tr-howto dd { margin: 2px 0 0; color: var(--muted); }
 @media (max-width: 600px) {
   .tr-pane { padding: 12px; }
   .tr-tab { padding: 6px 11px; }
@@ -3523,7 +3476,6 @@ html[data-theme="light"] {
   min-height: 0; padding: 0; border: 0; background: transparent;
   color: inherit; font: inherit; font-size: 12px; line-height: inherit;
 }
-.tr-chip .tr-trait-help > .tr-help-trigger { padding: 0; color: inherit; font-size: 12px; }
 .tr-trait-help > .tr-help-trigger small { margin-left: 5px; }
 
 /* Train, Traits, Keep or replace: the roster down the side on desktop, the
@@ -3584,33 +3536,7 @@ html[data-theme="light"] {
   .tr-cand-parts li { align-items: baseline; }
 }
 
-/* Events: each pending event with its choices priced. */
-.tr-evs { list-style: none; margin: 0 0 12px; padding: 0; display: grid; gap: 10px; }
-.tr-ev { margin: 0; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); }
-.tr-ev-head { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; }
-.tr-ev-head > span:last-child { margin-left: auto; font-variant-numeric: tabular-nums; }
-.tr-ev > small { display: block; margin-top: 2px; }
-.tr-ev-opts { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 4px; }
-.tr-ev-opts li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 12px; margin: 0; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; }
-.tr-ev-opts li.best { border-color: var(--accent); }
-.tr-ev-opt .tr-badge { margin-left: 6px; }
-.tr-ev-opt small, .tr-ev-val small { display: block; color: var(--muted); font-size: 11.5px; }
-.tr-ev-val { text-align: right; font-variant-numeric: tabular-nums; }
-@media (max-width: 600px) {
-  .tr-ev-opts li { grid-template-columns: minmax(0, 1fr); }
-  .tr-ev-val { text-align: left; }
-}
-
 .tr-verdict.muted .tr-verdict-take { color: var(--text); }
-.tr-howto:focus, #tr-howto:focus { outline: none; }
-
-/* Projected trait values keep the current-company comparison beside the plan. */
-.tr-card-chart { overflow-x: auto; margin: 12px 0 20px; }
-.tr-card-chart table { width: 100%; border-collapse: collapse; font-size: 12px; line-height: 1.5; }
-.tr-card-chart th, .tr-card-chart td { padding: 8px; border-bottom: 1px solid var(--border); text-align: left; vertical-align: top; }
-.tr-card-chart th:nth-child(2), .tr-card-chart th:nth-child(3),
-.tr-card-chart td:nth-child(2), .tr-card-chart td:nth-child(3) { text-align: right; font-variant-numeric: tabular-nums; }
-.tr-card-chart td:last-child { min-width: 180px; color: var(--muted); }
 
 /* Employees table: each column header sorts; a second click reverses. */
 .tr-emps-sort { padding: 0; border: 0; background: none; color: inherit; font: inherit; letter-spacing: inherit; text-transform: inherit; cursor: pointer; }

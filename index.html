@@ -24,7 +24,7 @@
 })();
 </script>
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 3 2'%3E%3Crect width='1' height='2' fill='%23009A49'/%3E%3Crect x='1' width='1' height='2' fill='white'/%3E%3Crect x='2' width='1' height='2' fill='%23FF7900'/%3E%3C/svg%3E" />
-<link rel="stylesheet" href="styles.css?v=20261030b" />
+<link rel="stylesheet" href="styles.css?v=20261030c" />
 <link rel="stylesheet" href="community.css?v=20260906c" />
 </head>
 <body>
@@ -770,7 +770,7 @@
 
   <!-- ─── Employee Training view ─────────────────────────────────────
        Tabs over the loaded account's employees: where to spend energy,
-       which card to keep, who to replace, hiring, assignments and events.
+       which card to keep, who to replace, hiring and assignments.
        The tab and employee live in the hash; see js/employee-training.js. -->
   <section class="view" data-view="training">
     <div class="tool-header">
@@ -820,12 +820,9 @@
       <button type="button" role="tab" class="tr-tab" id="tr-tab-overview" data-tab="overview" aria-controls="tr-pane-overview" aria-selected="false" tabindex="-1">Overview<span class="tr-tab-count" data-count></span></button>
       <button type="button" role="tab" class="tr-tab" id="tr-tab-employees" data-tab="employees" aria-controls="tr-pane-employees" aria-selected="false" tabindex="-1">Employees<span class="tr-tab-count" data-count></span></button>
       <button type="button" role="tab" class="tr-tab" id="tr-tab-train" data-tab="train" aria-controls="tr-pane-train" aria-selected="false" tabindex="-1">Train<span class="tr-tab-count" data-count></span></button>
-      <button type="button" role="tab" class="tr-tab" id="tr-tab-traits" data-tab="traits" aria-controls="tr-pane-traits" aria-selected="false" tabindex="-1">Traits<span class="tr-tab-count" data-count></span></button>
       <button type="button" role="tab" class="tr-tab" id="tr-tab-keep" data-tab="keep" aria-controls="tr-pane-keep" aria-selected="false" tabindex="-1">Keep or replace<span class="tr-tab-count" data-count></span></button>
       <button type="button" role="tab" class="tr-tab" id="tr-tab-hire" data-tab="hire" aria-controls="tr-pane-hire" aria-selected="false" tabindex="-1">Hire<span class="tr-tab-count" data-count></span></button>
       <button type="button" role="tab" class="tr-tab" id="tr-tab-assignments" data-tab="assignments" aria-controls="tr-pane-assignments" aria-selected="false" tabindex="-1">Assignments<span class="tr-tab-count" data-count></span></button>
-      <button type="button" role="tab" class="tr-tab" id="tr-tab-events" data-tab="events" aria-controls="tr-pane-events" aria-selected="false" tabindex="-1">Events<span class="tr-tab-count" data-count></span></button>
-      <button type="button" role="tab" class="tr-tab" id="tr-tab-reference" data-tab="reference" aria-controls="tr-pane-reference" aria-selected="false" tabindex="-1">Reference<span class="tr-tab-count" data-count></span></button>
     </nav>
     <div class="tr-pane" id="tr-pane-overview" data-pane="overview" role="tabpanel" aria-labelledby="tr-tab-overview" hidden>
       <div id="tr-team"></div>
@@ -842,9 +839,6 @@
     <div class="tr-pane" id="tr-pane-train" data-pane="train" role="tabpanel" aria-labelledby="tr-tab-train" hidden>
       <div id="tr-calc-body" aria-live="polite"></div>
     </div>
-    <div class="tr-pane" id="tr-pane-traits" data-pane="traits" role="tabpanel" aria-labelledby="tr-tab-traits" hidden>
-      <div id="tr-traits-body"></div>
-    </div>
     <div class="tr-pane" id="tr-pane-keep" data-pane="keep" role="tabpanel" aria-labelledby="tr-tab-keep" hidden>
       <div id="tr-fire-body"></div>
     </div>
@@ -855,28 +849,6 @@
     </div>
     <div class="tr-pane" id="tr-pane-assignments" data-pane="assignments" role="tabpanel" aria-labelledby="tr-tab-assignments" hidden>
       <div id="tr-assignments-body" data-worker="js/employee-planner-worker.js?v=20261029a"></div>
-    </div>
-    <div class="tr-pane" id="tr-pane-events" data-pane="events" role="tabpanel" aria-labelledby="tr-tab-events" hidden>
-      <div id="tr-events-body"></div>
-    </div>
-    <div class="tr-pane" id="tr-pane-reference" data-pane="reference" role="tabpanel" aria-labelledby="tr-tab-reference" hidden>
-      <div class="tr-section-heading" id="tr-reference-heading"><h3 class="tr-pane-title">Which card to take</h3></div>
-      <p class="tr-calc-sub">Trait cards have guide positions. Use Train for your employee's actual hand.</p>
-      <div class="tr-flags" id="tr-flags"></div>
-      <div class="tr-ladder" id="tr-ladder"></div>
-      <h3 class="tr-pane-title" id="tr-howto" tabindex="-1">How this works</h3>
-      <dl class="tr-howto">
-        <dt>Values</dt>
-        <dd>Values show the production points (PP) an employee adds before retiring at 65, after wages. Multiply PP by the game's PP value to convert to money. Employees age one year per day, so a 30-year-old has 35 working days left. Product prices use the last day of trades, minus market tax and input costs.</dd>
-        <dt>Energy</dt>
-        <dd>Training, hiring and replacing each cost 10 energy. Next actions ranks them by value. Training uses the average value of the best card in the next hand. Hiring uses the best candidate in a fresh set. Replacing subtracts the value of keeping the employee and the cost of firing from the new hire's value. The value of spending 10 energy elsewhere comes from the last training a full bar can cover. Drawing a hand spends the energy and counts as the day's training. <strong>I took this</strong> applies the chosen card locally until you reload.</dd>
-        <dt>Traits</dt>
-        <dd>Production from traits adds no wages. Trait values account for the product, region and coworkers, including effects on coworkers. Specialist takes the company's good when gained and keeps that good on a move. Diamond in the Rough's random stat uses an average of its outcomes. Specialization grows by 1% per day on the same product, up to 20%.</dd>
-        <dt>Keep or replace, and hiring</dt>
-        <dd>Keeping an employee includes their output, traits, remaining trainings and the value their traits add to coworkers. Replacing them uses the best candidate from a fresh set, minus the cost of coworkers' lost happiness and the hire's energy. Both values subtract what a new hire would earn in the slot over the same working days. A full company cannot hire. Fire an employee, reload, then hire into the free slot. Candidates you enter use the same calculation. Hidden stats and traits use averages. The wage narrows the possible values of hidden Production.</dd>
-        <dt>Happiness and events</dt>
-        <dd>Each happiness point above or below 50 changes output by 1%. Below 30 happiness, an employee may quit. Event choices combine their cost with the average value of their outcomes, using the game's odds. Values include changes to happiness, output, time away, stats, wages and traits.</dd>
-      </dl>
     </div>
     </div>
   </section>
@@ -1845,9 +1817,7 @@ Please transfer: ₿X</pre>
 <script src="js/employee-core.js?v=20261030j"></script>
 <script src="js/employee-planner.js?v=20261030d"></script>
 <script src="js/employee-assignments.js?v=20261030d"></script>
-<script src="js/employee-event-data.js?v=20261030"></script>
-<script src="js/employee-events.js?v=20261030"></script>
-<script src="js/employee-training.js?v=20261030o"></script>
+<script src="js/employee-training.js?v=20261030p"></script>
 <script src="js/daily-profit.js?v=20261026"></script>
 <script src="js/daily-profit-dev.js?v=20261026"></script>
 <script src="js/dashboard.js?v=20261029f"></script>

@@ -3,8 +3,7 @@
  *
  *  Tabs over the loaded account: Overview
  *  (where to spend energy), Employees, Train (rank the hand an employee
- *  was dealt), Traits, Keep or replace, Hire, Assignments, Events and
- *  Reference (one ranked row of cards per rarity, for a quick pick). The
+ *  was dealt), Keep or replace, Hire and Assignments. The
  *  tab and the selected employee live in the hash:
  *  #training?u=<username>&tab=<tab>&emp=<employee id>. A loaded account
  *  is required; the employee tabs work on one selected employee.
@@ -24,29 +23,17 @@
  *      market tax, minus inputs, over its production points, from the
  *      latest trades, as in the Product Picker) over the game's value of
  *      a PP. 1.00× is an average product.
- *    • Events: employeeEvent.* answer for the key's owner only, so they
- *      take the player's own key and go straight from this browser to the
- *      game API (it allows cross-origin calls). The key never touches the
- *      proxy, which refuses those procedures anyway.
  *
  *  Access: loading employees is for Irish citizens (enforceIrishOnly), like
  *  the Product Picker. bypass=1 lifts it.
  * ═══════════════════════════════════════════════════════════════════ */
 const EmployeeTrainingTool = (() => {
   const EC = EmployeeCore;
-  const EE = EmployeeEvents;
   const STAT = { production: 'Production', responsibility: 'Responsibility', luck: 'Luck' };
   const STAT_SHORT = { production: 'Prod', responsibility: 'Resp', luck: 'Luck' };
   const RARITY_NAME = { common: 'Common', uncommon: 'Uncommon', rare: 'Rare', epic: 'Epic', legendary: 'Legendary' };
-  const FLAGS = [
-    { key: 'thinMargin', label: 'Thin margin', note: 'production bonus % − wage expectation % is under 5 × Production' },
-    { key: 'retiring', label: 'Retires before potential runs out', note: 'working days left ≤ potential left' },
-    { key: 'badTrait', label: 'Has another bad trait', note: 'one that hurts happiness, wages or retention; Production traits are priced already' },
-  ];
   const RECENT_KEY = 'tr:recent-usernames';
   const RECENT_MAX = 8;
-  const EVENTS_KEY_STORE = 'tr-events-key';
-  const GAME_API = 'https://api2.warera.io/trpc';
   const IRELAND = IRELAND_COUNTRY_ID;
   const PRICE_SAMPLE_TRADES = 100;
   const PRICE_MAX_AGE_MS = 24 * 3600 * 1000;
@@ -54,8 +41,6 @@ const EmployeeTrainingTool = (() => {
   const words = code => code.replace(/([A-Z])/g, ' $1').replace(/^./, ch => ch.toUpperCase());
   const productName = code => PRODUCT_NAME[code] || words(code);
 
-  const $flags    = document.getElementById('tr-flags');
-  const $ladder   = document.getElementById('tr-ladder');
   const $calc     = document.getElementById('tr-calc-body');
   const $username = document.getElementById('tr-username');
   const $load     = document.getElementById('tr-load');
@@ -69,13 +54,9 @@ const EmployeeTrainingTool = (() => {
   const $empHead  = document.getElementById('tr-emp-head');
   const $team     = document.getElementById('tr-team');
   const $roster   = document.getElementById('tr-roster');
-  const $events   = document.getElementById('tr-events-body');
-  const $traits   = document.getElementById('tr-traits-body');
   const setStatus = makeStatus(document.getElementById('tr-status'));
   const steps = makeSteps(document.getElementById('tr-steps'));
 
-  // Every explanation ends with a link to the one "How this works" list.
-  const MORE = '<button type="button" class="tr-link" data-go-tab="reference">How this works</button>';
   function help(label, content, trait = false) {
     return `<span class="tr-help${trait ? ' tr-trait-help' : ' tr-section-help'}"><button type="button" class="tr-help-trigger" aria-expanded="false"${trait ? '' : ` aria-label="${escapeHtml(label)}"`}>${trait ? label : '<span aria-hidden="true">ⓘ</span>'}</button><span class="tr-help-content" role="tooltip" hidden>${content}</span></span>`;
   }
@@ -145,7 +126,6 @@ const EmployeeTrainingTool = (() => {
     new MutationObserver(() => { if (active) position(); }).observe(view, { childList: true, subtree: true, attributes: true, attributeFilter: ['class'] });
   }
 
-  const on = new Set();
   let mounted = false;
   // { ppValue, list: [{ code, perPP, ratio }] best first }, once loaded.
   let market = null;
@@ -155,13 +135,11 @@ const EmployeeTrainingTool = (() => {
   let nextActionsExpanded = false;
   let busy = false;
   let assignments = null;
-  const TABS = ['overview', 'employees', 'train', 'traits', 'keep', 'hire', 'assignments', 'events', 'reference'];
+  const TABS = ['overview', 'employees', 'train', 'keep', 'hire', 'assignments'];
   // Tabs about one employee, under the shared picker.
-  const EMP_TABS = ['train', 'traits', 'keep'];
+  const EMP_TABS = ['train', 'keep'];
   // The open tab; emp is an employee asked for by the link, until the team loads.
   const view = { tab: 'overview', emp: null };
-  // The player's events: null until loaded, then { list } or { error }.
-  let events = null;
   // The background planner's latest result (EmployeeAssignments onResult).
   let plan = null;
   // Cards marked as taken since the last load: employee id → { text, rolled }.
@@ -181,37 +159,6 @@ const EmployeeTrainingTool = (() => {
       const s = escapeHtml(username);
       return `<span class="stg-recent-chip"><button type="button" class="stg-recent-pick" data-tr-recent="${s}">${s}</button><button type="button" class="stg-recent-del" data-tr-recent-del="${s}" aria-label="Remove ${s} from recent users" title="Remove">×</button></span>`;
     }).join('') : '';
-  }
-
-  /* ── Quick reference ─────────────────────────────────────── */
-  function face(c) {
-    if (c.card === 'drill') return { kind: 'Drill', val: `+${c.delta} ${STAT_SHORT[c.stat]}`, cls: `tr-stat-${c.stat}` };
-    if (c.card === 'negotiation') return { kind: 'Negotiation', val: `−${Math.round(c.drop * 100)}% wage` };
-    if (c.card === 'secondWind') return { kind: 'Second Wind', val: `+${c.gain} potential` };
-    if (c.card === 'traitProd') return { kind: c.name, val: c.detail, small: true, title: c.examples };
-    return { kind: c.name, val: c.detail, small: true };
-  }
-
-  function renderFlags() {
-    $flags.innerHTML = FLAGS.map(f =>
-      `<button type="button" class="tr-flag" data-flag="${f.key}" aria-pressed="${on.has(f.key)}" title="${escapeHtml(f.note)}">⚑ ${escapeHtml(f.label)}</button>`).join('');
-  }
-
-  function renderLadder() {
-    document.getElementById('tr-reference-heading').innerHTML = `<h3 class="tr-pane-title">Which card to take</h3>${help('Using the card rankings', `<p>Read each rarity from left to right. The numeric order assumes age 30, paid Production 3, +24% bonus, maxed specialization, market wages, an average product, 3 trainings left and Management 0. Responsibility has room to add happiness; toolboxes and event odds are unpriced.</p><p>Production drills add wages. Negotiation cuts base wage expectation before Greedy or Modest applies. At a thin margin, Negotiation and Responsibility can beat Production; Second Wind can also beat it at Epic and Legendary. Second Wind forecasts numeric trainings and is wasted if retirement leaves no time to use the added potential.</p><p>Trait Production costs no wages, but its conditions must hold. Other trait cards have guide positions only. Wild card averages eligible traits equally plus a random stat. Rare Rehab removes one negative. Legendary Clean slate requires at least two negatives and removes only negatives. The bad-trait flag promotes removal as a reminder to check its value; quitting risk is unpriced.</p><p>Flags use example employees. Outlined cards moved up; faded Second Wind is worth zero. Use Train for actual traits, happiness, product margins and coworkers.</p>`)}`;
-    const L = EC.ladder([...on]);
-    $ladder.innerHTML = EC.RARITIES.map(r => `
-      <section class="tr-tier" style="--tier: var(--tr-${r})">
-        <h3>${RARITY_NAME[r]}</h3>
-        <div class="tr-row">${L[r].map((c, i) => {
-          const f = face(c);
-          return `<div class="tr-card${c.skip ? ' skip' : ''}${c.moved ? ' moved' : ''}"${f.title ? ` title="${escapeHtml(f.title)}"` : ''}>
-            <div class="tr-rank">${i + 1}</div>
-            <div class="tr-kind">${escapeHtml(f.kind)}</div>
-            <div class="tr-val${f.small ? ' small' : ''} ${f.cls || ''}">${escapeHtml(f.val)}</div>
-          </div>`;
-        }).join('')}</div>
-      </section>`).join('');
   }
 
   /* ── Market: product margins over the PP value ───────────── */
@@ -639,12 +586,11 @@ const EmployeeTrainingTool = (() => {
     }).join('')}</div>`;
   }
 
-  function renderResult({ deferTraits = false } = {}) {
+  function renderResult() {
     if (!findEmployee(input.pick)) return;
     const t = taken.get(input.pick);
     if (t) {
       $calc.innerHTML = `<p class="tr-emp-took" role="status" tabindex="-1"><strong>Took ${escapeHtml(t.text)}.</strong> Estimates updated locally. This does not choose a card in the game. <button type="button" class="tr-link" data-reload>Reload from the game</button> to ${t.rolled.length ? `fetch the actual ${escapeHtml(t.rolled.join(' and '))} and ` : ''}replace these estimates with current game data. Next training at 00:00 UTC.</p>`;
-      if (!deferTraits) renderTraitChart(employee(), context());
       return;
     }
     const e = employee();
@@ -665,55 +611,8 @@ const EmployeeTrainingTool = (() => {
       ${note ? `<div class="tr-hand">${note}</div>` : ''}
       ${v.html}
       ${hand.length ? `<div class="tr-hand-row">${handCards(hand, v.best)}
-        ${help('What the card values mean', `Each value is the extra profit per day the card adds, at the PP money value, averaged over the employee's remaining working days. Below it are the production points the card adds before retirement, counting coworkers and moves between your companies. ${escapeHtml(hand.scope)} Wild card averages every eligible trait equally, excluding held traits, conflicts, gender mismatches and partner traits. Wages use hired and trained Production; Negotiation reduces wage expectation before Greedy or Modest applies. ${MORE}`)}</div>` : ''}
+        ${help('What the card values mean', `Each value is the extra profit per day the card adds, at the PP money value, averaged over the employee's remaining working days. Below it are the production points the card adds before retirement, counting coworkers and moves between your companies. ${escapeHtml(hand.scope)} Wild card averages every eligible trait equally, excluding held traits, conflicts, gender mismatches and partner traits. Wages use hired and trained Production; Negotiation reduces wage expectation before Greedy or Modest applies.`)}</div>` : ''}
       ${warnings.length ? `<ul class="tr-facts">${warnings.map(w => `<li class="tr-warn">${w}</li>`).join('')}</ul>` : ''}`;
-    renderTraitChart(e, ctx);
-  }
-
-  /* ── Trait chart ─────────────────────────────────────────── */
-  // Every trait priced for the calculator's employee, in tiers scaled by
-  // +1 Production from a trait.
-  const TIERS = [['S', 2], ['A', 1], ['B', 0.4], ['C', 0.1], ['D', 0.02]];
-  function renderTraitChart(e, ctx) {
-    const chart = EC.traitChart(e, ctx);
-    const cards = chart.map(t => ({ card: t.held ? 'removeTrait' : 'habit', code: t.code }));
-    const batch = selectedPricing(cards, 'chart');
-    if (batch.status === 'done') chart.forEach((t, i) => {
-      const q = batch.result.groups[0].quotes[i], sign = t.held ? -1 : 1;
-      t.value = q.value === null ? null : sign * q.value;
-      t.ratio = t.value === null ? null : t.value / (EC.traitUnit(e, ctx) || 1);
-      t.arrangement = q.value === null ? q.note : `Here ${signedPP(sign * q.stay)} PP; best arrangement ${signedPP(t.value)} PP. ${q.plan.description}. Held traits compare keeping with removal.`;
-    });
-    const held = heldCodes();
-    const blocked = code => !held.includes(code) && (EC.TRAIT[code].gender && EC.TRAIT[code].gender !== input.sit.gender
-      || held.some(h => EC.EXCLUSIVE.some(([a, b]) => (a === h && b === code) || (b === h && a === code))));
-    const chip = t => {
-      const val = t.value === null ? '?' : `${signedPP(t.value)}`;
-      const title = `${t.value === null ? `Not priced: ${t.note}.` : `${signedPP(t.value)} PP over ${EC.workingDays(e)} days${t.outcomes.length ? ' on average; ' + t.outcomes.map(o => `${ARG_SHORT[o.arg]} ${signedPP(o.value)}`).join(', ') : ''}.`}${t.held ? ' Held now.' : ''}${blocked(t.code) ? ' Can\'t be gained by this employee.' : ''}`;
-      return `<div class="tr-chip tr-pol-${t.polarity}${t.held ? ' held' : ''}${blocked(t.code) ? ' blocked' : ''}">${traitHelp(t.code, `${escapeHtml(t.name)}${t.outcomes.length ? '*' : ''}<small>${val}</small>`, t.arrangement || title)}</div>`;
-    };
-    const tiers = list => TIERS.map(([L, min], i) => {
-      const max = i ? TIERS[i - 1][1] : Infinity;
-      const row = list.filter(t => Math.abs(t.ratio) >= min && Math.abs(t.ratio) < max);
-      return row.length ? `<div class="tr-tierrow"><span class="tr-tier-${L}">${L}</span><div>${row.map(chip).join('')}</div></div>` : '';
-    }).join('');
-    const gain = chart.filter(t => t.ratio !== null && t.ratio >= 0.02);
-    const lose = chart.filter(t => t.ratio !== null && t.ratio <= -0.02).reverse();
-    const flat = chart.filter(t => t.ratio !== null && Math.abs(t.ratio) < 0.02);
-    const unpriced = chart.filter(t => t.ratio === null);
-    $traits.innerHTML = `
-      <p class="tr-calc-sub">${escapeHtml(pricingLabel(batch))}</p>
-      ${batch.status === 'done' ? `<div class="tr-card-chart"><table><thead><tr><th scope="col">Trait</th><th scope="col">Here PP</th><th scope="col">Best arrangement PP</th><th scope="col">Assumption</th></tr></thead><tbody>${chart.map((t, i) => {
-        const q = batch.result.groups[0].quotes[i], sign = t.held ? -1 : 1;
-        return `<tr><td>${escapeHtml(t.name)}${t.held ? ' (keep)' : ''}</td><td>${q.stay === null ? '?' : signedPP(sign * q.stay)}</td><td>${t.value === null ? '?' : signedPP(t.value)}</td><td>${escapeHtml(q.note || (q.outcomes.length ? [...new Set(q.outcomes.map(o => o.plan.description))].join(' / ') : q.plan.description))}</td></tr>`;
-      }).join('')}</tbody></table></div>` : ''}
-      ${help('Choosing a trait', `<p><strong>Worth gaining</strong> helps you choose Habit cards and candidate traits. <strong>Worth removing</strong> helps you choose Rehab cards.</p><p>Values use the labelled pricing basis above. Held rows show keeping the trait compared with removing it. Higher tiers add more production points before retirement. Tap a trait to see its effect and value.</p><p>An asterisk marks an average of possible random outcomes. Outlined traits are already held. Faded traits cannot be gained.</p>`)}
-      <div class="tr-trait-cols">
-        <div><h4 class="good">Worth gaining</h4>${tiers(gain) || '<p class="tr-calc-sub">None.</p>'}</div>
-        <div><h4 class="bad">Worth removing</h4>${tiers(lose) || '<p class="tr-calc-sub">None.</p>'}</div>
-      </div>
-      <div class="tr-tierrow"><span class="tr-tier-0">~0</span><div>${flat.map(chip).join('')}</div></div>
-      <div class="tr-tierrow"><span class="tr-tier-0">?</span><div>${unpriced.map(chip).join('')}</div></div>`;
   }
 
   /* ── Your employees ──────────────────────────────────────── */
@@ -1068,8 +967,6 @@ const EmployeeTrainingTool = (() => {
   const doneToday = emp => trainedToday(emp) >= (emp.trainingsPerDay || 1);
   const untilReset = () => { const d = new Date(); d.setUTCHours(24, 0, 0, 0); return d - Date.now(); };
   const plural = (n, word, many = `${word}s`) => `${n} ${n === 1 ? word : many}`;
-  const pendingEvents = () => (events?.list || []).filter(ev => ev.status === 'pending')
-    .sort((a, b) => Date.parse(a.expiresAt || 0) - Date.parse(b.expiresAt || 0));
 
   function trainingProfit(value, emp) {
     const days = EC.workingDays(emp);
@@ -1088,7 +985,7 @@ const EmployeeTrainingTool = (() => {
     return `<span class="tr-act-profit" title="Expected career profit gain from replacing this employee: new hire surplus ${amount(fresh.best)}, minus keeping surplus ${amount(surplus)}. Both careers account for the value of occupying the slot. Daily and hourly figures average this gain over the new hire's expected working days. Compare candidates before firing."><span>${amount(row.value)}/career</span>${daily == null ? '<small>expected gain</small>' : `<small>${amount(daily)}/day</small><small>${amount(daily / 24)}/h</small>`}</span>`;
   }
 
-  // The numbered list, top to bottom: Do now (hands dealt, events), Spend
+  // The numbered list, top to bottom: Do now (hands dealt, moves before replacing), Spend
   // energy (trainings, hires and replacements), Check (the planner, mismatches)
   // and Trained today. Each item opens the tab that acts on it.
   function nextActions() {
@@ -1105,11 +1002,6 @@ const EmployeeTrainingTool = (() => {
       if (hand) groups.now.push({ icon: '🃏', go: { tab: 'train', emp: emp._id },
         what: `Pick a card for ${escapeHtml(emp.name)}`,
         sub: `${RARITY_NAME[hand.rarity]} hand${hand.drawnAt ? `, dealt ${utcTime(new Date(hand.drawnAt))}` : ''} · ${where(entry)}` });
-    }
-    for (const ev of pendingEvents()) {
-      const left = ev.expiresAt ? Date.parse(ev.expiresAt) - Date.now() : null;
-      groups.now.push({ icon: '📨', go: { tab: 'events' }, what: `Answer “${escapeHtml(EMPLOYEE_EVENTS[ev.code]?.title || words(ev.code || 'an event'))}”`,
-        sub: `${(ev.cast || []).map(c => escapeHtml(c.name)).join(', ') || 'Employee event'}${left > 0 ? ` · ${escapeHtml(formatDuration(left))} left` : ''}` });
     }
     const energy = energyNow();
     const actions = energy == null ? null : Math.floor(energy / 10);
@@ -1183,8 +1075,6 @@ const EmployeeTrainingTool = (() => {
         sub: `${escapeHtml(m)}: −1 Production there instead of +3 · ${where(entry)}${to.planned ? ' · the planner\'s move'
           : to.company ? ` · try ${companyLabelHtml(to.company)}${team.companies.find(x => x.company === to.company).employees.length >= headcountCap(to.company) ? ' (full, so a swap)' : ''}` : ''}` });
     }
-    if (!events) groups.check.push({ icon: '📨', go: { tab: 'events' }, what: 'Load your employee events', sub: 'Needs your own API key, saved in this browser if you choose' });
-    else if (events.error) groups.check.push({ icon: '📨', go: { tab: 'events' }, what: 'Employee events didn\'t load', sub: escapeHtml(events.error) });
 
     for (const { emp, entry } of all) {
       if (doneToday(emp) && !pendingHand(emp)) groups.done.push({ go: { tab: 'train', emp: emp._id }, what: escapeHtml(emp.name),
@@ -1203,7 +1093,7 @@ const EmployeeTrainingTool = (() => {
           ${a.value ? `<span class="tr-act-value">${a.value}<small>${a.unit}</small></span>` : ''}</button></li>`;
     const body = Object.entries(groups).filter(([k, list]) => k !== 'done' && list.length).map(([k, list]) =>
       `<li class="tr-act-group">${heads[k]}</li>${list.map(a => item(a, false)).join('')}`).join('');
-    return `<div class="tr-section-heading"><h3 class="tr-pane-title" id="tr-acts-h">Next actions</h3>${help('How the list is ordered', `<p><strong>Do now</strong> lists training hands waiting for a choice, events about to expire, and moves the planner makes for employees marked Replace: moving is free and changes their verdict, so it comes before replacing them.</p><p><strong>Spend energy</strong> ranks actions by the production points each 10 energy earns before retirement. Training uses the average value of the best card in the next hand. Hiring uses the best candidate in a fresh set. Replacing uses that candidate's value, minus the value of keeping the employee and the cost of firing.</p><p>Replacement appears when a fresh hire wins at least two times in three, or the employee costs more than they earn. If training and replacing the same employee both qualify, only the better action appears.</p><p>When your own work earns more per 10 energy than an action, a line marks where self-work takes over.</p><p><strong>Check</strong> lists assignment suggestions and employees making the wrong product type.</p> ${MORE}`)}</div>
+    return `<div class="tr-section-heading"><h3 class="tr-pane-title" id="tr-acts-h">Next actions</h3>${help('How the list is ordered', `<p><strong>Do now</strong> lists training hands waiting for a choice, and moves the planner makes for employees marked Replace: moving is free and changes their verdict, so it comes before replacing them.</p><p><strong>Spend energy</strong> ranks actions by the production points each 10 energy earns before retirement. Training uses the average value of the best card in the next hand. Hiring uses the best candidate in a fresh set. Replacing uses that candidate's value, minus the value of keeping the employee and the cost of firing.</p><p>Replacement appears when a fresh hire wins at least two times in three, or the employee costs more than they earn. If training and replacing the same employee both qualify, only the better action appears.</p><p>When your own work earns more per 10 energy than an action, a line marks where self-work takes over.</p><p><strong>Check</strong> lists assignment suggestions and employees making the wrong product type.</p>`)}</div>
       <ol class="tr-acts" id="tr-next-actions">${body || '<li class="tr-act-group">Nothing to do right now</li>'}</ol>
       ${groups.done.length ? `<details class="tr-more tr-done"${$team.querySelector('.tr-done')?.open ? ' open' : ''}><summary>Trained today (${groups.done.length}) <em>Ready at 00:00 UTC, in ${escapeHtml(formatDuration(untilReset()))}</em></summary><ol class="tr-acts">${groups.done.map(a => item(a, true)).join('')}</ol></details>` : ''}
       `;
@@ -1507,7 +1397,7 @@ const EmployeeTrainingTool = (() => {
     }
     const prefs = entry ? prefsHtml(hirePrefs(entry), `What to look for in ${escapeHtml(companyName(entry.company))}`) : '';
     $recruit.innerHTML = `
-      ${help('How candidates are valued', `<p>Each candidate is worth their output after wages until retirement, plus their trait, their trainings and what they change for the coworkers' traits. Each point of Responsibility adds 3 happiness, and each point of happiness above 50 adds 1% to output.</p><p>The trait and potential show only after hire. The trait is the average roll, weighted by how likely each trait is. A wage expectation above 130% means Greedy, and one below 70% means Modest. Potential is averaged from 3 to 10. Each training counts only what it earns beyond the same 10 energy spent elsewhere.</p><p>The verdict compares the best candidate with a fresh set's likely pick, after what a new hire earns in the slot each working day. Reroll or wait when a fresh set is likely to do better.</p> ${MORE}`)}
+      ${help('How candidates are valued', `<p>Each candidate is worth their output after wages until retirement, plus their trait, their trainings and what they change for the coworkers' traits. Each point of Responsibility adds 3 happiness, and each point of happiness above 50 adds 1% to output.</p><p>The trait and potential show only after hire. The trait is the average roll, weighted by how likely each trait is. A wage expectation above 130% means Greedy, and one below 70% means Modest. Potential is averaged from 3 to 10. Each training counts only what it earns beyond the same 10 energy spent elsewhere.</p><p>The verdict compares the best candidate with a fresh set's likely pick, after what a new hire earns in the slot each working day. Reroll or wait when a fresh set is likely to do better.</p>`)}
       ${prefs}
       <div class="tr-recruit-top">
         <label class="tr-field" for="tr-r-company"><span>Hiring into</span><select id="tr-r-company" data-r="company"${team ? '' : ' disabled'}>${companyOpts}</select></label>
@@ -1661,7 +1551,7 @@ const EmployeeTrainingTool = (() => {
       ? `${plural(act.length, 'employee')} marked Fire or Replace.${top && top !== r ? ` Most worth replacing: <button type="button" class="tr-link" data-go-tab="keep" data-go-emp="${top.emp._id}">${escapeHtml(top.emp.name)}</button> (${keepVerdict(top) === 'fire' ? 'Fire' : odds(top.chance)}).` : ''}`
       : `Nobody is marked Fire or Replace. The highest replacement chance is ${odds(rows[0].chance)}, for ${rows[0] === r ? 'this employee' : `<button type="button" class="tr-link" data-go-tab="keep" data-go-emp="${rows[0].emp._id}">${escapeHtml(rows[0].emp.name)}</button>`}.`;
     $fire.innerHTML = `
-      ${help('How this is worked out', `<p><strong>Worth keeping</strong> includes the employee's output, traits and remaining trainings, plus the value their traits add to coworkers.</p><p><strong>Worth replacing</strong> uses the best candidate from a fresh set, minus the hire's 10 energy. Firing costs coworkers nothing.</p><p>Both values subtract what a new hire would earn in that slot over the same working days. This accounts for the work you give up by keeping either employee in the slot.</p><p><strong>Replace</strong> means a fresh hire wins at least two times in three. <strong>Close</strong> means at least one time in three. <strong>Fire</strong> means the employee costs more than they earn.</p> ${MORE}`)}
+      ${help('How this is worked out', `<p><strong>Worth keeping</strong> includes the employee's output, traits and remaining trainings, plus the value their traits add to coworkers.</p><p><strong>Worth replacing</strong> uses the best candidate from a fresh set, minus the hire's 10 energy. Firing costs coworkers nothing.</p><p>Both values subtract what a new hire would earn in that slot over the same working days. This accounts for the work you give up by keeping either employee in the slot.</p><p><strong>Replace</strong> means a fresh hire wins at least two times in three. <strong>Close</strong> means at least one time in three. <strong>Fire</strong> means the employee costs more than they earn.</p>`)}
       <div class="tr-verdict tr-keep-${v}"><span class="tr-verdict-take">${VERDICT[v]}${v === 'close' ? ' call' : ''}</span><small>${why}</small>
         ${r.from ? `<small class="tr-warn">Just hired: can be fired from ${utcTime(r.from)}.</small>` : ''}</div>
       <div class="tr-keep-cols">
@@ -1860,7 +1750,7 @@ const EmployeeTrainingTool = (() => {
         <td data-label="Traits" class="tr-emps-traits">${traitList(emp)}</td>
         <td data-label="Happiness" class="tr-emps-happy">${happinessCell(emp)}</td>
         <td data-label="Profit" class="num${profit != null && profit < 0 ? ' tr-neg' : ''}">${moneyFmt(profit)}/h</td>
-        <td data-label="Open" class="tr-emps-open">${[['train', 'Train'], ['traits', 'Traits'], ['keep', 'Keep or replace']].map(([tab, text]) =>
+        <td data-label="Open" class="tr-emps-open">${[['train', 'Train'], ['keep', 'Keep or replace']].map(([tab, text]) =>
           `<button type="button" class="tr-use" data-go-tab="${tab}" data-go-emp="${emp._id}" aria-label="${escapeHtml(`${text}: ${emp.name}`)}">${text}</button>`).join('')}</td>
       </tr>`;
     }).join('');
@@ -1963,8 +1853,6 @@ const EmployeeTrainingTool = (() => {
       renderFire();
       assignments?.refresh();
       assignments?.run({ auto: true });
-      // A remembered key loads the events too; they feed Next actions.
-      if (savedKey()) loadEvents();
       $hint.classList.add('hidden');
       $shell.classList.remove('hidden');
       showTab(view.tab);
@@ -2023,7 +1911,7 @@ const EmployeeTrainingTool = (() => {
     }
   }
 
-  // The selected employee at a glance, over Train, Traits and Keep or replace.
+  // The selected employee at a glance, over Train and Keep or replace.
   function renderEmpHead() {
     const found = findEmployee(input.pick);
     if (!found) { $empHead.innerHTML = ''; return; }
@@ -2060,12 +1948,11 @@ const EmployeeTrainingTool = (() => {
     team = { ...team, companies: team.companies.map(entry => entry !== found.entry ? entry
       : { ...entry, employees: entry.employees.map(x => x === found.emp ? emp : x) }) };
     input = { ...inputsFor(emp, findEmployee(emp._id).entry), pick: emp._id, hand: null };
-    renderResult({ deferTraits: true });
+    renderResult();
     renderEmpHead();
     $calc.querySelector('.tr-emp-took')?.focus({ preventScroll: true });
     // Let the confirmation paint before recalculating recommendations.
     requestAnimationFrame(() => setTimeout(() => {
-      renderTraitChart(employee(), context());
       renderFire();
       renderTeam();
       renderRecruitForm();
@@ -2101,7 +1988,7 @@ const EmployeeTrainingTool = (() => {
     if (reveal && $tabs.getBoundingClientRect().top < 0) $tabs.scrollIntoView({ block: 'start' });
   }
 
-  // A count on a tab: Assignments and Events flag work waiting.
+  // A count on a tab: Assignments flags work waiting.
   function tabCount(tab, n) {
     const $n = $tabs.querySelector(`[data-tab="${tab}"] [data-count]`);
     if ($n) $n.textContent = n > 0 ? String(n) : '';
@@ -2123,169 +2010,6 @@ const EmployeeTrainingTool = (() => {
     showTab(tab, { reveal: true });
   }
 
-  /* ── Events (the player's own key, browser → game API only) ── */
-  function savedKey() {
-    try { return localStorage.getItem(EVENTS_KEY_STORE) || ''; } catch { return ''; }
-  }
-  function renderEventsForm(message = '') {
-    const saved = savedKey();
-    $events.innerHTML = `
-      ${help('Loading private events', `Create a War Era API key under <strong>Settings → API</strong> to load pending employee events. The tool sends the key directly to the game's API. Select <strong>Remember</strong> to save the key in this browser. Choose your event answers in the game.`)}
-      <div class="tr-key-row">
-        <input type="password" id="tr-key" aria-label="Your War Era API key" placeholder="Your War Era API key" autocomplete="off" spellcheck="false" value="${escapeHtml(saved)}" />
-        <label class="tr-remember"><input type="checkbox" id="tr-key-remember"${saved ? ' checked' : ''} /> Remember</label>
-        <button type="button" class="btn-primary" id="tr-events-load">Load events</button>
-      </div>
-      <div id="tr-events-out">${message}</div>`;
-  }
-
-  async function gameApi(proc, key) {
-    const res = await fetch(`${GAME_API}/${proc}`, { headers: { 'X-API-Key': key } });
-    const body = await res.json().catch(() => null);
-    if (res.status === 401) throw new Error('The game API didn\'t accept that key. Copy it again from War Era → Settings → API.');
-    if (!res.ok) throw new Error(body?.error?.message || `${proc} → HTTP ${res.status}`);
-    return body?.result?.data;
-  }
-
-  async function loadEvents() {
-    const key = document.getElementById('tr-key').value.trim();
-    const $out = document.getElementById('tr-events-out');
-    if (!key) { $out.innerHTML = '<p class="tr-warn">Paste your API key first.</p>'; return; }
-    try {
-      if (document.getElementById('tr-key-remember').checked) localStorage.setItem(EVENTS_KEY_STORE, key);
-      else localStorage.removeItem(EVENTS_KEY_STORE);
-    } catch { /* storage blocked */ }
-    $out.innerHTML = '<p class="tr-calc-sub">Loading…</p>';
-    try {
-      const data = await gameApi('employeeEvent.getMine', key);
-      const list = Array.isArray(data) ? data : [];
-      events = { list };
-      tabCount('events', list.filter(ev => ev.status === 'pending').length);
-      $out.innerHTML = renderEvents(list);
-    } catch (err) {
-      events = { error: err.message };
-      $out.innerHTML = `<p class="tr-warn">${escapeHtml(err.message)}</p>`;
-    }
-    renderTeam();
-  }
-
-  // An event's cast member among the loaded employees: by id when the
-  // event carries one, else by name (and company, when given).
-  function castMember(c) {
-    if (!c) return null;
-    const id = [c._id, c.employee, c.employeeId, c.id].find(x => typeof x === 'string');
-    const all = (team?.companies || []).flatMap(entry => entry.employees.map(emp => ({ emp, entry })));
-    return all.find(x => x.emp._id === id)
-      || all.find(x => x.emp.name === c.name && (!c.company || x.entry.company._id === (c.company?._id || c.company))) || null;
-  }
-
-  // Prices an event's effects in PP over the working life, like the rest
-  // of the page: output at today's product prices, wages in PP.
-  function eventValuer(subject, partner) {
-    if (!subject || !market?.ppValue) return () => null;
-    const coworkers = subject.entry.employees.filter(x => x._id !== subject.emp._id).map(emp => ({ emp, entry: subject.entry }));
-    const group = who => ({ self: [subject], partner: [partner], both: [subject, partner], coworkers, company: [subject, ...coworkers] }[who] || [subject]);
-    const out = x => (x.emp.estimate?.production || 0) * (productFor(x.entry.company.itemCode)?.ratio ?? 1);
-    const wagePP = x => (x.emp.wage || 0) / market.ppValue;
-    const model = x => modelOf(x.emp, x.entry);
-    const traitCode = name => EC.TRAITS.find(t => t.name === name)?.code;
-    const avg = list => list.length ? list.reduce((a, v) => a + (v ?? 0), 0) / list.length : 0;
-    const sum = (who, f) => {
-      const xs = group(who);
-      if (xs.some(x => !x)) return null;
-      const vs = xs.map(f);
-      return vs.some(v => v == null) ? null : vs.reduce((a, v) => a + v, 0);
-    };
-    const keepOf = x => keepRows().find(r => r.emp._id === x.emp._id)?.stay ?? null;
-    const traitGain = (x, trait) => {
-      const { e, ctx } = model(x);
-      if (trait === 'randomPositive' || trait === 'randomNegative') {
-        const pool = EC.eligibleTraits((e.traits || []).map(t => t.code), ctx.situation.gender, [trait === 'randomPositive' ? 'positive' : 'negative']);
-        return avg(pool.map(t => EC.traitValue(t.code, e, ctx).value));
-      }
-      const code = traitCode(trait);
-      return code ? EC.traitValue(code, e, ctx).value : null;
-    };
-    const traitLoss = (x, trait) => {
-      const { e, ctx } = model(x);
-      const held = e.traits || [];
-      const lose = h => { const v = EC.traitValue(h.code, e, ctx, { held: true, arg: h.arg }).value; return v == null ? null : -v; };
-      if (trait === 'randomNegative') return avg(held.filter(h => EC.TRAIT[h.code]?.polarity === 'negative').map(lose));
-      const h = held.find(t => t.code === traitCode(trait));
-      return h ? lose(h) : 0;
-    };
-    return eff => {
-      switch (eff.kind) {
-        case 'happiness': return sum(eff.who, x => {
-          const loyal = eff.n < 0 && x.emp.traits?.some(t => t.code === 'loyal') ? 0.5 : 1;
-          return eff.n / 100 * loyal * out(x) * 24 * eff.days;
-        });
-        case 'output': return sum(eff.who, x => eff.pct / 100 * out(x) * eff.hours);
-        case 'away': return sum(eff.who, x => -(out(x) - wagePP(x)) * eff.hours);
-        case 'stat': return sum(eff.who, x => {
-          const { e, ctx } = model(x);
-          const stats = eff.stat === 'random' ? ['production', 'responsibility', 'luck'] : [eff.stat];
-          return avg(stats.map(st => EC.cardValue(e, EC.drill(st, eff.n), ctx)));
-        });
-        case 'potential': return sum(eff.who, x => { const { e, ctx } = model(x); return EC.cardValue(e, EC.wind(eff.n), ctx); });
-        case 'wage': return -wagePP(subject) * (eff.mult - 1) * EC.workingDays(model(subject).e) * 24;
-        case 'wageDays': return eff.n * 24 * wagePP(subject);
-        case 'energy': return -eff.n / 10 * energyValue().value;
-        case 'leaves': return keepOf(subject) == null ? null : -keepOf(subject);
-        case 'gain': return sum(eff.who, x => traitGain(x, eff.trait));
-        case 'lose': return sum(eff.who, x => traitLoss(x, eff.trait));
-        default: return null;
-      }
-    };
-  }
-
-  // Each event: who, what, time left, and every choice with its expected
-  // value, the best marked.
-  function renderEvents(list) {
-    if (!list.length) return '<p class="tr-calc-sub">No pending events or unseen outcomes.</p>';
-    const param = (k, v) => k === 'itemCode' ? productName(v) : k === 'wage' ? `wage ${Number(v).toFixed(3)}/h` : `${words(k).toLowerCase()} ${words(String(v)).toLowerCase()}`;
-    const pending = list.filter(ev => ev.status === 'pending').sort((a, b) => Date.parse(a.expiresAt || 0) - Date.parse(b.expiresAt || 0));
-    const other = list.filter(ev => ev.status === 'resolved' && !ev.seenAt);
-    const whoLink = (c, x) => x ? `<button type="button" class="tr-link" data-go-tab="train" data-go-emp="${x.emp._id}">${escapeHtml(c.name)}</button>` : escapeHtml(c?.name || '');
-    const card = ev => {
-      const def = EMPLOYEE_EVENTS[ev.code];
-      const cast = (ev.cast || []).map(c => ({ c, x: castMember(c) }));
-      const subject = cast[0]?.x, partner = cast[1]?.x;
-      const valueOf = eventValuer(subject, partner);
-      const gambler = (subject?.emp.traits || []).some(t => t.code === 'gambler');
-      const details = Object.entries(ev.params || {}).map(([k, v]) => escapeHtml(param(k, v))).join(' · ');
-      const left = ev.expiresAt ? Date.parse(ev.expiresAt) - Date.now() : null;
-      const opts = (ev.options || []).map((o, i) => {
-        const d = def?.options.length === ev.options.length ? def.options[i] : null;
-        const r = d ? EE.priceOption(d, o.chance, valueOf, { critShare: gambler ? 0.2 : 0.1 }) : null;
-        return { o, i, d, r };
-      });
-      const priced = opts.filter(x => x.r && !x.r.unpriced.length);
-      const best = priced.length ? priced.reduce((a, x) => x.r.value > a.r.value ? x : a) : null;
-      const chance = o => typeof o.chance === 'number' ? `${Math.round(o.chance > 1 ? o.chance : o.chance * 100)}% chance` : '';
-      const effects = d => d ? [['', d.cost], ['', d.always], ['✓ ', d.success], ['crit ', d.crit], ['✗ ', d.fail], ['crit ✗ ', d.critFail]]
-        .filter(([, list]) => list.length).map(([k, list]) => `${k}${list.map(e => e.text.replace(/(^|\s)-(?=\d)/g, '$1−')).join(', ')}`).join(' · ') || 'nothing' : '';
-      const rows = opts.map(({ o, i, d, r }) => {
-        const money = r ? moneyOf(r.value) : null;
-        return `<li class="${best && best.i === i ? 'best' : ''}">
-          <div class="tr-ev-opt"><strong>${escapeHtml(d?.label || words(o.key || `Choice ${i + 1}`))}</strong>
-            ${best && best.i === i ? '<span class="tr-badge tr-badge-train">Best</span>' : ''}${ev.defaultOption === i ? '<span class="tr-badge">If ignored</span>' : ''}
-            <small>${[chance(o), escapeHtml(effects(d))].filter(Boolean).join(' · ')}</small></div>
-          <div class="tr-ev-val">${r ? `<strong class="${r.value < 0 ? 'tr-neg' : ''}">${r.unpriced.length ? '≈ ' : ''}${signedPP(r.value)} PP</strong>${money ? `<small>≈ ${money}</small>` : ''}${r.unpriced.length ? `<small>not priced: ${escapeHtml(r.unpriced.join(', '))}</small>` : ''}` : '<small class="tr-muted">not priced</small>'}</div>
-        </li>`;
-      }).join('');
-      return `<li class="tr-ev"><div class="tr-ev-head"><strong>${escapeHtml(def?.title || words(ev.code || 'event'))}</strong>
-          <span>${cast.map(({ c, x }) => whoLink(c, x)).join(' and ')}${subject ? ` <span class="tr-muted">· ${companyLabelHtml(subject.entry.company)}</span>` : ''}</span>
-          ${ev.status === 'pending' ? `<span class="${left != null && left < 6 * 36e5 ? 'tr-warn' : 'tr-muted'}">${left > 0 ? `${escapeHtml(formatDuration(left))} left` : 'expiring'}</span>` : `<span class="tr-muted">${escapeHtml(words(ev.status || ''))}</span>`}</div>
-        ${details ? `<small class="tr-muted">${details}</small>` : ''}
-        ${ev.status === 'pending' ? `<ol class="tr-ev-opts">${rows}</ol>` : ev.outcome ? `<small>Chose “${escapeHtml(opts[ev.outcome.option]?.d?.label || `choice ${ev.outcome.option + 1}`)}”${ev.outcome.auto ? ' (by default)' : ''}: ${escapeHtml(ev.outcome.band || '')}</small>` : ''}</li>`;
-    };
-    return `${help('How choices are valued', `Each choice's value combines its cost with the average value of its outcomes, using the odds shown in the game. The estimate excludes tools, items and follow-up events. Choices with those effects show ≈. Choose your answer in the game. ${MORE}`)}
-      ${pending.length ? `<h3 class="tr-pane-title">Waiting for an answer</h3><ul class="tr-evs">${pending.map(card).join('')}</ul>` : '<p class="tr-calc-sub">No pending events.</p>'}
-      ${other.length ? `<h3 class="tr-pane-title">Recent outcomes</h3><ul class="tr-evs">${other.map(card).join('')}</ul>` : ''}
-      `;
-  }
-
   /* ── Wiring ──────────────────────────────────────────────── */
   function mount() {
     wireHelp();
@@ -2295,13 +2019,6 @@ const EmployeeTrainingTool = (() => {
       companyName: id => { const x = team?.companies.find(c => c.company._id === id); return x ? companyName(x.company) : null; },
       onResult: result => { plan = result; renderTeam(); renderFire(); },
       onSettings: () => { renderResult(); renderTeam(); },
-    });
-    renderFlags(); renderLadder(); renderEventsForm();
-    $flags.addEventListener('click', ev => {
-      const b = ev.target.closest('[data-flag]'); if (!b) return;
-      const k = b.dataset.flag;
-      on.has(k) ? on.delete(k) : on.add(k);
-      renderFlags(); renderLadder();
     });
     $load.addEventListener('click', () => runLoad($username.value));
     $username.addEventListener('keydown', ev => { if (ev.key === 'Enter') runLoad($username.value); });
@@ -2339,7 +2056,6 @@ const EmployeeTrainingTool = (() => {
         if (b.dataset.goEmp) selectEmployee(b.dataset.goEmp, b.dataset.goTab);
         else showTab(b.dataset.goTab, { reveal: true });
         if (b.dataset.goTab === 'assignments' && b.dataset.goEmp) focusPlanStep(b.dataset.goEmp);
-        if (b.closest('.tr-help')) { const $h = document.getElementById('tr-howto'); $h?.scrollIntoView({ block: 'start' }); $h?.focus({ preventScroll: true }); }
       }
       else if (b.dataset.planOpen !== undefined) { showTab('assignments', { reveal: true }); assignments.reveal(); }
       else if (b.dataset.sideEmp) selectEmployee(b.dataset.sideEmp);
@@ -2369,8 +2085,6 @@ const EmployeeTrainingTool = (() => {
       showTab(TABS[(to + TABS.length) % TABS.length], { focus: true });
     });
     renderFire();
-    $events.addEventListener('click', ev => { if (ev.target.id === 'tr-events-load') loadEvents(); });
-    $events.addEventListener('keydown', ev => { if (ev.target.id === 'tr-key' && ev.key === 'Enter') loadEvents(); });
 
     if ($recruit) {
       renderRecruitForm();
