@@ -10,6 +10,11 @@ const EmployeeAssignments = (() => {
   // 'career' values changes until the last planned employee retires.
   const HORIZONS = ['career', '30', '14', '7'];
   const MAX_ROWS = 50, MAX_TOOLS = 100;
+  // The game shows a tool's capacity left as a percentage; a new tool lasts
+  // 500 working hours. Inputs are percentages, saved and planned as hours.
+  const TOOL_HOURS = 500;
+  const toHours = pct => String(pct ?? '').trim() === '' ? '' : String(Number(pct) * TOOL_HOURS / 100);
+  const toPct = hours => String(hours ?? '').trim() === '' ? '' : String(Math.round(Number(hours) / TOOL_HOURS * 1e4) / 100);
   const blank = () => ({ id: newId(), name: '', type: 'hammer', bonus: '', hours: '500', quantity: '1' });
   const defaults = () => ({ horizon: 'career', inventory: [], equippedHours: {}, pinned: [] });
   function newId() { return globalThis.crypto?.randomUUID?.() || `t${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`; }
@@ -44,7 +49,7 @@ const EmployeeAssignments = (() => {
     if (raw.equippedHours && typeof raw.equippedHours === 'object' && !Array.isArray(raw.equippedHours)) {
       for (const [id, v] of Object.entries(raw.equippedHours)) {
         const n = Number(v);
-        if (v !== '' && v !== null && Number.isFinite(n) && n >= 0 && n <= 10000) settings.equippedHours[id] = String(n);
+        if (v !== '' && v !== null && Number.isFinite(n) && n >= 0 && n <= TOOL_HOURS) settings.equippedHours[id] = String(n);
       }
     }
     if (Array.isArray(raw.pinned)) settings.pinned = [...new Set(raw.pinned.filter(id => typeof id === 'string' && id.length <= 64))];
@@ -58,12 +63,12 @@ const EmployeeAssignments = (() => {
     for (const row of settings.inventory) {
       const bonus = num(row.bonus), hours = num(row.hours), quantity = num(row.quantity);
       if (!(bonus >= 3 && bonus <= 65)) errors.push([`plan-${row.id}-bonus`, 'Enter the rolled bonus, from 3 to 65 %.']);
-      if (!(hours > 0 && hours <= 10000)) errors.push([`plan-${row.id}-hours`, 'Enter the working hours left, above 0 and up to 10,000.']);
+      if (!(hours > 0 && hours <= TOOL_HOURS)) errors.push([`plan-${row.id}-hours`, 'Enter the capacity left, above 0 and up to 100 %.']);
       if (!(Number.isInteger(quantity) && quantity >= 1 && quantity <= 50)) errors.push([`plan-${row.id}-quantity`, 'Enter a whole number from 1 to 50.']);
     }
     for (const id of equippedIds) {
       const v = settings.equippedHours[id], hours = num(v);
-      if (v !== undefined && !(hours >= 0 && hours <= 10000)) errors.push([`plan-equipped-${id}`, 'Enter the hours left, from 0 to 10,000.']);
+      if (v !== undefined && !(hours >= 0 && hours <= TOOL_HOURS)) errors.push([`plan-equipped-${id}`, 'Enter the capacity left, from 0 to 100 %.']);
     }
     return errors;
   }
@@ -247,7 +252,7 @@ const EmployeeAssignments = (() => {
     /* Tool cards. `holders` maps a tool ID to the employee who gets it. */
     function shelf(team, { holders = null, unusedWhy = () => '' } = {}) {
       const invalid = new Set(fieldErrors(settings, equippedIds(team)).map(([id]) => id.replace(/^plan-(equipped-)?/, '').replace(/-(bonus|hours|quantity)$/, '')));
-      const life = hours => `<span class="tr-asg-life" title="${esc(num(Number(hours) || 0, 0))} of 500 working hours left"><span style="width:${Math.max(0, Math.min(100, (Number(hours) || 0) / 5))}%"></span></span>`;
+      const life = hours => `<span class="tr-asg-life" title="About ${esc(num(Number(hours) || 0, 0))} of ${TOOL_HOURS} working hours left"><span style="width:${Math.max(0, Math.min(100, (Number(hours) || 0) / TOOL_HOURS * 100))}%"></span></span>`;
       const card = row => {
         const n = Number(row.quantity) || 1, got = holders ? Array.from({ length: n }, (_, j) => holders.get(`${row.id}:${j}`)).filter(Boolean) : [];
         const who = invalid.has(row.id) ? '<small class="tr-asg-who is-warn">Check this tool</small>'
@@ -255,16 +260,22 @@ const EmployeeAssignments = (() => {
           : `<small class="tr-asg-who is-warn">${esc(unusedWhy(row))}</small>`;
         return `<button type="button" class="tr-asg-tool${invalid.has(row.id) ? ' is-invalid' : ''}" data-tool-edit="${esc(row.id)}" aria-label="Edit ${esc(cap(row.type))}${row.bonus !== '' ? ` +${esc(row.bonus)}%` : ''}${row.name ? `, ${esc(row.name)}` : ''}">
           <span class="tr-asg-tool-top">${icon(row.type)}<span><b>${row.bonus !== '' ? `+${esc(row.bonus)}%` : '?'}</b><small>${esc(row.name.trim() || cap(row.type))}</small></span>${n > 1 ? `<span class="tr-asg-qty">×${esc(row.quantity)}</span>` : ''}</span>
-          ${life(row.hours)}<small>${esc(row.hours)} h left · <span class="tr-asg-products">${products(row.type)}</span></small>${who}</button>`;
+          ${life(row.hours)}<small>${esc(toPct(row.hours))}% left · <span class="tr-asg-products">${products(row.type)}</span></small>${who}</button>`;
       };
       const eq = e => {
         const type = toolType(e.toolItem.code) || 'hammer', hours = equippedHours(e);
-        return `<button type="button" class="tr-asg-tool${invalid.has(e._id) ? ' is-invalid' : ''}" data-equipped-edit="${esc(e._id)}" aria-label="Correct the hours left on ${esc(e.name)}'s ${esc(type)}">
+        return `<button type="button" class="tr-asg-tool${invalid.has(e._id) ? ' is-invalid' : ''}" data-equipped-edit="${esc(e._id)}" aria-label="Correct the capacity left on ${esc(e.name)}'s ${esc(type)}">
           <span class="tr-asg-tool-top">${icon(type)}<span><b>+${esc(num(e.toolStatus?.rolledPercent ?? e.toolItem.skills?.production ?? 0, 0))}%</b><small>${esc(cap(type))} · equipped</small></span></span>
-          ${life(hours)}<small>${esc(hours)} h left</small><small class="tr-asg-who">${holders ? (holders.has(`equipped:${e._id}`) ? `Assigned to <b>${esc(holders.get(`equipped:${e._id}`))}</b>` : 'Unused') : `Currently with <b>${esc(e.name)}</b>`}</small></button>`;
+          ${life(hours)}<small>${esc(toPct(hours))}% left</small><small class="tr-asg-who">${holders ? (holders.has(`equipped:${e._id}`) ? `Assigned to <b>${esc(holders.get(`equipped:${e._id}`))}</b>` : 'Unused') : `Currently with <b>${esc(e.name)}</b>`}</small></button>`;
       };
       return `${settings.inventory.map(card).join('')}${equippedOf(team).map(eq).join('')}
         <button type="button" class="tr-asg-tool is-add" data-tool-add${settings.inventory.length >= MAX_ROWS ? ' disabled' : ''}>${icon('plus')}<span>Add tool</span></button>`;
+    }
+
+    // Only the tool cards change, so the page keeps its scroll position.
+    function redrawShelf(focus) {
+      $('[data-plan-shelf]').innerHTML = shelf(getTeam());
+      root.querySelector(focus)?.focus({ preventScroll: true });
     }
 
     function refresh(focus = null) {
@@ -295,7 +306,7 @@ const EmployeeAssignments = (() => {
         <div class="tr-asg-grid">
           <div class="tr-asg-main" data-plan-result></div>
           <div class="tr-asg-side">
-            <section class="tr-asg-box" aria-labelledby="plan-tools-heading"><h4 id="plan-tools-heading">Your tools <span class="tr-muted">· select one to edit</span></h4>
+            <section class="tr-asg-box tr-asg-tools" aria-labelledby="plan-tools-heading"><h4 id="plan-tools-heading">Your tools <span class="tr-muted">· select one to edit</span></h4>
               <div class="tr-asg-shelf" data-plan-shelf>${shelf(team)}</div></section>
             <section class="tr-asg-box" aria-labelledby="plan-pins-heading"><h4 id="plan-pins-heading">Keep in place</h4>
               <p class="tr-muted">Selected employees stay in their company. They can still get a tool.</p>
@@ -328,8 +339,8 @@ const EmployeeAssignments = (() => {
       if (d.equipped) {
         const e = equippedOf(team).find(e => e._id === d.equipped), type = toolType(e.toolItem.code) || 'hammer', id = `plan-equipped-${e._id}`;
         dialog.innerHTML = `<form method="dialog" data-dialog-form novalidate><header><h3 id="plan-dialog-title">${esc(e.name)}'s ${esc(type)}</h3><button type="button" class="tr-asg-close" data-dialog-close aria-label="Close">✕</button></header>
-          <div class="tr-asg-dialog-body"><p class="tr-muted">Equipped tools can be reassigned to compatible employees. Remaining life starts as an estimate: a full tool lasts 500 working hours, scaled by its condition. Correct it if you know the hours.</p>
-          ${field(id, 'Working hours left', `<input id="${id}" type="number" inputmode="decimal" autocomplete="off" min="0" max="10000" step="any" data-dialog-field="hours" value="${esc(d.hours)}" aria-describedby="${id}-err">`, `<small class="tr-muted">Estimate from condition: ${esc(estimateHours(e))} h</small>`)}</div>
+          <div class="tr-asg-dialog-body"><p class="tr-muted">Equipped tools can be reassigned to compatible employees. Capacity left starts from the game; a new tool lasts ${TOOL_HOURS} working hours. Correct it if it has changed.</p>
+          ${field(id, 'Capacity left %', `<input id="${id}" type="number" inputmode="decimal" autocomplete="off" min="0" max="100" step="any" data-dialog-field="hours" value="${esc(toPct(d.hours))}" aria-describedby="${id}-err">`, `<small class="tr-muted">From the game: ${esc(toPct(estimateHours(e)))}%</small>`)}</div>
           <footer><span class="tr-asg-preview">${icon(type)}<span><b>${esc(cap(type))} · equipped</b><br><small class="tr-muted">Currently with ${esc(e.name)}</small></span></span>
           <span class="tr-asg-buttons"><button type="button" data-dialog-close>Cancel</button><button type="submit" class="btn-primary" data-dialog-save>Save</button></span></footer></form>`;
         return;
@@ -337,14 +348,14 @@ const EmployeeAssignments = (() => {
       const r = d.row, id = f => `plan-${r.id}-${f}`;
       const tiles = Object.keys(EP.TOOL_TYPES).map(type => `<button type="button" class="tr-asg-type" data-dialog-type="${type}" aria-pressed="${r.type === type}">${icon(type)}<b>${cap(type)}</b>
           <span class="tr-asg-products">${products(type)}</span></button>`).join('');
-      const hours = [500, 375, 250, 125];
+      const pcts = [100, 75, 50, 25];
       dialog.innerHTML = `<form method="dialog" data-dialog-form novalidate><header><h3 id="plan-dialog-title">${d.isNew ? 'Add a tool' : 'Edit tool'}</h3><button type="button" class="tr-asg-close" data-dialog-close aria-label="Close">✕</button></header>
         <div class="tr-asg-dialog-body">
           <fieldset class="tr-asg-types" aria-describedby="plan-dialog-type-err"><legend>Type</legend>${tiles}<small class="tr-plan-err" id="plan-dialog-type-err" hidden></small></fieldset>
           <div class="tr-asg-dialog-fields">
             ${field(id('bonus'), 'Rolled bonus %', `<span class="tr-asg-bonus"><input type="range" min="3" max="65" step="1" value="${esc(Number(r.bonus) || 20)}" data-dialog-range aria-label="Rolled bonus slider" tabindex="-1"><input id="${id('bonus')}" type="number" inputmode="decimal" autocomplete="off" min="3" max="65" step="any" data-dialog-field="bonus" value="${esc(r.bonus)}" aria-describedby="${id('bonus')}-err" required></span>`, '<small class="tr-muted">As shown on the tool, 3 to 65</small>')}
-            ${field(id('hours'), 'Working hours left', `<input id="${id('hours')}" type="number" inputmode="decimal" autocomplete="off" min="0" max="10000" step="any" data-dialog-field="hours" value="${esc(r.hours)}" aria-describedby="${id('hours')}-err" required>`,
-              `<span class="tr-asg-chips">${hours.map(h => `<button type="button" data-dialog-hours="${h}" aria-pressed="${Number(r.hours) === h}">${h === 500 ? 'New · 500' : h}</button>`).join('')}</span>`)}
+            ${field(id('hours'), 'Capacity left %', `<input id="${id('hours')}" type="number" inputmode="decimal" autocomplete="off" min="0" max="100" step="any" data-dialog-field="hours" value="${esc(toPct(r.hours))}" aria-describedby="${id('hours')}-err" required>`,
+              `<span class="tr-asg-chips">${pcts.map(p => `<button type="button" data-dialog-pct="${p}" aria-pressed="${Number(toPct(r.hours)) === p}">${p === 100 ? 'New · 100%' : `${p}%`}</button>`).join('')}</span>`)}
             ${field(id('quantity'), 'How many identical tools', `<span class="tr-asg-qty-input"><button type="button" data-dialog-qty="-1" aria-label="Fewer">−</button><input id="${id('quantity')}" type="number" inputmode="numeric" autocomplete="off" min="1" max="50" step="1" data-dialog-field="quantity" value="${esc(r.quantity)}" aria-describedby="${id('quantity')}-err" required><button type="button" data-dialog-qty="1" aria-label="More">+</button></span>`)}
             ${field(id('name'), 'Label <em>optional</em>', `<input id="${id('name')}" autocomplete="off" maxlength="60" data-dialog-field="name" value="${esc(r.name)}">`)}
           </div>
@@ -358,7 +369,7 @@ const EmployeeAssignments = (() => {
       if (!el) return;
       if (!r.type) { el.innerHTML = '<span class="tr-muted">Choose the tool type</span>'; return; }
       const n = Number(r.quantity), h = Number(r.hours);
-      el.innerHTML = `${icon(r.type)}<span><b>${Number.isInteger(n) && n > 1 ? `${n} × ` : ''}${esc(cap(r.type))}${r.bonus !== '' ? ` +${esc(r.bonus)}%` : ''}</b><br><small class="tr-muted">${h > 0 ? `${esc(r.hours)} h ≈ ${num(h / 24, 1)} days of work` : 'Enter the hours left'}</small></span>`;
+      el.innerHTML = `${icon(r.type)}<span><b>${Number.isInteger(n) && n > 1 ? `${n} × ` : ''}${esc(cap(r.type))}${r.bonus !== '' ? ` +${esc(r.bonus)}%` : ''}</b><br><small class="tr-muted">${h > 0 ? `${esc(toPct(r.hours))}% ≈ ${num(h / 24, 1)} days of work` : 'Enter the capacity left'}</small></span>`;
     }
     function openTool(rowId, errors = [], type = '') {
       const row = settings.inventory.find(r => r.id === rowId);
@@ -393,18 +404,18 @@ const EmployeeAssignments = (() => {
       }
       const back = draft.back === '[data-tool-add]' ? `[data-tool-edit="${CSS.escape(draft.row.id)}"]` : draft.back;
       draft = null; dialog.close(); save();
-      if (team) { refresh(back); stale(); }
+      if (team) { redrawShelf(back); stale(); }
     }
     dialog.addEventListener('click', ev => {
       const t = ev.target;
       if (t === dialog || t.closest('[data-dialog-close]')) return dialog.close();
       const type = t.closest('[data-dialog-type]');
       if (type) { draft.row.type = type.dataset.dialogType; drawDialog(); return dialog.querySelector(`[data-dialog-type="${type.dataset.dialogType}"]`).focus(); }
-      const hours = t.closest('[data-dialog-hours]');
-      if (hours) {
-        draft.row.hours = hours.dataset.dialogHours;
-        const input = dialog.querySelector('[data-dialog-field="hours"]'); input.value = draft.row.hours; clearError(input);
-        for (const b of dialog.querySelectorAll('[data-dialog-hours]')) b.setAttribute('aria-pressed', String(b === hours));
+      const pct = t.closest('[data-dialog-pct]');
+      if (pct) {
+        draft.row.hours = toHours(pct.dataset.dialogPct);
+        const input = dialog.querySelector('[data-dialog-field="hours"]'); input.value = pct.dataset.dialogPct; clearError(input);
+        for (const b of dialog.querySelectorAll('[data-dialog-pct]')) b.setAttribute('aria-pressed', String(b === pct));
         return preview();
       }
       const qty = t.closest('[data-dialog-qty]');
@@ -417,7 +428,7 @@ const EmployeeAssignments = (() => {
         const i = settings.inventory.findIndex(r => r.id === draft.row.id);
         settings.inventory.splice(i, 1); draft = null; dialog.close(); save();
         const next = settings.inventory[i] || settings.inventory[i - 1];
-        refresh(next ? `[data-tool-edit="${CSS.escape(next.id)}"]` : '[data-tool-add]'); stale();
+        redrawShelf(next ? `[data-tool-edit="${CSS.escape(next.id)}"]` : '[data-tool-add]'); stale();
       }
     });
     dialog.addEventListener('submit', ev => { ev.preventDefault(); commit(); });
@@ -427,9 +438,10 @@ const EmployeeAssignments = (() => {
         const input = dialog.querySelector('[data-dialog-field="bonus"]');
         draft.row.bonus = input.value = t.value; clearError(input);
       } else if (t.dataset.dialogField) {
-        if (draft.equipped) draft.hours = t.value; else draft.row[t.dataset.dialogField] = t.value;
+        const value = t.dataset.dialogField === 'hours' ? toHours(t.value) : t.value;
+        if (draft.equipped) draft.hours = value; else draft.row[t.dataset.dialogField] = value;
         if (t.dataset.dialogField === 'bonus' && Number(t.value) >= 3) dialog.querySelector('[data-dialog-range]').value = t.value;
-        if (t.dataset.dialogField === 'hours') for (const b of dialog.querySelectorAll('[data-dialog-hours]')) b.setAttribute('aria-pressed', String(Number(b.dataset.dialogHours) === Number(t.value)));
+        if (t.dataset.dialogField === 'hours') for (const b of dialog.querySelectorAll('[data-dialog-pct]')) b.setAttribute('aria-pressed', String(Number(b.dataset.dialogPct) === Number(t.value)));
         if (t.getAttribute('aria-invalid')) clearError(t);
       } else return;
       if (!draft.equipped) preview();
@@ -442,6 +454,7 @@ const EmployeeAssignments = (() => {
     /* ── Result ────────────────────────────────────────────────── */
     function renderResult(result, snapshot, { cancelled = false } = {}) {
       const out = $('[data-plan-result]'), hero = $('[data-plan-hero]');
+      out.classList.remove('is-stale'); hero.classList.remove('is-stale');
       chartData = null;
       if (!result.valid) { onResult(null); hero.innerHTML = ''; out.innerHTML = `<ul class="tr-warn">${result.errors.map(e => `<li>${esc(e)}</li>`).join('')}</ul>`; return; }
       const { baseline, proposed } = result, days = snapshot.days;
@@ -596,7 +609,7 @@ const EmployeeAssignments = (() => {
       runId++; stop(); best = null;
       const id = runId, snapshot = prepared.snapshot;
       const started = Date.now();
-      $('[data-plan-result]').innerHTML = ''; $('[data-plan-hero]').innerHTML = ''; chartData = null;
+      $('[data-plan-result]').classList.add('is-stale'); $('[data-plan-hero]').classList.add('is-stale');
       status(`<span class="tr-muted">Comparing employee placements and tools ${over(snapshot.days)}…</span>`);
       setRunning(true);
       onResult({ running: true });
@@ -626,7 +639,11 @@ const EmployeeAssignments = (() => {
       if (!worker) return;
       runId++; stop(); setRunning(false);
       if (best) { renderResult(best.result, best.snapshot, { cancelled: true }); status(''); }
-      else status('<span class="tr-muted">Search cancelled before any improvement was found.</span>');
+      else {
+        status('<span class="tr-muted">Search cancelled before any improvement was found.</span>');
+        for (const el of [$('[data-plan-result]'), $('[data-plan-hero]')]) { el.innerHTML = ''; el.classList.remove('is-stale'); }
+        chartData = null;
+      }
       $('[data-plan-run]').focus();
     }
 
@@ -694,9 +711,20 @@ const EmployeeAssignments = (() => {
         worker.postMessage({ kind: 'cards:begin', generation: gen, snapshot });
       } catch { worker?.terminate(); worker = null; failure = 'A valuation worker is unavailable in this browser.'; }
     }
+    // Move a queued batch: up when a prefetched hand comes on screen, back when superseded.
+    function reprioritize(key, priority) {
+      const batch = batches.get(key);
+      if (batch?.status !== 'pending' || batch.priority === priority) return;
+      batch.priority = priority;
+      try { worker.postMessage({ kind: 'cards:priority', generation, id: batch.id, priority }); } catch { /* keeps its place */ }
+    }
     function request(key, jobs, priority = 2) {
-      if (batches.has(key)) return batches.get(key);
-      const batch = { id: ++serial, status: failure ? 'fallback' : 'pending', reason: failure };
+      const known = batches.get(key);
+      if (known) {
+        if (priority < known.priority) reprioritize(key, priority);
+        return known;
+      }
+      const batch = { id: ++serial, status: failure ? 'fallback' : 'pending', reason: failure, priority };
       batches.set(key, batch);
       if (!failure) {
         try { worker.postMessage({ kind: 'cards', generation, id: batch.id, jobs, priority }); }
@@ -704,7 +732,7 @@ const EmployeeAssignments = (() => {
       }
       return batch;
     }
-    return { reset, request, get generation() { return generation; },
+    return { reset, request, reprioritize, get generation() { return generation; },
       dispose() { generation++; worker?.terminate(); worker = null; batches.clear(); } };
   }
   return { mount, sanitize, fieldErrors, snapshotOf, careerDays, createCardPricer };

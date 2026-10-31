@@ -469,7 +469,36 @@ const EmployeeTrainingTool = (() => {
     if (input.hand?.missing) return { status: 'fallback', reason: 'The dealt hand contains an unknown card. Reload its offers.' };
     if (!cards.length) return { status: 'fallback', reason: 'No hand dealt.' };
     const job = pricingJob(found.emp, found.entry, cards);
-    return pricer.request(JSON.stringify([kind, job]), [job], kind === 'hand' ? 0 : 1);
+    const batch = pricer.request(JSON.stringify([kind, job]), [job], kind === 'hand' ? 0 : 1);
+    prefetchHands();
+    return batch;
+  }
+  // Every other dealt hand, queued behind the selected one in training
+  // order, so stepping through employees finds their choice already made.
+  // The batch keys match selectedPricing's, which then reuses them.
+  let prefetched = null, prefetchKeys = [];
+  function prefetchHands() {
+    if (!team || plan?.running) return;
+    const pricer = prepareCardPricing();
+    const revision = JSON.stringify([cardRevision, pricer.generation, plannedTools(), [...taken.keys()]]);
+    if (prefetched === revision) return;
+    prefetched = revision;
+    const order = new Map(feedRows().map((r, i) => [r.emp._id, i]));
+    const saved = input, keys = [];
+    try {
+      for (const { emp, entry } of allEmployees().filter(emp => !emp.leftAt).map(emp => findEmployee(emp._id))
+        .sort((a, b) => (order.get(a.emp._id) ?? Infinity) - (order.get(b.emp._id) ?? Infinity))) {
+        if (taken.has(emp._id)) continue;
+        input = { ...inputsFor(emp, entry), pick: emp._id, hand: pendingHand(emp) };
+        if (!input.hand || input.hand.missing) continue;
+        const job = pricingJob(emp, entry, input.hand.slots.map(slotCard).filter(Boolean));
+        keys.push(JSON.stringify(['hand', job]));
+        pricer.request(keys.at(-1), [job], 1);
+      }
+    } finally { input = saved; }
+    // Hands priced for an older plan wait behind everything else.
+    for (const key of prefetchKeys) if (!keys.includes(key)) pricer.reprioritize(key, 9);
+    prefetchKeys = keys;
   }
   function pricingLabel(batch, group = batch.result?.groups[0]) {
     if (batch.status === 'pending') return 'Recalculating arrangements; current-company values shown. Choice pending.';
@@ -2060,6 +2089,25 @@ const EmployeeTrainingTool = (() => {
     if (id !== input.pick) useEmployee(id);
     showTab(tab, { reveal: true });
   }
+  // From the side list: scroll the page to the top of the work area, where
+  // the sticky list sits whole on screen. The list scrolls back by the same
+  // amount where it can, so the clicked entry stays under the pointer, then
+  // just enough to show the entry in full.
+  function selectFromSide(id) {
+    if (!findEmployee(id)) return;
+    const was = $side.querySelector(`[data-side-emp="${CSS.escape(id)}"]`)?.getBoundingClientRect().top;
+    if (id !== input.pick) useEmployee(id);
+    showTab(view.tab);
+    const top = parseFloat(getComputedStyle($side).top) || 0;
+    window.scrollBy({ top: $work.getBoundingClientRect().top - top });
+    const $on = $side.querySelector(`[data-side-emp="${CSS.escape(id)}"]`);
+    if (!$on) return;
+    if (was !== undefined) $side.scrollTop += $on.getBoundingClientRect().top - was;
+    const box = $side.getBoundingClientRect(), r = $on.getBoundingClientRect();
+    const visTop = Math.max(box.top, 0), visBottom = Math.min(box.bottom, window.innerHeight);
+    if (r.top < visTop) $side.scrollTop -= visTop - r.top + 8;
+    else if (r.bottom > visBottom) $side.scrollTop += r.bottom - visBottom + 8;
+  }
 
   /* ── Wiring ──────────────────────────────────────────────── */
   /* ── Dashboard summary ───────────────────────────────────── */
@@ -2126,7 +2174,7 @@ const EmployeeTrainingTool = (() => {
     assignments = EmployeeAssignments.mount(document.getElementById('tr-assignments-body'), {
       getTeam: () => team, getMarket: () => market, productName, productIcon,
       companyName: id => { const x = team?.companies.find(c => c.company._id === id); return x ? companyName(x.company) : null; },
-      onResult: result => { plan = result; renderResult(); renderTeam(); renderFire(); },
+      onResult: result => { plan = result; prefetchHands(); renderResult(); renderTeam(); renderFire(); },
       onSettings: () => { renderResult(); renderTeam(); },
     });
     $load.addEventListener('click', () => runLoad($username.value));
@@ -2169,7 +2217,7 @@ const EmployeeTrainingTool = (() => {
       }
       else if (b.dataset.addTool) { showTab('assignments', { reveal: true }); assignments.addTool(b.dataset.addTool); }
       else if (b.dataset.planOpen !== undefined) { showTab('assignments', { reveal: true }); assignments.reveal(); }
-      else if (b.dataset.sideEmp) selectEmployee(b.dataset.sideEmp);
+      else if (b.dataset.sideEmp) selectFromSide(b.dataset.sideEmp);
       else if (b.dataset.took !== undefined) takeSlot(+b.dataset.took);
       else if (b.dataset.reload !== undefined && team) runLoad(team.username);
       else if (b.classList.contains('tr-use') && b.dataset.id) selectEmployee(b.dataset.id, 'train');

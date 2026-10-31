@@ -3248,6 +3248,7 @@ html[data-theme="light"] {
 .tr-asg-tile.is-big .tr-asg-v { font-size: 28px; color: var(--accent); }
 .tr-asg-tile.is-flat .tr-asg-v { color: var(--text); font-size: 22px; }
 .tr-asg-grid { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 14px; align-items: start; }
+[data-plan-result].is-stale, [data-plan-hero].is-stale { opacity: .5; pointer-events: none; transition: opacity .2s; }
 .tr-asg-main, .tr-asg-side { display: grid; gap: 14px; min-width: 0; }
 .tr-asg-box { padding: 14px 16px; border: 1px solid var(--border); border-radius: 12px; background: var(--panel); min-width: 0; }
 .tr-asg-box h4 { margin: 0 0 10px; font-size: 13px; }
@@ -3359,6 +3360,9 @@ html[data-theme="light"] {
 
 @media (max-width: 960px) {
   .tr-asg-grid { grid-template-columns: minmax(0, 1fr); }
+  /* The tool cards are short: show them before the long result. */
+  .tr-asg-side { display: contents; }
+  .tr-asg-tools { order: -1; }
   .tr-asg-hero { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .tr-asg-hero .is-big { grid-column: 1 / -1; }
 }
@@ -3470,7 +3474,11 @@ html[data-theme="light"] {
 .tr-side-emp { flex-wrap: wrap; }
 .tr-side-name small { display: block; white-space: nowrap; font-weight: 400; font-size: 11.5px; color: var(--muted); }
 .tr-side .tr-badges { flex-wrap: nowrap; }
-@media (min-width: 901px) { .tr-work .tr-pick { display: none; } }
+@media (min-width: 901px) {
+  .tr-work .tr-pick { display: none; }
+  /* At least a screen tall, so the page can always scroll the sticky list fully into view. */
+  .tr-work-main { min-height: calc(100dvh - 24px); }
+}
 @media (max-width: 900px) {
   .tr-work { grid-template-columns: minmax(0, 1fr); }
   .tr-side { display: none; }

@@ -49,6 +49,11 @@ self.onmessage = ({ data }) => {
     cardGeneration = data.generation; queue = [];
     session = EmployeePlanner.cardSession(data.snapshot); return;
   }
+  if (data.kind === 'cards:priority') {
+    const job = queue.find(j => j.id === data.id && j.generation === data.generation);
+    if (job) job.priority = data.priority;
+    return;
+  }
   if (data.kind === 'cards') {
     if (data.generation !== cardGeneration) return;
     queue.push({ ...data, index: 0, cardIndex: 0, quotes: [], results: [], budget: CARD_SUBJECT_BUDGET });
