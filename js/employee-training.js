@@ -483,7 +483,7 @@ const EmployeeTrainingTool = (() => {
     const revision = JSON.stringify([cardRevision, pricer.generation, plannedTools(), [...taken.keys()]]);
     if (prefetched === revision) return;
     prefetched = revision;
-    const order = new Map(feedRows().map((r, i) => [r.emp._id, i]));
+    const order = new Map(feedRows().filter(r => r.kind === 'train').map((r, i) => [r.emp._id, i]));
     const saved = input, keys = [];
     try {
       for (const { emp, entry } of allEmployees().filter(emp => !emp.leftAt).map(emp => findEmployee(emp._id))
