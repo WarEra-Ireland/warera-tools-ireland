@@ -35,7 +35,7 @@ const EmployeePlanner = (() => {
   function validate(s, arrangement) {
     const errors = [];
     const companies = new Map(s.companies.map(c => [c.id, c]));
-    const frozen = e => !!companies.get(e.company)?.excluded;
+    const frozen = e => !!companies.get(e?.company)?.excluded;
     const unique = (xs, label) => {
       if (xs.some(x => !x.id) || new Set(xs.map(x => x.id)).size !== xs.length) errors.push(`${label} must have unique IDs.`);
     };
@@ -63,10 +63,9 @@ const EmployeePlanner = (() => {
       if (!e || !c) { errors.push('Unknown employee or company.'); continue; }
       if ((frozen(e) || c.excluded) && (a.company !== e.company || a.tool !== (e.equipped?.id || null))) errors.push(`${c.name} is not being planned, so its roster and tools stay unchanged.`);
       if (e.locked && a.company !== e.company) errors.push(`${e.name} is kept in their current company.`);
-      if (e.equipped && (a.company !== e.company || a.tool !== e.equipped.id)) errors.push(`Keep ${e.name}'s equipped tool and company unchanged.`);
       if (!a.tool) continue;
       const t = s.tools.find(t => t.id === a.tool);
-      if (!t || used.has(a.tool) || (t.holder && t.holder !== e.id) || (!t.holder && !compatible(t, c))) errors.push('A tool must have one eligible employee.');
+      if (!t || used.has(a.tool) || (!compatible(t, c) && (a.company !== e.company || a.tool !== e.equipped?.id)) || (t.holder && frozen(s.employees.find(e => e.id === t.holder)) && t.holder !== e.id)) errors.push('A tool must have one eligible employee.');
       used.add(a.tool);
     }
     for (const c of s.companies) if (arrangement.filter(a => a.company === c.id).length > c.capacity) errors.push(`${c.name} exceeds its Break Room capacity.`);
@@ -268,7 +267,7 @@ const EmployeePlanner = (() => {
     const planned = s.companies.filter(c => !c.excluded).sort(byId);
     const people = s.employees.filter(e => !companies.get(e.company).excluded).sort(byId);
     const assign = new Map(initial(s).map(a => [a.employee, { company: a.company, tool: a.tool }]));
-    const manual = s.tools.filter(t => !t.holder && t.hours > 0).sort(byId);
+    const manual = s.tools.filter(t => t.hours > 0 && (!t.holder || people.some(e => e.id === t.holder))).sort(byId);
     const classOf = t => t ? `${t.type}|${t.bonus}|${t.hours}` : '-';
     const classes = [...new Set(manual.map(classOf))].sort();
     const sample = new Map(manual.map(t => [classOf(t), t]));
@@ -278,26 +277,24 @@ const EmployeePlanner = (() => {
     const value = new Map(planned.map(c => [c.id, P.project(c, roster.get(c.id).map(id => ({ e: employees.get(id), tool: tools.get(assign.get(id).tool) }))).value]));
     const baseline = totals(s, P, assign);
     const steps = [], moved = new Set();
-    const movable = e => allowMoves && !e.equipped && !e.locked && !moved.has(e.id);
+    const movable = e => allowMoves && !e.locked && !moved.has(e.id);
     const search = { rounds: 0, candidates: 0, projections: 0, maxProjections, limited: false, stopped: 'converged' };
 
     const toolFor = (tool, company) => tool && compatible(tool, company) ? tool.id : null;
     function candidatesFor(e, partners) {
       const a = assign.get(e.id), here = companies.get(a.company), cur = tools.get(a.tool) || null, out = [];
       const add = (changes, key, step = null) => out.push({ changes, key, step });
-      if (!e.equipped) {
-        if (cur) add([[e.id, here.id, null]], `t:${e.id}:-`);
-        for (const k of classes) {
-          if (k === classOf(cur) || !compatible(sample.get(k), here)) continue;
-          const unit = freeUnit(k);
-          if (unit) { add([[e.id, here.id, unit.id]], `t:${e.id}:${k}`); continue; }
-          // All units of this class are in use: exchange with each holder.
-          for (const t of manual) {
-            const other = holder.get(t.id);
-            if (classOf(t) !== k || !other || employees.get(other).equipped) continue;
-            const there = companies.get(assign.get(other).company);
-            add([[e.id, here.id, t.id], [other, there.id, toolFor(cur, there)]], `t:${e.id}:${k}:${other}`);
-          }
+      if (cur) add([[e.id, here.id, null]], `t:${e.id}:-`);
+      for (const k of classes) {
+        if (k === classOf(cur) || !compatible(sample.get(k), here)) continue;
+        const unit = freeUnit(k);
+        if (unit) { add([[e.id, here.id, unit.id]], `t:${e.id}:${k}`); continue; }
+        // All units of this class are in use: exchange with each holder.
+        for (const t of manual) {
+          const other = holder.get(t.id);
+          if (classOf(t) !== k || !other) continue;
+          const there = companies.get(assign.get(other).company);
+          add([[e.id, here.id, t.id], [other, there.id, toolFor(cur, there)]], `t:${e.id}:${k}:${other}`);
         }
       }
       if (!movable(e)) return out;
@@ -408,14 +405,14 @@ const EmployeePlanner = (() => {
     search.limited = true; search.stopped = 'rounds';
     return result(false);
   }
-  // Canonical one-change neighbourhood. Tools stay equipped; inventory is
-  // deliberately absent. Coworker plans still apply when the subject is pinned.
+  // Canonical one-change neighbourhood. Tool choices are added by cardSession.
+  // Coworker plans still apply when the subject is pinned.
   const CARD_PLAN_CAP = 256;
   const CARD_CACHE_CAP = 20000;
   function localPlans(s, subject, allowMoves) {
     const companies = s.companies.filter(c => !c.excluded).sort(byId);
     const people = s.employees.filter(e => companies.some(c => c.id === e.company)).sort(byId);
-    const movable = e => allowMoves && !e.locked && !e.equipped;
+    const movable = e => allowMoves && !e.locked;
     const count = id => people.filter(e => e.company === id).length;
     const plans = [{ key: 'stay', kind: 'stay', changes: [] }], seen = new Set();
     const add = (kind, changes) => {
@@ -452,10 +449,7 @@ const EmployeePlanner = (() => {
     const tools = new Map(s.tools.map(t => [t.id, t]));
     const fingerprint = e => JSON.stringify([e.id, e.traits.filter(t => !['luckyCharm', 'jinx', 'recruiter', 'trainer'].includes(t.code)),
       e.production, e.responsibility, e.wage, e.climberRaise]);
-    // `assigned` maps employees to the registered tools the assignment plan
-    // gives them (equipped tools always stay). The subject may also take any
-    // registered tool that suits their company, from its holder if it has one,
-    // so a card like Handy is priced with the tool it would earn.
+    // The assignment result includes nulls so removing an equipped tool is preserved.
     function price(subjectId, cards, { budget = 80000, employee = {}, context = {}, feed = false, assigned = {} } = {}) {
       const subject = s.employees.find(e => e.id === subjectId);
       const reason = errors[0] || !subject && 'Employee is not in this workforce.'
@@ -467,28 +461,59 @@ const EmployeePlanner = (() => {
         gender: subject.gender, product: companies.find(c => c.id === subject.company).product } };
       const e = { ...EC.DEFAULT_EMPLOYEE, ...employee, ...subject,
         wageExpectation: employee.wageExpectation ?? subject.wage / (subject.production / 4 * (snapshot.ppValue || 1)) };
-      const toolOf = x => x.equipped ? tools.get(x.equipped.id) : tools.get(assigned[x.id]) || null;
+      const toolOf = x => tools.get(Object.hasOwn(assigned, x.id) ? assigned[x.id] : x.equipped?.id) || null;
       const stateKey = JSON.stringify([subjectId, assigned]);
       let state = subjects.get(stateKey);
       if (!state) {
         const menu = localPlans(s, subject, snapshot.allowMoves !== false);
-        // One plan per kind of registered tool the subject could take: a free
-        // unit if there is one, else the planned holder's.
-        const here = companies.find(c => c.id === subject.company), own = toolOf(subject);
-        const holderOf = new Map(Object.entries(assigned).map(([id, t]) => [t, id]));
-        const kinds = new Map();
-        if (!subject.equipped) for (const t of s.tools.filter(t => !t.holder && t.hours > 0 && compatible(t, here)).sort(byId)) {
-          const k = `${t.type}|${t.bonus}|${t.hours}`;
-          if (own && k === `${own.type}|${own.bonus}|${own.hours}`) continue;
-          if (!kinds.has(k) || (kinds.get(k).from && !holderOf.has(t.id))) kinds.set(k, { tool: t.id, from: holderOf.get(t.id) || null });
+        const people = s.employees.filter(x => companies.some(c => c.id === x.company)).sort(byId);
+        const available = s.tools.filter(t => t.hours > 0 && (!t.holder || people.some(x => x.id === t.holder))).sort(byId);
+        const queues = [], seen = new Set();
+        let queue;
+        const add = (plan, equipment) => {
+          const key = JSON.stringify([plan.changes, equipment]);
+          if (!seen.has(key)) { seen.add(key); queue.push({ ...plan, key, equipment }); }
+        };
+        for (const plan of menu.plans) {
+          queue = []; queues.push(queue);
+          const changed = new Map(plan.changes);
+          const companyOf = x => companies.find(c => c.id === (changed.get(x.id) || x.company));
+          const equipment = Object.fromEntries(people.map(x => {
+            const t = toolOf(x);
+            return [x.id, t && compatible(t, companyOf(x)) ? t.id : null];
+          }));
+          add(plan, equipment);
+          if (plan.kind === 'swap') {
+            const [[a], [b]] = plan.changes;
+            const swapped = { ...equipment, [a]: toolOf(people.find(x => x.id === b))?.id || null,
+              [b]: toolOf(people.find(x => x.id === a))?.id || null };
+            for (const id of [a, b]) if (swapped[id] && !compatible(tools.get(swapped[id]), companyOf(people.find(x => x.id === id)))) swapped[id] = null;
+            add(plan, swapped);
+          }
+          // Price the card with each compatible registered tool, including tools
+          // currently held by another employee, and charge for the donor's loss.
+          add(plan.kind === 'stay' ? { ...plan, kind: 'tool' } : plan, { ...equipment, [subjectId]: null });
+          for (const t of available) {
+            if (!compatible(t, companyOf(subject)) || equipment[subjectId] === t.id) continue;
+            const donor = people.find(x => equipment[x.id] === t.id);
+            const next = { ...equipment, [subjectId]: t.id };
+            if (donor) {
+              const old = tools.get(equipment[subjectId]);
+              next[donor.id] = old && compatible(old, companyOf(donor)) ? old.id : null;
+            }
+            add(plan.kind === 'stay' ? { ...plan, kind: 'tool' } : plan, next);
+          }
         }
-        const toolPlans = [...kinds.values()].map(x => ({ key: `tool:${x.tool}`, kind: 'tool', changes: [], ...x }));
-        state = { plans: [menu.plans[0], ...toolPlans, ...menu.plans.slice(1)], total: menu.total + toolPlans.length, best: null, quotes: new Map() };
+        const plans = [];
+        for (let depth = 0; plans.length < CARD_PLAN_CAP && queues.some(q => depth < q.length); depth++) {
+          for (const q of queues) if (q[depth] && plans.length < CARD_PLAN_CAP) plans.push(q[depth]);
+        }
+        state = { plans, total: Math.max(menu.total, queues.reduce((n, q) => n + q.length, 0)), best: null, quotes: new Map() };
         subjects.set(stateKey, state);
       }
       const project = (variant, plan) => {
         const changed = new Map(plan.changes);
-        const toolIn = x => x.id === subjectId ? (plan.tool ? tools.get(plan.tool) : toolOf(x)) : plan.from === x.id ? null : toolOf(x);
+        const toolIn = x => tools.get(plan.equipment[x.id]) || null;
         const groups = companies.map(c => {
           const members = s.employees.filter(x => (changed.get(x.id) || x.company) === c.id)
             .map(x => ({ e: x.id === subjectId ? variant : x, tool: toolIn(x) })).sort((a, b) => byId(a.e, b.e));
@@ -520,7 +545,7 @@ const EmployeePlanner = (() => {
       };
       const nameOf = id => s.employees.find(x => x.id === id).name;
       const explain = plan => ({ ...plan, description: plan.kind === 'stay' ? 'stay in current arrangement'
-        : plan.kind === 'tool' ? `give ${subject.name} ${tools.get(plan.tool).name}${plan.from ? ` from ${nameOf(plan.from)}` : ''}`
+        : plan.kind === 'tool' ? `reassign tools: ${Object.entries(plan.equipment).filter(([id, tool]) => tool !== (toolOf(s.employees.find(x => x.id === id))?.id || null)).map(([id, tool]) => `${nameOf(id)} ${tool ? `gets ${tools.get(tool).name}` : 'has no tool'}`).join('; ')}`
         : `${plan.kind}: ${plan.changes.map(([id, co]) => `${s.employees.find(x => x.id === id).name} to ${s.companies.find(c => c.id === co).name} (${s.companies.find(c => c.id === co).product})`).join('; ')}` });
       try {
         state.best ||= best(e);

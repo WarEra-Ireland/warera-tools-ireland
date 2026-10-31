@@ -434,7 +434,7 @@ const EmployeeTrainingTool = (() => {
   // another that suits their company (EmployeePlanner cardSession).
   const TOOL_TRAITS = ['handy', 'improviser'];
   const plannedTool = id => plan && !plan.running ? (plan.tools || []).find(x => x.employee === id)?.tool || null : null;
-  const plannedTools = () => Object.fromEntries((plan && !plan.running ? plan.tools || [] : []).map(x => [x.employee, x.tool.id]));
+  const plannedTools = () => Object.fromEntries((plan && !plan.running ? plan.tools || [] : []).map(x => [x.employee, x.tool?.id || null]));
   const withTool = ctx => ({ ...ctx, situation: { ...ctx.situation, hasTool: true } });
   const spareTools = () => assignments?.cardSettings().inventory || [];
   const toolTypeFor = code => Object.keys(EmployeePlanner.TOOL_TYPES).find(t => EmployeePlanner.TOOL_TYPES[t].includes(code)) || null;
@@ -474,7 +474,7 @@ const EmployeeTrainingTool = (() => {
   function pricingLabel(batch, group = batch.result?.groups[0]) {
     if (batch.status === 'pending') return 'Recalculating arrangements; current-company values shown. Choice pending.';
     if (batch.status === 'fallback') return `Current-company fallback: ${batch.reason}`;
-    return `Rearranged estimate over ${group.horizon} workforce days. ${group.coverage.tested} of ${group.coverage.total} local arrangements tested; equipped tools fixed. Without the card assumes ${group.baseline.description}. No future hires, training or inventory search. Second Wind is a numeric-training forecast. ${group.warnings.join(' ')}`;
+    return `Rearranged estimate over ${group.horizon} workforce days. ${group.coverage.tested} of ${group.coverage.total} local arrangements tested; tools can be reassigned. Without the card assumes ${group.baseline.description}. No future hires or training. Second Wind is a numeric-training forecast. ${group.warnings.join(' ')}`;
   }
   function quoteDetail(q) {
     if (q.value === null) return q.note || 'Not priced.';
@@ -640,13 +640,10 @@ const EmployeeTrainingTool = (() => {
       : c.card === 'habit' || c.card === 'rehab' ? [c.code] : []);
     if (emp.toolItem || ![...(emp.traits || []).map(t => t.code), ...codes].some(code => TOOL_TRAITS.includes(code))) return '';
     const who = escapeHtml(emp.name), planned = plannedTool(emp._id), type = toolTypeFor(entry.company.itemCode);
-    const suits = spareTools().filter(r => r.type === type).reduce((n, r) => n + (Number(r.quantity) || 0), 0);
     const add = type ? ` <button type="button" class="tr-link" data-add-tool="${type}">Add a ${type}</button>` : '';
     const text = planned ? `The assignment plan gives ${who} ${escapeHtml(planned.name)}; card values count it.`
       : plan?.running ? 'The assignment plan is still placing your tools.'
-        : suits ? `Card values may give ${who} ${suits === 1 ? `your registered ${type}` : `one of your ${suits} registered ${type}s`}, for its remaining hours, when a card makes it worth more to them.`
-          : type ? `No ${type} registered, so ${who} is valued without a tool. Have one?${add}`
-            : `Nothing you can register suits this company, so ${who} is valued without a tool.`;
+        : `Card values can reassign compatible tools from your companies or registered spares.${add}`;
     return `<p class="tr-tool-for tr-muted">${text}</p>`;
   }
 
