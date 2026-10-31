@@ -14,7 +14,8 @@
  *                    progress, what's waiting (hands, replacements,
  *                    mismatches) and the top three energy actions
  *                    (EmployeeTrainingTool.summary)
- *    ⏱ Managers    — each company manager, activity status and hourly pay
+ *    ⏱ Managers    — how many managers are inactive, a status bar, and the
+ *                    inactive and unknown ones listed (active ones folded)
  *    📈 Daily Profit— simplified projected income broken into rows
  *                    (companies + salary only — missions, case sales and
  *                    deductions are conditional, so they belong to the full
@@ -40,7 +41,6 @@
  *  honouring ?bypass=1.
  * ═══════════════════════════════════════════════════════════════════ */
 const DashboardTool = (() => {
-  const CLOCKIN_PREVIEW = 6;           // worker rows shown before "show more"
   const { FIDELITY_DAY1_PCT, FIDELITY_DAY5_PCT, META, ICON_FILE, skill, resolveUsername } = ProfitCore;
 
   const itemName = (code) => META[code]?.name || code || '—';
@@ -415,33 +415,69 @@ const DashboardTool = (() => {
     } catch (e) { setError('buddy', `Couldn't load the buddy pool: ${e.message}`); }
   }
 
-  /* ── Card: Clock-In ──────────────────────────────────────────────── */
+  /* ── Card: Managers ── inactive managers first. Vacancies belong to the
+   *  Buddy card, so they only get a footer link here. A manager whose
+   *  status couldn't be read stays "unknown", never inactive. */
   async function fillClockin(full) {
     try {
       const rows = await ClockInTool.loadRows(full._id);
-      const contracts = rows.filter(r => r.manager);
-      const active = contracts.filter(r => r.manager.isInactive === false).length;
-      const inactive = contracts.filter(r => r.manager.isInactive === true).length;
-      setNote('clockin', `${contracts.length} manager contracts`);
       if (!rows.length) {
         setBody('clockin', lead('No companies', 'No active companies found for this account.'));
         return;
       }
-      const rowHtml = ({ company, manager, profile }) => {
-        const status = !manager ? pill('No manager', 'warn')
-          : manager.isInactive === true ? pill('Inactive', 'loss')
-          : manager.isInactive === false ? pill('Active', 'ok') : pill('Unknown', 'warn');
-        const name = manager ? escapeHtml(profile?.username || `User ${manager.user.slice(-6)}`) : 'Vacant';
-        return `<div class="dash-row">
-          <div class="dash-row-main"><div class="dash-row-title">${name} <span class="dash-tag">${escapeHtml(company.name || 'Company')}</span></div>${status}</div>
-          <div class="dash-chips">${manager && Number.isFinite(manager.hourlyWage) ? chip('Hourly pay', `₿${manager.hourlyWage}`) : ''}</div>
-        </div>`;
+      const u = encodeURIComponent(full.username);
+      const contracts = rows.filter(r => r.manager);
+      const vacant = rows.length - contracts.length;
+      setNote('clockin', contracts.length ? `${contracts.length} manager${contracts.length === 1 ? '' : 's'}` : '');
+      if (!contracts.length) {
+        setBody('clockin', `<div class="dash-lead">No managers</div><div class="dash-sub">None of your ${rows.length} companies has a manager, so there is nothing to watch here. <a href="#buddy-finder?u=${u}">Find a buddy →</a></div>`);
+        return;
+      }
+      const now = Date.now();
+      const time = v => { const ms = v ? new Date(v).getTime() : NaN; return Number.isFinite(ms) ? ms : null; };
+      const ago = v => {
+        const ms = time(v);
+        if (ms == null) return null;
+        const min = Math.max(0, (now - ms) / 60000);
+        return min < 1 ? 'now' : min < 60 ? `${Math.round(min)}m` : min < 2880 ? `${Math.round(min / 60)}h` : `${Math.round(min / 1440)}d`;
       };
-      const rest = rows.slice(CLOCKIN_PREVIEW);
-      setBody('clockin', `
-        <div class="dash-statline"><span class="dash-pos">${active} active</span> · <span class="dash-neg">${inactive} inactive</span> · ${rows.length - contracts.length} vacancies</div>
-        <div class="dash-rows">${rows.slice(0, CLOCKIN_PREVIEW).map(rowHtml).join('')}
-          ${rest.length ? `<details class="dash-more"><summary>Show ${rest.length} more companies</summary>${rest.map(rowHtml).join('')}</details>` : ''}</div>`);
+      const lastLogin = r => time(r.profile?.dates?.lastConnectionAt) ?? 0;
+      const stalest = (a, b) => lastLogin(a) - lastLogin(b);
+      const inactive = contracts.filter(r => r.manager.isInactive === true).sort(stalest);
+      const active = contracts.filter(r => r.manager.isInactive === false).sort(stalest);
+      const unknown = contracts.filter(r => r.manager.isInactive !== true && r.manager.isInactive !== false);
+
+      const n = contracts.length;
+      const head = inactive.length
+        ? `<div class="dash-mgr-head"><span class="dash-mgr-big dash-neg">${inactive.length}</span><span>of ${n} managers ${inactive.length === 1 ? 'is' : 'are'} inactive</span></div>`
+        : `<div class="dash-mgr-head"><span class="dash-mgr-big">${active.length}/${n}</span><span>managers active${unknown.length ? `, ${unknown.length} unknown` : ''}</span></div>`;
+      const seg = (cls, count) => count ? `<i class="${cls}" style="flex:${count}"></i>` : '';
+      const bar = `<div class="dash-mgr-bar">${seg('bad', inactive.length)}${seg('unk', unknown.length)}${seg('ok', active.length)}</div>
+        <div class="dash-mgr-keys">${[['bad', inactive, 'inactive'], ['unk', unknown, 'unknown'], ['ok', active, 'active']]
+          .filter(([, list]) => list.length).map(([cls, list, label]) => `<span><i class="dash-mgr-dot ${cls}"></i>${list.length} ${label}</span>`).join('')}</div>`;
+      const row = r => {
+        const kind = r.manager.isInactive === true ? 'bad' : r.manager.isInactive === false ? 'ok' : 'unk';
+        const name = r.profile
+          ? `<a href="${GAME_BASE}/user/${encodeURIComponent(r.manager.user)}" target="_blank" rel="noopener">${escapeHtml(r.profile.username || `User ${r.manager.user.slice(-6)}`)}</a>`
+          : 'Profile not loaded';
+        const login = ago(r.profile?.dates?.lastConnectionAt);
+        const care = ago(r.profile?.dates?.lastManagerCareAt);
+        const when = kind === 'unk' || !r.profile
+          ? '<b>Unknown</b>couldn\'t load activity'
+          : `<b title="Last login">${login ?? 'Unknown'}</b>${care ? `care ${care === 'now' ? 'just now' : `${care} ago`}` : 'care unknown'}`;
+        return `<div class="dash-mgr-row ${kind}"><i class="dash-mgr-dot ${kind}"></i>
+          <div class="dash-mgr-who"><span class="dash-mgr-name">${name}</span><span class="dash-mgr-co">${escapeHtml(r.company.name || 'Company')}</span></div>
+          <div class="dash-mgr-when">${when}</div></div>`;
+      };
+      const exceptions = [...inactive, ...unknown];
+      const list = exceptions.length ? `<div class="dash-mgr-list">${exceptions.map(row).join('')}</div>` : '';
+      const rest = active.length
+        ? `<details class="dash-more"><summary>Show ${active.length} active manager${active.length === 1 ? '' : 's'}</summary><div class="dash-mgr-list">${active.map(row).join('')}</div></details>`
+        : '';
+      const foot = vacant
+        ? `<div class="dash-mgr-foot">${vacant} ${vacant === 1 ? 'company has' : 'companies have'} no manager. <a href="#buddy-finder?u=${u}">Find a buddy →</a></div>`
+        : '';
+      setBody('clockin', head + bar + list + rest + foot);
     } catch (e) { setError('clockin', `Couldn't load managers: ${e.message}`); }
   }
 

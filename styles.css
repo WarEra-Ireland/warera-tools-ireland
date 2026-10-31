@@ -2305,6 +2305,38 @@ a.dash-pill:hover { filter: brightness(1.25); }
 .dash-more > summary::before { content: '▸ '; }
 .dash-more[open] > summary::before { content: '▾ '; }
 
+/* Managers card: inactive count, status bar, then the exceptions. */
+.dash-mgr-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; font-size: 13px; color: var(--muted); }
+.dash-mgr-big { font-size: 26px; font-weight: 700; line-height: 1; color: var(--text); font-variant-numeric: tabular-nums; }
+.dash-mgr-big.dash-neg { color: var(--danger); }
+.dash-mgr-bar { display: flex; gap: 2px; height: 8px; margin: 12px 0 6px; border-radius: 999px; overflow: hidden; }
+.dash-mgr-bar i { display: block; }
+.dash-mgr-bar .ok { background: var(--accent); }
+.dash-mgr-bar .bad { background: var(--danger); }
+.dash-mgr-bar .unk { background: repeating-linear-gradient(45deg, var(--muted) 0 3px, transparent 3px 6px); }
+.dash-mgr-keys { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 11.5px; color: var(--muted); }
+.dash-mgr-keys span { display: inline-flex; align-items: center; gap: 5px; }
+.dash-mgr-dot { display: inline-block; flex: none; width: 8px; height: 8px; border-radius: 50%; }
+.dash-mgr-dot.ok { background: var(--accent); }
+.dash-mgr-dot.bad { background: var(--danger); }
+.dash-mgr-dot.unk { width: 9px; height: 9px; border: 1.5px dashed var(--muted); box-sizing: border-box; }
+.dash-mgr-list { margin-top: 12px; }
+.dash-more .dash-mgr-list { margin-top: 0; }
+.dash-mgr-row { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-top: 1px solid var(--border); }
+.dash-mgr-who { display: grid; flex: 1; min-width: 0; }
+.dash-mgr-name, .dash-mgr-co { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dash-mgr-name { font-size: 13.5px; font-weight: 600; }
+.dash-mgr-name a { color: inherit; text-decoration: none; }
+.dash-mgr-name a:hover { text-decoration: underline; }
+.dash-mgr-co { font-size: 12px; color: var(--muted); }
+.dash-mgr-when { font-size: 12px; color: var(--muted); text-align: right; white-space: nowrap; }
+.dash-mgr-when b { display: block; font-size: 13px; color: var(--text); font-variant-numeric: tabular-nums; }
+.dash-mgr-row.bad .dash-mgr-when b { color: var(--danger); }
+.dash-mgr-row.unk .dash-mgr-when b { color: var(--muted); font-weight: 500; }
+.dash-mgr-foot { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border); font-size: 12px; color: var(--muted); }
+.dash-mgr-foot a { color: var(--link); text-decoration: none; }
+.dash-mgr-foot a:hover { text-decoration: underline; }
+
 /* Wealth area chart. */
 .dash-chart-wrap { position: relative; margin-top: 12px; }
 .dash-chart { width: 100%; height: 130px; display: block; }
