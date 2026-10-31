@@ -8,8 +8,7 @@ preview_urls = false
 [vars]
 ALLOWED_ORIGINS = "https://we.hawtre.net"
 
-# owner/repo that receives repository_dispatch events from /waitlist-update
-# and /deal-config-submit.
+# owner/repo that receives repository_dispatch events from /deal-config-submit.
 GITHUB_REPO = "hawtre/warera-tools-ireland"
 
 # Secrets

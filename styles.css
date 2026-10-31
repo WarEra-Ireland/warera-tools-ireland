@@ -1211,7 +1211,7 @@ input[type="password"]:focus { outline: none; border-color: #3a4350; }
   opacity: 0.7;
 }
 
-/* The two action cards (waitlist, find a buddy) */
+/* Buddy Finder cards */
 .bf-card {
   background: var(--panel);
   border: 1px solid var(--border);
@@ -1398,29 +1398,6 @@ input[type="password"]:focus { outline: none; border-color: #3a4350; }
   margin-top: 6px;
 }
 
-/* Next-steps panel after a successful match search */
-.bf-next-steps {
-  margin-top: 18px;
-  padding: 14px 16px;
-  background: rgba(74, 222, 128, 0.06);
-  border: 1px solid rgba(74, 222, 128, 0.25);
-  border-radius: 8px;
-}
-.bf-next-steps h3 {
-  margin: 0 0 8px;
-  font-size: 13px; font-weight: 600;
-  color: var(--accent);
-}
-.bf-next-steps ol {
-  margin: 0 0 12px;
-  padding-left: 20px;
-  color: var(--text);
-  font-size: 12.5px;
-  line-height: 1.7;
-}
-.bf-next-steps ol li { margin-bottom: 4px; }
-.bf-next-steps strong { color: var(--text); font-weight: 600; }
-
 .bf-dm-template {
   background: var(--bg);
   border: 1px solid var(--border);
@@ -1462,34 +1439,6 @@ input[type="password"]:focus { outline: none; border-color: #3a4350; }
   .bf-input-row { flex-direction: column; }
   .bf-input-row button { width: 100%; }
 }
-
-/* Waitlist pairs — surfaced matches among waitlist members */
-.bf-wl-pairs { margin-top: 16px; }
-.bf-wl-pairs.hidden { display: none; }
-.bf-wl-pairs-head {
-  margin: 0 0 10px; font-size: 14px; font-weight: 600;
-  color: var(--text);
-}
-.bf-wl-pairs-head .bf-count {
-  color: var(--muted); font-weight: 400; font-size: 12px;
-}
-.bf-wl-pair {
-  background: var(--panel-2); border: 1px solid var(--border);
-  border-radius: 8px; padding: 12px; margin-bottom: 10px;
-}
-.bf-wl-pair:last-child { margin-bottom: 0; }
-.bf-wl-pair-players {
-  display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
-}
-@media (max-width: 600px) {
-  .bf-wl-pair-players { grid-template-columns: 1fr; }
-}
-.bf-wl-pair-hint {
-  margin-top: 10px; padding-top: 10px;
-  border-top: 1px solid var(--border);
-  font-size: 12px; color: var(--muted); line-height: 1.5;
-}
-
 
 /* ═══════════════════════════════════════════════════════════════════
  *  STAGING: Unified Irish Toolkit (prototype)
@@ -2285,6 +2234,7 @@ table.dp-table th.dp-sortable .dp-sort-arrow { margin-left: 3px; opacity: .7; }
 .dash-pill.warn { background: rgba(251,191,36,.15);  color: var(--warn); }
 .dash-pill.loss { background: rgba(248,113,113,.14); color: var(--danger); }
 .dash-pill.info { background: rgba(96,165,250,.15); color: var(--link); }
+.dash-pill.muted { background: var(--panel); color: var(--muted); box-shadow: inset 0 0 0 1px var(--border); }
 
 /* Stat chips. */
 .dash-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
@@ -2387,14 +2337,6 @@ a.dash-pill:hover { filter: brightness(1.25); }
 .dash-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex: 0 0 auto; }
 .dash-chart-note { color: var(--muted); font-size: 12px; padding: 16px 4px; }
 
-/* Dashboard — buddy "why join" pitch. */
-.dash-why { margin-top: 12px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 10px; padding: 11px 13px; }
-.dash-why > strong { font-size: 12.5px; color: var(--text); }
-.dash-why ul { margin: 8px 0 0; padding-left: 2px; list-style: none; display: flex; flex-direction: column; gap: 6px; }
-.dash-why li { font-size: 12.5px; color: var(--muted); line-height: 1.45; }
-.dash-why li strong { color: var(--text); }
-.dash-why-foot { margin: 9px 0 0; font-size: 11.5px; color: var(--muted); line-height: 1.45; }
-
 /* Dashboard — wealth trend headline row (value · delta · metric name). */
 .dash-wlead-row { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 9px; margin: 12px 0 2px; }
 .dash-wdelta { font-size: 13px; font-weight: 600; }
@@ -2405,6 +2347,11 @@ a.dash-pill:hover { filter: brightness(1.25); }
 .dash-warn { display: flex; align-items: flex-start; gap: 8px; background: rgba(251,191,36,.10); border: 1px solid rgba(251,191,36,.30); border-radius: 9px; padding: 9px 11px; font-size: 12.5px; color: var(--text); line-height: 1.45; margin-bottom: 8px; }
 .dash-warn .dash-pill { flex: 0 0 auto; }
 .dash-warn strong { color: var(--warn); }
+/* Neutral variant of the notice box. */
+.dash-note { display: flex; align-items: flex-start; gap: 8px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 9px; padding: 9px 11px; font-size: 12.5px; color: var(--text); line-height: 1.45; margin-bottom: 8px; }
+.dash-note .dash-pill { flex: 0 0 auto; }
+.dash-note a { color: var(--link); text-decoration: none; }
+.dash-note a:hover { text-decoration: underline; }
 
 /* ═══════════════════════════════════════════════════════════════════
  *  ROSTER (#roster) — unlisted Irish citizens list
@@ -3460,7 +3407,14 @@ html[data-theme="light"] {
 /* Training explanations stay available without taking up paragraph space. */
 .tr-help { display: inline-block; margin: 4px 8px 8px 0; vertical-align: middle; }
 .tr-section-help { display: flex; justify-content: flex-end; margin: 0 0 6px; }
-.tr-section-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 6px; }
+.tr-pane:has(> .tr-section-help),
+.tr-pane > div:has(> .tr-section-help),
+#tr-events-out:has(> .tr-section-help) { position: relative; padding-right: 42px; }
+.tr-pane > .tr-section-help,
+.tr-pane > div > .tr-section-help,
+#tr-events-out > .tr-section-help { position: absolute; top: 0; right: 0; margin: 0; }
+.tr-pane > .tr-section-help { top: 8px; right: 8px; }
+.tr-section-heading { display: flex; min-height: 32px; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 6px; }
 .tr-section-heading > .tr-pane-title, .tr-section-heading > .tr-section-help { margin: 0; }
 .tr-section-help > .tr-help-trigger { min-width: 32px; justify-content: center; font-size: 16px; }
 .tr-help-trigger {
@@ -3564,3 +3518,21 @@ html[data-theme="light"] {
 .tr-hire-prefs ul { margin: 4px 0 0; padding-left: 18px; }
 .tr-hire-prefs li small { display: block; color: var(--muted); }
 .tr-keep-move { margin: 10px 0; padding: 8px 12px; border-left: 3px solid var(--accent); }
+
+
+.bf-match-note { color: var(--muted); font-size: 12px; line-height: 1.6; margin: 0 0 10px; }
+.bf-match-note strong { color: var(--text); }
+.bf-match-note a { color: var(--link); text-decoration: none; }
+.bf-match-note a:hover { text-decoration: underline; }
+.bf-status { display: inline-block; padding: 1px 7px; border-radius: 999px; font-size: 10.5px; font-weight: 600; }
+.bf-status.free { background: var(--accent-dim); color: var(--accent); }
+.bf-muted { color: var(--muted); }
+.bf-muted a { color: var(--muted); text-decoration: underline dotted; }
+.bf-roster a { color: var(--link); text-decoration: none; }
+.bf-roster td { font-variant-numeric: tabular-nums; }
+.bf-roster th:first-child { width: 100%; }
+.bf-roster th:not(:first-child) { padding-left: 24px; }
+.bf-roster a:hover { text-decoration: underline; }
+.bf-roster tr.bf-you td { background: var(--accent-dim); }
+.bf-sort { width: 100%; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; text-transform: inherit; text-align: inherit; cursor: pointer; }
+.bf-sort:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 2px; }

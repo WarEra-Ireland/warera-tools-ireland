@@ -213,21 +213,13 @@ One limitation, stated in the tool's how-to: `totalAfterSoftCap` is the only val
 
 ### Buddy Finder (`buddy-finder.js`)
 
-A self-service tool for Irish citizens to find a buddy-system partner, or join a waiting list. Distinct from the MoE-only Buddy System Monitor, which is an admin oversight dashboard.
+A self-service tool for the Irish buddy pool. Distinct from the MoE-only Buddy System Monitor, which is an admin oversight dashboard.
 
-> **v0.27:** players can no longer employ each other. Managing a company is the only player-to-player job left, so reciprocal buddy pairs can't form and `worker.getWorkers` is gone. This applies to Buddy System Monitor too.
+Buddies are not reciprocal pairs. Any Irish player can have a buddy managing each of their companies, while managing just one company themselves. A buddy is any Irish manager, whatever the wage. Every other company is an open slot, including one with a foreign manager.
 
-Matching pipeline: resolve the user, pull all Irish citizens and their skill profiles, pull worker rosters to detect who already employs whom, classify each mutual pair as balanced or imbalanced, then rank candidates in three tiers (waitlist members first, then members of imbalanced pairs, then everyone unpaired), sorted by skill closeness within each tier. People in balanced pairs are skipped, since pairing them would break a working arrangement.
+Each search scans the whole pool: every Irish citizen's profile, their companies (`company.getCompanies`) and each company's manager (`manager.getByCompanyId`). Batched, that is under 20 requests for 130 citizens and 1,150 companies. A batch counts once against the game's rate limit. The API has no lookup from a player to the company they manage, so the scan is also what shows whether a player already manages an Irish company. It cannot see Irish players managing foreign companies. A failed profile, company list or contract stops the search rather than miscounting slots. `manager-core.js` holds the pool and ranking logic.
 
-A player's max daily output is estimated as `production * energy * 0.343`, where 0.343 is an empirical constant (roughly 10% energy regen per hour times about 7 energy per work action). Two players are a "close match" if their daily outputs are within 15% of each other.
-
-#### The waiting list
-
-The waiting list is backed by a `waitlist.json` file in the [`R00ted-82/warera-tools-ireland`](https://github.com/R00ted-82/warera-tools-ireland) GitHub repo.
-
-Reads hit the GitHub contents API with a cache-buster. This endpoint refreshes within seconds of a commit, unlike the raw or jsDelivr endpoints which cache for hours. Writes POST to the Worker's `/waitlist-update` route, which fires a `repository_dispatch` with the PAT attached server-side, and a GitHub Action then edits the file.
-
-That Action introduces roughly a one-minute lag between a submit and the name appearing. This is intentional and free; the UI warns users about it. Don't write to GitHub directly from the client; that would leak the token.
+Results are a sortable table of every active Irish player. Management available is a player's Management when they can take a manager job: level 10 or above and not managing an Irish company. Manager jobs available is how many of their companies have no Irish manager. The table starts with the most jobs available, breaking ties by players free to manage, then higher Management, then username. The dashboard's Buddy Finder card shows the player's buddies, open slots and the top players free to manage.
 
 ### Ireland Donation Draw (`donation-draw.js`)
 
@@ -268,14 +260,13 @@ A searchable, timezone-aware log of region bunker activity for the BEER alliance
 All game data comes through one Cloudflare Worker at `warera-proxy.0x5ca1ab1e.workers.dev`. Its source lives in `worker/` — see `worker/README.md` for deploying it. It exposes these routes:
 
 - `/trpc/*` proxies the live War Era tRPC API at `api2.warera.io`, injecting the game API token.
-- `/waitlist-update` mutates the Buddy Finder waiting list (see below).
 - `/deal-config-submit` creates a tax deal. Its dashboard is paused for v0.27 and the workflow is disabled.
 - `/notify-discord` forwards a message to the Battle Orders Discord webhook (held as a Worker secret).
 - `/healthz` reports whether the game API token is configured.
 
 The old Worker also carried a `/monitored-update` route for a wealth-monitor watch-list. Nothing called it and no workflow received it, so it was not carried over.
 
-The Worker holds the secrets — the game API token, and the GitHub PAT for the waitlist and deal routes. The browser never sees them. The whole site otherwise runs client-side and stores nothing about users, except the username and user ID of people who opt into the waiting list.
+The Worker holds the secrets — the game API token, and the GitHub PAT for the deal route. The browser never sees them. The whole site otherwise runs client-side and stores nothing about users.
 
 Endpoints currently in use, for reference:
 

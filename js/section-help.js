@@ -19,7 +19,7 @@ function wireSectionHelp() {
   };
   const position = () => {
     if (!active) return;
-    if (!active.isConnected || (active.closest('.view') && !active.closest('.view').classList.contains('active'))) { close(); return; }
+    if (!active.isConnected) { close(); return; }
     const tip = active.querySelector('.section-help-content');
     const button = active.querySelector('button');
     if (!button.getClientRects().length) { close(); return; }

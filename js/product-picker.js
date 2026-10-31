@@ -794,7 +794,7 @@ const ProductPickerTool = (() => {
   $username.addEventListener('keydown', e => { if (e.key === 'Enter') run(); });
 
   return {
-    ITEMS, loadModel, productRows, companyPlan, incomeSummary, selfWorkProjection,
+    ITEMS, tradePrices, margin, loadModel, productRows, companyPlan, incomeSummary, selfWorkProjection,
     /**
      * Called by the router (or the home shell) whenever the view becomes
      * active. Re-runs only when ?u= differs from the loaded name.

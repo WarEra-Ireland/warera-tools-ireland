@@ -25,12 +25,10 @@
 # NOT prove the home country agreed to these exact rebate terms — that
 # trust is placed entirely in the password holder, by design choice.
 #
-# Same pattern as .github/workflows/update-waitlist.yml: a Cloudflare Worker
-# route (not part of this repo) holds the GitHub PAT server-side and fires
-# this repository_dispatch; the client never sees the token. That Worker
-# route needs to be added separately (mirroring its existing
-# /waitlist-update route) — see js/tax-deal-dashboard.js for the exact
-# client payload shape this workflow expects.
+# The Worker's /deal-config-submit route (worker/src/index.js) holds the
+# GitHub PAT server-side and fires this repository_dispatch; the client never
+# sees the token. See js/tax-deal-dashboard.js for the exact client payload
+# shape this workflow expects.
 
 name: Deal config submit
 

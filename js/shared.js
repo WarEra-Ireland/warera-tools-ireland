@@ -63,7 +63,7 @@ const IRELAND_COUNTRY_ID = '6813b6d446e731854c7ac7fe';
  *  this page load only. Delete a route from this set once it's rebuilt.
  */
 const V027_PAUSED = new Set([
-  'buddy-finder', 'profit', 'profit-dev', 'sp-advisor', 'factory-tax',
+  'profit', 'profit-dev', 'sp-advisor', 'factory-tax',
   'buddy', 'tax', 'tax-dev', 'tax-partner', 'tax-deals', 'partner-guide',
 ]);
 const isPaused = view => V027_PAUSED.has(view);

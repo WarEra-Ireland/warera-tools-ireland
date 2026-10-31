@@ -20,7 +20,7 @@
  *                    deductions are conditional, so they belong to the full
  *                    tool at #profit, which has controls for them)
  *    💰 Wealth      — current total, 7-day delta, gradient area chart
- *    🤝 Buddy       — reciprocal-pair status; join CTA if not in one
+ *    🤝 Buddy       — buddies, open slots and players free to manage
  *    🔫 Military Unit— Irish-MU status; join CTA if not in one
  *
  *  This page is deliberately NOT linked from the home view — reached only
@@ -126,7 +126,7 @@ const DashboardTool = (() => {
     { key: 'clockin',   icon: '⏱',  title: 'Managers',      href: '#clockin' },
     { key: 'profit',    icon: '📈', title: 'Daily Profit',  href: '#profit'  },
     { key: 'wealth',    icon: '💰', title: 'Wealth Trend',  href: '#wealth'  },
-    { key: 'buddy',     icon: '🤝', title: 'Buddy System',  href: '#buddy-finder' },
+    { key: 'buddy',     icon: '🤝', title: 'Buddy Finder',  href: '#buddy-finder' },
     { key: 'mu',        icon: '🔫', title: 'Military Unit', href: '#mu'      },
   ];
 
@@ -384,44 +384,35 @@ const DashboardTool = (() => {
   }
 
   /* ── Card: Buddy system ──────────────────────────────────────────── */
-  async function fillBuddy(full, workersP) {
-    const joinCta = `<a class="dash-cta" href="#buddy-finder?u=${encodeURIComponent(full.username)}">Find a buddy →</a>`;
-    // Pitch: the buddy system is close to free money, so make the upside obvious.
-    const why = `
-      <div class="dash-why">
-        <strong>Why buddy up? It's basically free production:</strong>
-        <ul>
-          <li>👷 You instantly gain an extra worker in your company — more production points every single day.</li>
-          <li>💸 You hire each other at <strong>minimum wage</strong>, so the wages just circle back between you — near-zero real cost.</li>
-          <li>📈 More output means more profit and a faster climb up the rankings — for both of you.</li>
-          <li>🇮🇪 It strengthens the whole Irish economy. We grow faster together.</li>
-        </ul>
-        <p class="dash-why-foot">Takes 30 seconds: get matched with a player at your level, message them, and you each post a minimum-wage job. That's it.</p>
-      </div>`;
-    const notIn = (reason) => {
-      setHref('buddy', `#buddy-finder?u=${encodeURIComponent(full.username)}`);
-      setBody('buddy', `${pill('Not in the buddy system', 'warn')}<div class="dash-sub">${reason}</div>${why}${joinCta}`);
-    };
+  // The Irish buddy pool: buddies (Irish managers), open slots, the
+  // player's own manager job, and the players free to manage, most open
+  // slots first, using Buddy Finder's own scan.
+  async function fillBuddy(full) {
+    const u = encodeURIComponent(full.username);
     try {
-      if (!full.company) { notIn('You have no energy job. A buddy hires you (and you hire them) at minimum wage, so both your companies get a free-ish worker.'); return; }
-      const jobCo = await db_trpc('company.getById', { companyId: full.company }).catch(() => null);
-      const employer = jobCo?.user || jobCo?.owner || null;
-      if (!employer || employer === full._id) { notIn('Your energy job is in your own company — no reciprocal buddy yet.'); return; }
-
-      const workersData = await workersP;
-      const myWorkerIds = new Set();
-      (workersData?.workersPerCompany || []).forEach(({ workers }) =>
-        (workers || []).forEach(w => { const id = w?.user || (typeof w === 'string' ? w : null); if (id) myWorkerIds.add(id); }));
-
-      if (myWorkerIds.has(employer)) {
-        const partner = await db_trpc('user.getUserLite', { userId: employer }).catch(() => null);
-        const pName = partner?.username || 'your buddy';
-        setBody('buddy', `${pill('🤝 In a buddy pair', 'ok')}
-          <div class="dash-sub">Reciprocal hire with <a href="${GAME_BASE}/user/${escapeHtml(employer)}" target="_blank" rel="noopener">${escapeHtml(pName)}</a> — you each employ the other.</div>`);
-      } else {
-        notIn('You work for someone who doesn\'t employ you back — that\'s not a reciprocal buddy pair.');
-      }
-    } catch (e) { setError('buddy', `Couldn't check buddy status: ${e.message}`); }
+      const { mine, roster } = await BuddyFinderTool.loadBuddyPool(full);
+      const n = mine.buddies.length;
+      setNote('buddy', `${mine.openSlots} open slot${mine.openSlots === 1 ? '' : 's'}`);
+      const link = b => `<a href="${GAME_BASE}/user/${escapeHtml(b._id)}" target="_blank" rel="noopener">${escapeHtml(b.username)}</a>`;
+      const job = mine.job
+        ? ` You manage a company for ${mine.employer ? link(mine.employer) : 'an Irish player'}.`
+        : ' You are free to manage a company for someone.';
+      const status = n
+        ? `<div class="dash-statline">${pill(`🤝 ${n} ${n === 1 ? 'buddy' : 'buddies'}`, 'ok')}</div>`
+        : `<div class="dash-note">${pill('No buddies', 'muted')}<span>You could use some buddies${mine.companies > 1 ? `, one for each of your ${mine.companies} companies` : ''}.${job}</span></div>`;
+      const free = roster.filter(p => p.id !== full._id && ManagerCore.canManage(p)).sort(ManagerCore.rankRoster);
+      const row = (p, i) => `<div class="dash-row">
+          <div class="dash-row-main">
+            <div class="dash-row-title"><span class="dash-rank">${i + 1}</span><a href="${GAME_BASE}/user/${escapeHtml(p.user._id)}" target="_blank" rel="noopener"><strong>${escapeHtml(p.user.username)}</strong> ↗</a></div>
+            <span class="dash-top-v">${ManagerCore.points(p.user)}<small>/11</small></span>
+          </div>
+          <div class="dash-sub small">${p.openSlots} of ${p.companies} manager job${p.companies === 1 ? '' : 's'} available</div>
+        </div>`;
+      const list = free.length
+        ? `<div class="dash-top"><div class="dash-top-h">Free to manage<span>${free.length} player${free.length === 1 ? '' : 's'}, most jobs available first</span></div><div class="dash-rows">${free.slice(0, 3).map(row).join('')}</div></div>`
+        : '<div class="dash-sub">No Irish players are free to manage right now.</div>';
+      setBody('buddy', `${status}${list}<a class="dash-cta" href="#buddy-finder?u=${u}">See the Irish roster →</a>`);
+    } catch (e) { setError('buddy', `Couldn't load the buddy pool: ${e.message}`); }
   }
 
   /* ── Card: Clock-In ──────────────────────────────────────────────── */
@@ -737,13 +728,14 @@ const DashboardTool = (() => {
       renderScaffold(full.username);
       rememberLoadedAccount(full.username);
 
-      // The buddy and economy cards still depend on the removed worker API.
+      // The economy card still depends on the removed worker API.
       fillClockin(full);
       fillWealth(full);
       fillMU(full);
       fillMigration(full);
       fillProducts(full);
       if (!isPaused('training')) fillTraining(full);
+      fillBuddy(full);
     } catch (e) {
       $grid.innerHTML = '';
       const friendly = isTransientError(e)

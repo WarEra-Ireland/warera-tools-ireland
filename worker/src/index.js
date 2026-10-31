@@ -7,7 +7,6 @@
  *  not send. Routes:
  *
  *    /trpc/*             -> https://api2.warera.io/trpc/*   (+ x-api-key)
- *    /waitlist-update    -> GitHub repository_dispatch: waitlist-update
  *    /deal-config-submit -> GitHub repository_dispatch: deal-config-submit
  *    /notify-discord     -> Discord webhook
  */
@@ -394,9 +393,6 @@ export default {
       const keys = apiKeys(env);
       if (!keys.length) return json({ error: 'game API token not configured' }, 503, origin);
       return proxy(request, env, origin, GAME_API, '/trpc', keys);
-    }
-    if (url.pathname === '/waitlist-update') {
-      return dispatch(request, env, origin, 'waitlist-update');
     }
     if (url.pathname === '/deal-config-submit') {
       return dispatch(request, env, origin, 'deal-config-submit');

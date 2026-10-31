@@ -53,7 +53,7 @@ const ToolkitShell = (() => {
     advisor:        { icon: '🏭', title: 'Migration Advisor', desc: `Find your companies outside Ireland, what their wage tax funds abroad, and what moving home is worth.` },
     clockin:        { icon: '⏱',  title: 'Manager Check-In',  desc: `Check your company managers, their activity, last login and hourly pay.` },
     wealth:         { icon: '💰', title: 'Wealth Tracker',    desc: `Track any Irish player's wealth over time — total, or split into companies, items, money, equipment and weapons.` },
-    'buddy-finder': { icon: '🤝', title: 'Buddy Finder',      desc: `Find a buddy for the Irish buddy system (you hire each other at minimum wage), or join the waiting list.` },
+    'buddy-finder': { icon: '🤝', title: 'Buddy Finder',      desc: `See your open buddy slots and which Irish players can fill them.` },
     products:       { icon: '🎯', title: 'Top products',    desc: `Compare product margins from the latest market trades. Rankings change, and switching affects employee specialisation and trait bonuses.` },
     profit:         { icon: '📈', title: 'Daily Profit',      desc: `Your projected daily profit — companies, salary, missions and case sales — plus which products pay best per production point.` },
     mu:             { icon: '🇮🇪', title: 'Irish Military Units', desc: `Military Units owned by Irish citizens, based in Ireland, with a majority-Irish roster.` },
@@ -124,19 +124,6 @@ const ToolkitShell = (() => {
   }
   function restoreAll() { TOOLS.forEach(restore); }
 
-  /* ── Secondary input sync ───────────────────────────────
-   *  The tools drive their run decision off their PRIMARY input and update
-   *  it themselves on activate(), so the shell must NOT pre-set those (the
-   *  tool would see no change and skip loading). But buddy-finder's
-   *  waitlist input is a separate field it only fills when empty, so it
-   *  keeps a stale name when the shell switches users. That field is safe
-   *  to write directly (it isn't used for any run decision), so push the
-   *  current name into it here. */
-  function syncSecondaryInputs(name) {
-    const wl = document.getElementById('bf-waitlist-username');
-    if (wl) wl.value = name || '';
-  }
-
   /* ── Nav overflow fade ──────────────────────────────────
    *  Show a right-edge fade while there are pills off-screen, hide it once
    *  scrolled to the end (or when nothing overflows). Pure affordance. */
@@ -183,7 +170,6 @@ const ToolkitShell = (() => {
           if (u) {
             state.username = u;            // adopt the canonical casing
             rememberUsername(u);
-            syncSecondaryInputs(u);
           }
           const params = new URLSearchParams();
           if (u) params.set('u', u);
@@ -341,7 +327,6 @@ const ToolkitShell = (() => {
     state.pendingTool = null;
     state.username = '';
     $username.value = '';
-    syncSecondaryInputs('');
     $nav.querySelectorAll('.stg-tab').forEach(b => b.classList.remove('active'));
     gateTools();
     // No hash rewrite here: the brand's href="#home" fires the navigation,
@@ -435,7 +420,6 @@ const ToolkitShell = (() => {
     // Not saved to the recent list here — the name isn't verified yet.
     // Saving on Load is what let typos land in the list. The recent list
     // is committed only when a tool successfully resolves (hash guard).
-    syncSecondaryInputs(u);          // immediate; canonical overwrites later
     revealTools();
     if (!state.active) selectTool(state.pendingTool || DEFAULT_AFTER_LOAD);
     else driveActive();              // re-run current tool with the new name
@@ -513,7 +497,6 @@ const ToolkitShell = (() => {
         // the tool's hash rewrite commits it; if not, it stays out.
         $username.value = u;
         state.username = u;
-        syncSecondaryInputs(u);
         revealTools();
         selectTool(tool || state.active || DEFAULT_AFTER_LOAD);
       } else {

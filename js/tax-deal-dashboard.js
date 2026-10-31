@@ -18,7 +18,7 @@
  *  gate just controls what the UI shows/links to.
  *
  *  Deal creation ("Propose a deal") posts to a repository_dispatch-backed
- *  Worker route, mirroring js/buddy-finder.js's waitlist-update pattern.
+ *  Worker route that holds the GitHub PAT server-side.
  *  Once the host country's password checks out (see
  *  .github/workflows/deal-config-submit.yml), the deal is auto-enabled
  *  and deal-log.yml's push trigger captures its first daily snapshot
@@ -269,9 +269,7 @@ const TaxDealDashboardTool = (() => {
   }
 
   // Worker route that fires repository_dispatch (type: deal-config-submit)
-  // with the GitHub PAT attached server-side. This route does not exist yet
-  // on the warera-proxy Worker — it needs to be added there (mirroring the
-  // existing /waitlist-update route) before "Propose a deal" will work.
+  // with the GitHub PAT attached server-side (worker/src/index.js).
   const DEAL_SUBMIT_URL = `${WORKER_BASE}/deal-config-submit`;
 
   // Paper "Send money to country" transfer tax — 50% (paper units) to
@@ -692,8 +690,7 @@ const TaxDealDashboardTool = (() => {
     };
 
     try {
-      // Flat payload — same convention as js/buddy-finder.js's
-      // dispatchWaitlistUpdate(). The Worker wraps this into GitHub's
+      // Flat payload. The Worker wraps this into GitHub's
       // { event_type, client_payload } shape server-side before firing the
       // repository_dispatch; the client never touches that envelope.
       const res = await fetch(DEAL_SUBMIT_URL, {

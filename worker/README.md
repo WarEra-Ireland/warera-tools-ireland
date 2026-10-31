@@ -10,7 +10,6 @@ headers the upstream APIs don't send.
 | Path | Upstream | Token |
 |------|----------|-------|
 | `/trpc/*` | `https://api2.warera.io/trpc/*` | injects `x-api-key` from the key pool |
-| `/waitlist-update` | GitHub `repository_dispatch` → `waitlist-update` | `$GITHUB_DISPATCH_TOKEN` |
 | `/deal-config-submit` | GitHub `repository_dispatch` → `deal-config-submit` | `$GITHUB_DISPATCH_TOKEN` |
 | `/notify-discord` | `$DISCORD_WEBHOOK_URL` | webhook URL is the secret |
 | `/healthz` | - | reports pool size and how many keys are cooling |
@@ -106,7 +105,7 @@ pnpm install -g wrangler # or pnpx wrangler
 wrangler login
 
 wrangler secret put WARERA_API_KEYS         # required (comma-separated)
-wrangler secret put GITHUB_DISPATCH_TOKEN   # optional (waitlist + deal submit)
+wrangler secret put GITHUB_DISPATCH_TOKEN   # optional (deal submit)
 wrangler secret put DISCORD_WEBHOOK_URL     # optional
 
 wrangler deploy
