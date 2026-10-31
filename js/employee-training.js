@@ -145,7 +145,7 @@ const EmployeeTrainingTool = (() => {
   // The background planner's latest result (EmployeeAssignments onResult).
   let plan = null;
   // Cards marked as taken since the last load: employee id → { text, rolled }.
-  // Their records in `team` already carry the card (EmployeeCore.takeCard).
+  // A recorded choice invalidates advice until the next server snapshot.
   const taken = new Map();
 
   const readRecent = () => { try { const a = JSON.parse(localStorage.getItem(RECENT_KEY) || '[]'); return Array.isArray(a) ? a.filter(x => typeof x === 'string') : []; } catch { return []; } };
@@ -166,15 +166,15 @@ const EmployeeTrainingTool = (() => {
   /* ── Market: product margins over the PP value ───────────── */
   async function loadMarket() {
     const [ppValue, config, country] = await Promise.all([
-      trpc('gameStat.getPpMoneyValue', null, { retry: true }),
-      trpc('gameConfig.getGameConfig', {}, { retry: true }),
-      trpc('country.getCountryById', { countryId: IRELAND }, { retry: true }).catch(() => null),
+      trpc('gameStat.getPpMoneyValue', null, { retry: true, fresh: true }),
+      trpc('gameConfig.getGameConfig', {}, { retry: true, fresh: true }),
+      trpc('country.getCountryById', { countryId: IRELAND }, { retry: true, fresh: true }).catch(() => null),
     ]);
     const items = config?.items || {};
     const codes = Object.keys(items).filter(c => items[c]?.productionPoints);
     const pages = await trpcManyValues('transaction.getPaginatedTransactions', codes.map(itemCode => ({
       transactionType: 'trading', itemCode, limit: PRICE_SAMPLE_TRADES,
-    })));
+    })), { fresh: true });
     const cutoff = Date.now() - PRICE_MAX_AGE_MS;
     const price = {};
     pages.forEach((page, i) => {
@@ -198,6 +198,16 @@ const EmployeeTrainingTool = (() => {
     }).sort((a, b) => b.ratio - a.ratio);
     const types = Object.fromEntries(codes.map(c => [c, items[c].type]));
     return { ppValue: ppValue > 0 ? ppValue : null, list, types };
+  }
+  let marketPending = false;
+  function refreshMarket() {
+    if (marketPending) return marketLoad;
+    marketPending = true;
+    marketLoad = loadMarket()
+      .then(m => { market = m; })
+      .catch(err => { console.warn('[training] product prices failed', err); market = { ppValue: null, list: [], types: {} }; })
+      .finally(() => { marketPending = false; });
+    return marketLoad;
   }
   const productFor = code => market?.list.find(p => p.code === code) || null;
 
@@ -399,6 +409,7 @@ const EmployeeTrainingTool = (() => {
   function employeeOf(inp) {
     return {
       ...EC.DEFAULT_EMPLOYEE,
+      nationality: inp.nationality, productionEvents: inp.productionEvents,
       age: inp.age, production: inp.production, extraProduction: inp.extraProduction,
       responsibility: inp.responsibility, luck: inp.luck,
       bonus: inp.bonusPct / 100, traitBonus: (inp.traitBonusPct || 0) / 100, specialization: inp.specPct, wageExpectation: 1 + inp.wagePct / 100,
@@ -412,7 +423,7 @@ const EmployeeTrainingTool = (() => {
     return {
       ...EC.DEFAULT_CONTEXT, management: inp.management, sellRatio: product?.ratio ?? 1,
       coworkerOutput: inp.coworkerOutput ?? undefined,
-      situation: { ...inp.sit, itemType, product: product ? inp.product : null },
+      situation: { ...inp.sit, itemType, product: inp.sit.product ?? (product ? inp.product : null) },
     };
   }
   const employee = () => employeeOf(input);
@@ -446,13 +457,13 @@ const EmployeeTrainingTool = (() => {
         const url = document.getElementById('tr-assignments-body').dataset.worker;
         return new Worker(`${url}&core=${tag('employee-core')}&planner=${tag('employee-planner')}`);
       },
-      onUpdate: () => { renderResult(); renderTeam(); },
+      onUpdate: () => { renderResult(); renderTeam(); renderFire(); },
     });
     const settings = assignments?.cardSettings();
     const revision = JSON.stringify([team, market, settings]);
     if (revision !== cardRevision) {
       cardRevision = revision;
-      const prepared = settings ? EmployeeAssignments.snapshotOf(team, market, settings) : { errors: ['No workforce loaded.'] };
+      const prepared = settings && !taken.size ? EmployeeAssignments.snapshotOf(team, market, settings) : { errors: ['No workforce loaded.'] };
       cardPricer.reset(revision, prepared.errors.length ? null : { ...prepared.snapshot, ppValue: market.ppValue });
     }
     return cardPricer;
@@ -478,7 +489,7 @@ const EmployeeTrainingTool = (() => {
   // The batch keys match selectedPricing's, which then reuses them.
   let prefetched = null, prefetchKeys = [];
   function prefetchHands() {
-    if (!team || plan?.running) return;
+    if (!team || taken.size || plan?.running) return;
     const pricer = prepareCardPricing();
     const revision = JSON.stringify([cardRevision, pricer.generation, plannedTools(), [...taken.keys()]]);
     if (prefetched === revision) return;
@@ -503,7 +514,7 @@ const EmployeeTrainingTool = (() => {
   function pricingLabel(batch, group = batch.result?.groups[0]) {
     if (batch.status === 'pending') return 'Recalculating arrangements; current-company values shown. Choice pending.';
     if (batch.status === 'fallback') return `Current-company fallback: ${batch.reason}`;
-    return `Rearranged estimate over ${group.horizon} workforce days. ${group.coverage.tested} of ${group.coverage.total} local arrangements tested; tools can be reassigned. Without the card assumes ${group.baseline.description}. No future hires or training. Second Wind is a numeric-training forecast. ${group.warnings.join(' ')}`;
+    return `Rearranged estimate over ${group.horizon} workforce days. ${group.coverage.tested} of ${group.coverage.total} local arrangements tested; tools can be reassigned. Without the card assumes ${group.baseline.description}. No future hires. Second Wind and Luck include forecasts of future training using current card values. ${group.warnings.join(' ')}`;
   }
   function quoteDetail(q) {
     if (q.value === null) return q.note || 'Not priced.';
@@ -634,9 +645,10 @@ const EmployeeTrainingTool = (() => {
     if (!findEmployee(input.pick)) return;
     const t = taken.get(input.pick);
     if (t) {
-      $calc.innerHTML = `<p class="tr-emp-took" role="status" tabindex="-1"><strong>Took ${escapeHtml(t.text)}.</strong> Estimates updated locally. This does not choose a card in the game. <button type="button" class="tr-link" data-reload>Reload from the game</button> to ${t.rolled.length ? `fetch the actual ${escapeHtml(t.rolled.join(' and '))} and ` : ''}replace these estimates with current game data. Next training at 00:00 UTC.</p>`;
+      $calc.innerHTML = `<p class="tr-emp-took" role="status" tabindex="-1"><strong>Took ${escapeHtml(t.text)}.</strong> This records your choice; it does not choose a card in the game. Recommendations are paused until you reload. <button type="button" class="tr-link" data-reload>Reload from the game</button> to ${t.rolled.length ? `fetch the actual ${escapeHtml(t.rolled.join(' and '))} and ` : ''}fetch updated employee stats and training availability.</p>`;
       return;
     }
+    if (taken.size) { $calc.innerHTML = '<p class="tr-warn">Reload from the game after the recorded training choice before comparing more cards.</p>'; return; }
     const e = employee();
     const ctx = context();
     const days = EC.workingDays(e);
@@ -744,7 +756,7 @@ const EmployeeTrainingTool = (() => {
       energyBar: { value: user.skills?.energy?.currentBarValue ?? null, max: user.skills?.energy?.total ?? null,
         regen: user.skills?.energy?.hourlyBarRegen ?? 0, at: Date.now() },
       companies: companies.map((company, i) => ({ company,
-        employees: (Array.isArray(rosters[i]) ? rosters[i] : []).map(e => ({ ...e, traits: EC.currentTraits(e.traits) })), rosterMissing: !Array.isArray(rosters[i]),
+        employees: (Array.isArray(rosters[i]) ? rosters[i] : []).filter(e => !e.leftAt).map(e => ({ ...e, traits: EC.currentTraits(e.traits) })), rosterMissing: !Array.isArray(rosters[i]),
         estimate: estimates[i] || null, region: regionById[company.region] || null,
         incomeTax: incomeTax[regionById[company.region]?.country],
         managerPct: managers[i]?.status === 'fulfilled' ? managers[i].value?.productionBonusPercent || 0 : null })),
@@ -768,6 +780,10 @@ const EmployeeTrainingTool = (() => {
     const expectation = paidPerHour > 0 ? emp.wage / paidPerHour : emp.wageExpectation;
     return {
       age: emp.age,
+      nationality: emp.nationality,
+      productionEvents: (emp.productionBonus?.contributions || [])
+        .filter(c => c.source === 'event' && c.until)
+        .map(c => ({ delta: c.percent || 0, hours: Math.max(0, (Date.parse(c.until) - Date.now()) / 36e5) })),
       production: hired,
       extraProduction: total - hired,
       responsibility: emp.breakdown?.responsibility?.total ?? emp.base?.responsibility ?? 0,
@@ -790,10 +806,31 @@ const EmployeeTrainingTool = (() => {
 
   // Where the employee works, from the company's roster and region, for
   // pricing traits.
-  // Stronger and weaker (Rival, Mentor) compare hired + trained Production,
-  // before traits: Levi Rosenbaum (3, Rival +3 = 6) keeps Rival next to a
-  // coworker on 5 (checked 2026-10-27).
   const paidProd = x => x.base?.production ?? 0;
+  const locationFor = (region, nationality) => region?.country && region?.initialCountry && nationality
+    ? EC.locationSituation(region.country, region.initialCountry, nationality)
+    : { place: 'home', homeCore: false };
+  // Keep the ordinary stat model with each peer so future age/tenure changes
+  // and card outcomes can recompute comparisons without using final API totals.
+  // Tenure is in whole days, as in situationFor: it ends up in card pricing
+  // batch keys, and a fraction of Date.now() would make every render ask the
+  // worker for a new batch, whose answer renders again.
+  function productionPeer(emp, entry) {
+    const others = entry.employees.filter(x => x._id !== emp._id);
+    const since = Date.parse(emp.lastMovedAt || emp.createdAt);
+    const situation = {
+      coworkers: others.length,
+      ...EC.nationalitySituation(emp.nationality, others),
+      ...locationFor(entry.region, emp.nationality),
+      itemType: market?.types?.[entry.company.itemCode] || EC.DEFAULT_SITUATION.itemType,
+      product: entry.company.itemCode,
+      tenureDays: Number.isFinite(since) ? Math.max(0, Math.floor((Date.now() - since) / 864e5)) : 0,
+      peers: others.map(x => ({ model: { age: x.age, nationality: x.nationality } })),
+    };
+    const model = { age: emp.age, nationality: emp.nationality, production: paidProd(emp), traits: emp.traits || [] };
+    return { model, situation, production: EC.comparisonProduction(model, situation),
+      wagePP: emp.wage / (market?.ppValue || 1) };
+  }
   // A happiness or bonus contribution from one of the employee's own traits.
   const ownTrait = c => !!c.code || c.reason === 'trait' || c.source === 'trait' || !!EC.TRAIT[c.source];
   // The part of today's production bonus the employee's own traits give:
@@ -820,7 +857,7 @@ const EmployeeTrainingTool = (() => {
   function situationFor(emp, entry, { models = true, self = null } = {}) {
     const { company, employees, region } = entry;
     const others = employees.filter(x => x._id !== emp._id);
-    const own = paidProd(emp);
+    const own = productionPeer(emp, entry).production;
     const contributions = emp.happinessBreakdown?.contributions || [];
     const p = productFor(company.itemCode);
     const outputs = others.map(x => x.estimate?.production).filter(v => typeof v === 'number');
@@ -833,21 +870,23 @@ const EmployeeTrainingTool = (() => {
       coworkerOutput: outputs.length ? outputs.reduce((a, v) => a + v, 0) / outputs.length * (p?.ratio ?? 1) : null,
       sit: {
         ...EC.DEFAULT_SITUATION,
+        nationality: nat,
         gender: emp.gender === 'female' ? 'female' : 'male',
         coworkers: others.length,
+        coworkerIds: others.map(x => x._id),
         femaleCoworkers: others.filter(x => x.gender === 'female').length,
-        otherNationalities: new Set(others.map(x => x.nationality).filter(n => n && n !== nat)).size,
-        strongerCoworker: others.some(x => paidProd(x) > own),
-        weakerCoworker: others.some(x => paidProd(x) < own),
+        ...EC.nationalitySituation(nat, others),
+        ...EC.productionStanding(own, others.map(x => productionPeer(x, entry).production)),
         betterPaid: others.filter(x => x.wage > emp.wage).length,
         coworkerHappiness: others.length && others.every(x => typeof x.happinessBreakdown?.value === 'number')
           ? others.reduce((a, x) => a + x.happinessBreakdown.value, 0) / others.length : null,
-        peers: market?.ppValue ? others.map(x => ({ production: paidProd(x), wagePP: x.wage / market.ppValue, ...(x._id === self ? { self: true } : {}) })) : null,
+        peers: market?.ppValue ? others.map(x => ({ ...productionPeer(x, entry), ...(x._id === self ? { self: true } : {}) })) : null,
         coworkerModels: market?.ppValue && models ? others.map(x => {
           const inp = inputsFor(x, entry, { models: false, self: emp._id });
           return { e: employeeOf(inp), ctx: contextOf(inp) };
         }) : null,
-        place: !region ? EC.DEFAULT_SITUATION.place : region.country !== nat ? 'abroad' : region.initialCountry === nat ? 'homeCore' : 'home',
+        ...locationFor(region, nat),
+        product: company.itemCode,
         itemType: market?.types?.[company.itemCode] || EC.DEFAULT_SITUATION.itemType,
         incomeTax: -(contributions.find(c => c.reason === 'incomeTax')?.delta || 0),
         tenureDays: Number.isFinite(since) ? Math.max(0, Math.floor((Date.now() - since) / 864e5)) : 0,
@@ -895,8 +934,10 @@ const EmployeeTrainingTool = (() => {
     const { company, employees, region } = entry;
     const p = productFor(company.itemCode);
     const coreBonus = region && region.initialCountry === region.country;
-    const place = !region || !nationality ? 'home' : region.country !== nationality ? 'abroad' : region.initialCountry === nationality ? 'homeCore' : 'home';
-    const hired = employees.map(paidProd);
+    const location = locationFor(region, nationality);
+    const joined = { ...entry, employees: [...employees, { _id: 'newcomer', age: 20, nationality, gender,
+      base: { production }, wage: wage ?? production / 4 * (market?.ppValue || 1), traits: [] }] };
+    const peers = employees.map(x => productionPeer(x, joined));
     const outputs = employees.map(x => x.estimate?.production).filter(v => typeof v === 'number');
     // A newcomer shares the company's lasting losses, not a coworker's temporary ones.
     const losses = employees.map(x => lifeLoss(x, { lasting: true, shared: true }));
@@ -911,18 +952,18 @@ const EmployeeTrainingTool = (() => {
       coworkerOutput: outputs.length ? outputs.reduce((a, v) => a + v, 0) / outputs.length * (p?.ratio ?? 1) : undefined,
       situation: {
         ...EC.DEFAULT_SITUATION,
-        gender,
+        gender, nationality,
         coworkers: employees.length,
+        coworkerIds: employees.map(x => x._id),
         femaleCoworkers: employees.filter(x => x.gender === 'female').length,
-        otherNationalities: new Set(employees.map(x => x.nationality).filter(n => n && n !== nationality)).size,
-        strongerCoworker: hired.some(v => v > production),
-        weakerCoworker: hired.some(v => v < production),
-        peers: market?.ppValue ? employees.map(x => ({ production: paidProd(x), wagePP: x.wage / market.ppValue })) : null,
+        ...EC.nationalitySituation(nationality, employees),
+        ...EC.productionStanding(production, peers.map(p => p.production)),
+        peers: market?.ppValue ? peers : null,
         coworkerModels: null,
         betterPaid: wage == null ? employees.filter(x => (x.base?.production || 0) > production).length : employees.filter(x => x.wage > wage).length,
-        place,
+        ...location,
         itemType: market?.types?.[company.itemCode] || EC.DEFAULT_SITUATION.itemType,
-        product: p ? company.itemCode : null,
+        product: company.itemCode,
         incomeTax: tax.length ? Math.max(...tax) : 0,
         smallStorage: (company.activeUpgradeLevels?.storage ?? 0) <= 2,
         storageFull: !!company.isFull,
@@ -930,7 +971,7 @@ const EmployeeTrainingTool = (() => {
     };
     // The company's bonus as a coworker gets it; an empty company gets the
     // owner's management, plus the core region bonus where it applies.
-    const bonusPct = employees.length ? companyBonusPct(employees[0]) : mgmtPct + (coreBonus ? 5 : 0);
+    const bonusPct = employees.length ? companyBonusPct(employees[0]) : mgmtPct + (entry.managerPct ?? 0) + (coreBonus ? 5 : 0);
     return {
       ctx,
       opts: {
@@ -966,14 +1007,14 @@ const EmployeeTrainingTool = (() => {
     .map(x => (x.productionBonus?.contributions || []).find(c => c.source === 'management')?.percent || 0));
 
   function energyFeed() {
-    if (!team || !market) return [];
-    const rows = team.companies.flatMap(entry => entry.employees
+    if (!team || !market?.ppValue || taken.size) return [];
+    const rows = team.companies.filter(entry => !entry.rosterMissing).flatMap(entry => entry.employees
       .filter(emp => (emp.potentialMax || 0) - (emp.potential || 0) > 0).map(emp => trainRow(emp, entry)));
     rows.sort((a, b) => (b.ready - a.ready) || (b.value - a.value));
     // A hire's trainings count above what the energy earns training.
     const alt = altFrom(rows).value;
     for (const entry of team.companies) {
-      if (entry.employees.length < headcountCap(entry.company)) rows.push(hireRow(entry, alt));
+      if (!entry.rosterMissing && entry.employees.length < headcountCap(entry.company)) rows.push(hireRow(entry, alt));
     }
     return rows.sort((a, b) => (b.ready - a.ready) || (b.value - a.value));
   }
@@ -997,7 +1038,7 @@ const EmployeeTrainingTool = (() => {
     const moved = move && team.companies.find(x => x.company._id === move.to);
     if (moved) return { company: moved.company, planned: true };
     const raw = (emp.traits || []).some(t => t.code === 'laborer');
-    const fits = team.companies.filter(x => x !== entry && (market?.types?.[x.company.itemCode] === 'raw') === raw)
+    const fits = team.companies.filter(x => !x.rosterMissing && x !== entry && (market?.types?.[x.company.itemCode] === 'raw') === raw)
       .sort((a, b) => (productFor(b.company.itemCode)?.ratio ?? 0) - (productFor(a.company.itemCode)?.ratio ?? 0));
     return { company: fits[0]?.company || null, planned: false };
   }
@@ -1056,7 +1097,7 @@ const EmployeeTrainingTool = (() => {
   function energyActions() {
     const flagged = keepRows().filter(r => ['fire', 'replace'].includes(keepVerdict(r)));
     const moved = new Set(flagged.filter(r => plannedMove(r.emp._id)).map(r => r.emp._id));
-    const replace = flagged.filter(r => !moved.has(r.emp._id))
+    const replace = flagged.filter(r => !moved.has(r.emp._id) && !pendingHand(r.emp))
       .map(r => ({ kind: 'replace', value: r.gain + r.alt, emp: r.emp, entry: r.entry, keep: r, ready: true }));
     const seen = new Set();
     const ready = [...feedRows().filter(r => r.ready && !(r.kind === 'train' && pendingHand(r.emp))), ...replace]
@@ -1069,6 +1110,7 @@ const EmployeeTrainingTool = (() => {
   // energy (trainings, hires and replacements), Check (the planner, mismatches)
   // and Trained today. Each item opens the tab that acts on it.
   function nextActions() {
+    if (taken.size) return '<p class="tr-warn">A training choice was recorded. <button type="button" class="tr-link" data-reload>Reload from the game</button> before following further recommendations.</p>';
     // How many traits the employee holds, hidden ones included; names on hover.
     const traitsChip = emp => {
       const list = emp.traits || [];
@@ -1246,6 +1288,16 @@ const EmployeeTrainingTool = (() => {
     } catch { return fresh; }
   }
   let recruit = loadRecruit();
+  function syncDay(day = todayUtc()) {
+    if (recruit.day === day) return false;
+    recruit.day = day;
+    recruit.rerolls = 0;
+    recruit.cands = recruit.cands.map(blankCand);
+    feedMemo.revision = null;
+    keepMemo.key = null;
+    saveRecruit();
+    return true;
+  }
   const saveRecruit = () => { try { localStorage.setItem(RECRUIT_KEY, JSON.stringify(recruit)); } catch { /* private mode */ } };
   let countries = null;   // [{ _id, name }] by name, once loaded
   const $recruit = document.getElementById('tr-recruit-body');
@@ -1255,8 +1307,9 @@ const EmployeeTrainingTool = (() => {
   // The team's feed, worked out once per loaded team and price set.
   let feedMemo = { revision: null, batch: null, rows: [] };
   function feedRows() {
+    if (!team || !market?.ppValue || taken.size) return [];
     const pricer = prepareCardPricing();
-    const revision = JSON.stringify([cardRevision, plan && !plan.running ? plan.tools : null]);
+    const revision = JSON.stringify([cardRevision, todayUtc(), plan && !plan.running ? plan.tools : null]);
     if (feedMemo.revision !== revision) {
       const rows = energyFeed();
       const trains = rows.filter(r => r.kind === 'train');
@@ -1283,6 +1336,9 @@ const EmployeeTrainingTool = (() => {
         return result ? { ...r, value: result.outlook.value, outlook: result.outlook,
           basis: 'avg next hand, incl. moves; restricted pairs; unpriced effects count zero' } : { ...r, basis: 'current-company hire estimate' };
       });
+      const alt = altFrom(feedMemo.rows).value;
+      feedMemo.rows = feedMemo.rows.map(r => r.kind === 'hire' ? hireRow(r.entry, alt) : r)
+        .sort((a, b) => (b.ready - a.ready) || b.value - a.value);
       feedMemo.published = true;
     }
     if (batch.status !== 'done') return feedMemo.rows.map(r => ({ ...r,
@@ -1296,12 +1352,12 @@ const EmployeeTrainingTool = (() => {
   // loaded, a typical employee's. Self-work sets it instead when it pays more.
   const energyValue = () => altFrom(feedRows());
   function altFrom(rows) {
-    const trains = rows.filter(r => r.kind === 'train' && r.ready);
+    const trains = rows.filter(r => r.kind === 'train' && r.ready && !pendingHand(r.emp)).sort((a, b) => b.value - a.value);
     const self = selfWorkValue();
     let best;
     if (!trains.length) best = { value: EC.trainingOutlook({}, { management: team?.management ?? 0 }).value, from: 'a typical employee\'s next training' };
     else {
-      const bar = team.energy ? Math.floor(team.energy / 10) : trains.length;
+      const bar = team.energy ? Math.max(1, Math.floor(team.energy / 10)) : trains.length;
       const r = trains[Math.min(bar, trains.length) - 1];
       best = { value: r.value, from: `training ${r.emp.name}, ${bar < trains.length ? 'the last training a full energy bar pays for' : 'your least valuable training'}` };
     }
@@ -1329,7 +1385,7 @@ const EmployeeTrainingTool = (() => {
   }
 
   // What a newcomer does to the traits the company's employees hold: a
-  // foreign hire costs a Nationalist and Xenophobe and helps a
+  // matching hire helps a Nationalist; a foreign hire costs a Xenophobe and helps a
   // Cosmopolitan; gender moves Girl Power and the like; Production moves
   // Rival and Mentor; a higher wage makes an Envious coworker unhappier.
   function coworkerImpact(entry, { nationality, gender, production, wage }) {
@@ -1338,16 +1394,9 @@ const EmployeeTrainingTool = (() => {
     for (const emp of entry?.employees || []) {
       const inp = inputsFor(emp, entry, { models: false });
       const e = employeeOf(inp), ctx = contextOf(inp), s = ctx.situation;
-      const nats = new Set([...entry.employees.filter(x => x._id !== emp._id).map(x => x.nationality), nationality]
-        .filter(n => n && n !== emp.nationality));
-      const own = paidProd(emp);
-      const after = { ...ctx, situation: {
-        ...s, coworkers: s.coworkers + 1, femaleCoworkers: s.femaleCoworkers + (gender === 'female' ? 1 : 0),
-        otherNationalities: nats.size,
-        strongerCoworker: s.strongerCoworker || production > own, weakerCoworker: s.weakerCoworker || production < own,
-        peers: s.peers && market?.ppValue ? [...s.peers, { production, wagePP: wage / market.ppValue }] : null,
-        betterPaid: s.betterPaid + (wage > emp.wage ? 1 : 0),
-      } };
+      const joined = { ...entry, employees: [...entry.employees, { _id: 'newcomer', age: 20,
+        nationality, gender, base: { production }, wage, traits: [] }] };
+      const after = contextOf(inputsFor(emp, joined, { models: false }));
       for (const t of inp.traits) {
         const was = EC.traitValue(t.code, e, ctx, { held: true, arg: t.arg }).value;
         const now = EC.traitValue(t.code, e, after, { held: true, arg: t.arg }).value;
@@ -1396,7 +1445,9 @@ const EmployeeTrainingTool = (() => {
   function priceCandidate(c, entry, alt) {
     const age = numOrNull(c.age), wage = hourlyWage(c);
     const [production, responsibility, luck] = STATS.map(k => numOrNull(c[k]));
-    if (age == null || wage == null || !c.nat || production == null || responsibility == null || luck == null || !market?.ppValue) return null;
+    if (entry?.rosterMissing || taken.size || !Number.isInteger(age) || age < 18 || age > 45
+      || wage == null || wage < 0 || !c.nat || !['male', 'female'].includes(c.gender)
+      || ![production, responsibility, luck].every(n => Number.isInteger(n) && n >= 1 && n <= 4) || !market?.ppValue) return null;
     const newcomer = { nationality: c.nat, gender: c.gender, production, wage };
     const { ctx, opts } = setupFor(entry, newcomer);
     const v = EC.candidateValue({ age, gender: c.gender, wagePP: wage / market.ppValue, production, responsibility, luck }, ctx, { ...opts, alt });
@@ -1449,7 +1500,9 @@ const EmployeeTrainingTool = (() => {
       }).join('')
       : '<option value="">Load your employees above to pick a company</option>';
     let body;
-    if (full) {
+    if (entry?.rosterMissing || taken.size) {
+      body = `<p class="tr-warn">${entry?.rosterMissing ? 'This employee list did not load.' : 'A training choice needs fresh game data.'} <button type="button" class="tr-link" data-reload>Reload</button> before comparing hires.</p>`;
+    } else if (full) {
       const rows = keepRows().filter(r => r.entry === entry);
       const weakest = rows.reduce((a, r) => !a || r.chance > a.chance ? r : a, null);
       body = `<div class="tr-verdict muted"><span class="tr-verdict-take">${escapeHtml(companyName(entry.company))} is full</span>
@@ -1487,7 +1540,7 @@ const EmployeeTrainingTool = (() => {
     const groups = nationalityMix(entry).map(({ nationality, count }) => {
       const { ctx, opts } = setupFor(entry, { nationality, gender: 'male' });
       return {
-        weight: count, ctx, ...opts, key: `${ctx.situation.place}|${ctx.situation.otherNationalities}`,
+        weight: count, ctx, ...opts, key: `${nationality}|${ctx.situation.place}|${ctx.situation.homeCore}|${ctx.situation.otherNationalities}|${ctx.situation.sameNationalityCoworkers}`,
         coworkers: entry?.employees.length ? (production, wagePP, gender) =>
           coworkerImpact(entry, { nationality, gender, production, wage: wagePP * market.ppValue }).value : null,
       };
@@ -1497,8 +1550,8 @@ const EmployeeTrainingTool = (() => {
 
   /* ── Keep or replace ─────────────────────────────────────── */
   // Firing frees a Break Room slot for a better hire. Keeping an employee
-  // is worth what they add over the working life left (EmployeeCore.
-  // employeeValue), plus what their leaving would cost the traits their
+  // is worth the roster planner's projected profit plus remaining training
+  // value, including what their leaving would cost the traits their
   // coworkers hold (a Rival losing his stronger coworker, a Cosmopolitan
   // a nationality). Their slot is worth the best of a fresh candidate set
   // in the company without them. A candidate must beat the bar: keeping
@@ -1517,24 +1570,6 @@ const EmployeeTrainingTool = (() => {
   // 3 candidate slots, plus 1 per Recruiter in the company, up to 3 extra.
   const slotsIn = entry => 3 + Math.min(3, entry.employees.filter(x => (x.traits || []).some(t => t.code === 'recruiter')).length);
 
-  // What an employee's leaving does to the traits their coworkers hold.
-  function departureImpact(entry, emp) {
-    const rest = without(entry, emp);
-    let value = 0;
-    const notes = [];
-    for (const x of rest.employees) {
-      const was = modelOf(x, entry), now = modelOf(x, rest);
-      for (const t of was.inp.traits) {
-        const a = EC.traitValue(t.code, was.e, was.ctx, { held: true, arg: t.arg }).value;
-        const b = EC.traitValue(t.code, now.e, now.ctx, { held: true, arg: t.arg }).value;
-        if (a == null || b == null || Math.abs(b - a) < 0.5) continue;
-        value += b - a;
-        notes.push(`${x.name}'s ${traitName(t.code)}`);
-      }
-    }
-    return { value, notes };
-  }
-
   // stay: what keeping them is worth, coworkers' traits included. The slot
   // outlives them, so keeping them is charged the slot's rate (what a new
   // hire earns there a day) for each working day they hold it: surplus.
@@ -1542,12 +1577,13 @@ const EmployeeTrainingTool = (() => {
   // hire doesn't win on working life alone. bar: what a candidate's
   // surplus must beat to replace them. gain: what a fresh set's pick is
   // worth over the bar, on average; chance: how often it beats it.
-  function keepRow(emp, entry, alt) {
+  function keepRow(emp, entry, alt, projection, trainingValue) {
     const { e, ctx } = modelOf(emp, entry);
     const left = Math.max(0, (emp.potentialMax || 0) - (emp.potential || 0));
-    const keep = EC.employeeValue({ ...e, potentialMax: emp.potentialMax }, ctx, { alt, trainingsLeft: left });
+    const potential = EC.potentialValue({ ...e, potentialMax: emp.potentialMax }, ctx, left, alt, trainingValue);
+    const keep = { value: projection.own + potential, output: projection.own, traits: 0, potential, unpriced: projection.unpriced };
     const rest = without(entry, emp);
-    const leaving = departureImpact(entry, emp);
+    const leaving = { value: -projection.coworkers, notes: ['changes to the remaining roster'] };
     const slots = slotsIn(rest);
     const fresh = freshSet(rest, alt, slots);
     const stay = keep.value - leaving.value;
@@ -1557,13 +1593,30 @@ const EmployeeTrainingTool = (() => {
   }
 
   // Every employee, most worth replacing first, once per team and price set.
-  let keepMemo = { team: null, market: null, rows: [] };
+  let keepMemo = { team: null, market: null, key: null, rows: [], reasons: new Map() };
   function keepRows() {
-    if (!team || !market?.ppValue) return [];
-    if (keepMemo.team !== team || keepMemo.market !== market) {
-      const alt = energyValue().value;
-      const rows = team.companies.flatMap(entry => entry.employees.map(emp => keepRow(emp, entry, alt)));
-      keepMemo = { team, market, rows: rows.sort((a, b) => (keepVerdict(b) === 'fire') - (keepVerdict(a) === 'fire') || b.chance - a.chance) };
+    if (!team || !market?.ppValue || taken.size) return [];
+    const feed = feedRows();
+    const alt = altFrom(feed).value;
+    const settings = assignments?.cardSettings() || { horizon: 'career', inventory: [], equippedHours: {}, pinned: [] };
+    const key = JSON.stringify([feedMemo.revision, feedMemo.published, alt, todayUtc(), settings]);
+    if (keepMemo.team !== team || keepMemo.market !== market || keepMemo.key !== key) {
+      const prepared = EmployeeAssignments.snapshotOf(team, market, settings);
+      const session = !prepared.errors.length && EmployeePlanner.retentionSession(prepared.snapshot);
+      const reasons = new Map(), rows = [];
+      for (const entry of team.companies) {
+        if (entry.rosterMissing) continue;
+        for (const emp of entry.employees) {
+          if (emp.pendingTraining) continue;
+          const projection = session ? session.price(emp._id) : { valid: false, reason: prepared.errors.join(' ') };
+          if (!projection.valid) { reasons.set(emp._id, projection.reason); continue; }
+          const training = feed.find(r => r.kind === 'train' && r.emp._id === emp._id);
+          rows.push(keepRow(emp, entry, alt, {
+            ...projection, own: projection.own / market.ppValue, coworkers: projection.coworkers / market.ppValue,
+          }, training?.value));
+        }
+      }
+      keepMemo = { team, market, key, reasons, rows: rows.sort((a, b) => (keepVerdict(b) === 'fire') - (keepVerdict(a) === 'fire') || b.chance - a.chance) };
     }
     return keepMemo.rows;
   }
@@ -1584,10 +1637,12 @@ const EmployeeTrainingTool = (() => {
     if (!$fire) return;
     if (!team) { $fire.innerHTML = '<p class="tr-muted">Load your employees above to see who is worth keeping.</p>'; return; }
     if (!market?.ppValue) { $fire.innerHTML = '<p class="tr-muted">Loading prices…</p>'; return; }
+    if (taken.size) { $fire.innerHTML = '<p class="tr-warn">Reload from the game after the recorded training choice before comparing replacements.</p>'; return; }
+    if (findEmployee(input.pick)?.emp.pendingTraining) { $fire.innerHTML = '<p class="tr-warn">Choose the waiting training card, then reload before deciding whether to replace this employee. That training is already paid for.</p>'; return; }
     const rows = keepRows();
     const act = rows.filter(r => ['fire', 'replace'].includes(keepVerdict(r)));
     const r = rows.find(x => x.emp._id === input.pick);
-    if (!r) { $fire.innerHTML = '<p class="tr-muted">Choose an employee.</p>'; return; }
+    if (!r) { $fire.innerHTML = `<p class="tr-muted">${escapeHtml(keepMemo.reasons.get(input.pick) || 'Choose an employee with a complete roster and verified stats.')}</p>`; return; }
     const { emp, entry } = r;
     const v = keepVerdict(r);
     const name = escapeHtml(emp.name);
@@ -1625,8 +1680,7 @@ const EmployeeTrainingTool = (() => {
         ${r.from ? `<small class="tr-warn">Just hired: can be fired from ${utcTime(r.from)}.</small>` : ''}</div>
       <div class="tr-keep-cols">
         <section><h4>Keeping ${name}</h4><ul class="tr-cand-parts">
-          ${part('Output after wages', r.keep.output)}
-          ${part('Their traits', r.keep.traits)}
+          ${part('Lifetime output after wages', r.keep.output, 'includes traits, tool expiry and temporary happiness')}
           ${part('Trainings left', r.keep.potential, r.left ? `${r.left}, above what their energy earns elsewhere` : 'none left')}
           ${part('Coworkers\' traits', -r.leaving.value, r.leaving.notes.length ? `lost if they go: ${r.leaving.notes.join(', ')}` : '')}
           ${part('Their days in the slot', -r.held, `${plural(r.days, 'working day')} at ${rate}`)}
@@ -1657,7 +1711,7 @@ const EmployeeTrainingTool = (() => {
       const $card = document.getElementById(`tr-cand-${i}`);
       const $res = document.getElementById(`tr-cand-res-${i}`);
       $card.classList.remove('best');
-      if (!v) { $res.innerHTML = '<small class="tr-muted">Enter age, wage, nationality and stats to price.</small>'; return; }
+      if (!v) { $res.innerHTML = '<small class="tr-muted">Enter age 18–45, whole stats 1–4, a non-negative wage and nationality.</small>'; return; }
       const c = recruit.cands[i];
       const wageText = `wage expectation ${Math.round(v.wageExpectation * 100)}%${v.odds.greedy > 0.995 ? ', so Greedy' : v.odds.modest > 0.995 ? ', so Modest'
         : v.odds.greedy < 0.005 ? ', so not Greedy' : ''}`;
@@ -1867,7 +1921,9 @@ const EmployeeTrainingTool = (() => {
       : total.unpriced ? 'some products unpriced'
       : !total.projectedSelfWork ? 'self-work estimate unavailable'
       : `${perDay(total.total - total.self + total.projectedSelfWork.profit)} with ${total.projectedSelfWork.energy} energy spent on self-work in ${escapeHtml(total.projectedSelfWork.company.name || productName(total.projectedSelfWork.company.itemCode))}`;
+    const missing = team.companies.filter(x => x.rosterMissing);
     $team.innerHTML = `
+      ${missing.length ? `<p class="tr-warn">Employee lists failed to load for ${missing.map(x => escapeHtml(companyName(x.company))).join(', ')}. Recommendations omit these companies. <button type="button" class="tr-link" data-reload>Retry</button>.</p>` : ''}
       <div class="tr-section-heading"><h3 class="tr-pane-title">Summary</h3>${help('How summary totals are calculated', `<p><strong>Employee profit</strong> uses current employee estimates at today's prices, after wages and manager pay. It excludes engines and self-work.</p><p><strong>Total profit</strong> combines current engine output with employee output from the last full UTC day. It uses today's prices and subtracts wages and manager pay. It excludes self-work.</p><p>The estimate below Total profit adds self-work using one full energy bar and your Production stat. It uses today's prices at your company with the highest margin per production point. It assumes space in production storage and does not include energy regenerated while working.</p>`)}</div>
       <div class="tr-tiles">
         ${tile('Employees', all.length, `${team.companies.length} companies`)}
@@ -1904,7 +1960,7 @@ const EmployeeTrainingTool = (() => {
     steps.reset();
     loadError = null;
     try {
-      const loaded = await loadTeam(username);
+      const [loaded] = await Promise.all([loadTeam(username), refreshMarket()]);
       steps.setStep(5, 'active', { sub: 'Finishing prices and preparing recommendations' });
       await marketLoad;
       team = loaded;
@@ -2016,18 +2072,19 @@ const EmployeeTrainingTool = (() => {
       ${status}`;
   }
 
-  // "I took this": the card picked in the game, applied to the employee's
-  // record until the next reload, so every tab and Next actions follow.
+  // The server resolves derived stats, coworkers and random outcomes together.
+  // Record the choice, then require that authoritative snapshot before advising.
   function takeSlot(slot) {
     const found = findEmployee(input.pick);
     if (!found || !input.hand) return;
     const c = slotCard(input.hand.slots[slot]);
     if (!c) return;
-    const { emp, rolled } = EC.takeCard(found.emp, c, { wageExpectation: 1 + input.wagePct / 100 });
-    taken.set(emp._id, { text: c.card === 'wildCard' ? 'Wild card' : `${cardTitle(c)}: ${effectText(c)}`, rolled });
-    team = { ...team, companies: team.companies.map(entry => entry !== found.entry ? entry
-      : { ...entry, employees: entry.employees.map(x => x === found.emp ? emp : x) }) };
-    input = { ...inputsFor(emp, findEmployee(emp._id).entry), pick: emp._id, hand: null };
+    const emp = found.emp;
+    taken.set(emp._id, { text: c.card === 'wildCard' ? 'Wild card' : `${cardTitle(c)}: ${effectText(c)}`, rolled: [] });
+    cardPricer?.dispose();
+    cardPricer = null;
+    cardRevision = null;
+    plan = null;
     renderResult();
     renderEmpHead();
     $calc.querySelector('.tr-emp-took')?.focus({ preventScroll: true });
@@ -2172,7 +2229,7 @@ const EmployeeTrainingTool = (() => {
     wireHelp();
     renderRecent();
     assignments = EmployeeAssignments.mount(document.getElementById('tr-assignments-body'), {
-      getTeam: () => team, getMarket: () => market, productName, productIcon,
+      getTeam: () => taken.size ? null : team, getMarket: () => market, productName, productIcon,
       companyName: id => { const x = team?.companies.find(c => c.company._id === id); return x ? companyName(x.company) : null; },
       onResult: result => { plan = result; prefetchHands(); renderResult(); renderTeam(); renderFire(); },
       onSettings: () => { renderResult(); renderTeam(); },
@@ -2278,11 +2335,14 @@ const EmployeeTrainingTool = (() => {
         .finally(renderRecruitForm);
     }
 
-    marketLoad = loadMarket()
-      .then(m => { market = m; })
-      .catch(err => { console.warn('[training] product prices failed', err); market = { ppValue: null, list: [], types: {} }; })
-      .finally(() => { renderResult(); renderTeam(); renderRecruitForm(); renderFire(); renderPicker(); assignments.refresh(); assignments.run({ auto: true }); });
-    setInterval(updateEnergyTile, 1000);
+    refreshMarket().finally(() => { renderResult(); renderTeam(); renderRecruitForm(); renderFire(); renderPicker(); assignments.refresh(); assignments.run({ auto: true }); });
+    setInterval(() => {
+      if (syncDay()) {
+        renderRecruitForm();
+        if (team) runLoad(team.username);
+      }
+      updateEnergyTile();
+    }, 1000);
     mounted = true;
   }
 

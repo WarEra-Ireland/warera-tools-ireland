@@ -65,6 +65,7 @@ const EmployeeCore = (() => {
     age: 30, production: 3, responsibility: 2, luck: 2,
     extraProduction: 0,     // from traits; produces but isn't paid
     bonus: 0.24,            // production bonus as a fraction (+24%), today
+    productionEvents: [],   // included in bonus today: [{ delta: percent, hours: remaining }]
     specialization: 20,     // % of the bonus that is specialization; 20 = maxed, no further growth
     wageExpectation: 1,     // wage ÷ (P/4 × V): 1 = market rate, Greedy/Modest folded in
     happinessLoss: 10,      // happiness points lost to tax, storage, moves… (Loyal halves them)
@@ -88,11 +89,15 @@ const EmployeeCore = (() => {
   // Quick Study doubles the growth (rate 2).
   function careerBonus(e, rate = 1) {
     const days = workingDays(e);
+    // Today's bonus includes each event in full. Replace that part with its
+    // share of the remaining career, including partial days and negative events.
+    const bonus = e.bonus + (e.productionEvents || []).reduce((sum, event) => sum
+      + event.delta / 100 * ((days ? Math.min(1, Math.max(0, event.hours) / (days * 24)) : 0) - 1), 0);
     const room = Math.max(0, CFG.specializationMax - e.specialization);
-    if (!days || !room) return e.bonus;
+    if (!days || !room) return bonus;
     let extra = 0;
     for (let k = 0; k < days; k++) extra += Math.min(room, k * rate);
-    return e.bonus + extra / days / 100;
+    return bonus + extra / days / 100;
   }
 
   // Margin per point of paid Production, per hour, averaged over the working
@@ -151,13 +156,14 @@ const EmployeeCore = (() => {
       v = h === null ? null : h * hoursLeft(e);
     }
     if (v === null) return null;
+    if (c.card === 'drill' && c.stat === 'luck') v += futureLuckValue(e, c.delta, ctx);
     const after = afterCard(e, c);
     return after ? v + peerShift(e, after, ctx) : v;
   }
 
   /* ── Standing among coworkers ────────────────────────────────
    * Four traits compare the employee with their coworkers: Rival and
-   * Mentor on hired + trained Production (before traits), Prima Donna and
+   * Mentor on Production after ordinary traits, before peer effects, Prima Donna and
    * Envious on wage. A card that changes Production or the wage can flip
    * them, the employee's own and their coworkers'. With the coworkers
    * known (situation.peers, and situation.coworkerModels for theirs),
@@ -170,7 +176,8 @@ const EmployeeCore = (() => {
   function afterCard(e, c) {
     if (c.card === 'wildCard') return null;
     const next = cardOutcomes(e, c)[0]?.employee;
-    if (!next || next.production === e.production && next.wageExpectation === e.wageExpectation) return null;
+    if (!next || next.production === e.production && next.wageExpectation === e.wageExpectation
+      && JSON.stringify(next.traits) === JSON.stringify(e.traits)) return null;
     return next;
   }
 
@@ -183,7 +190,7 @@ const EmployeeCore = (() => {
     for (const t of kept) {
       total += traitValue(t.code, e2, ctx, { held: true, arg: t.arg }).value - traitValue(t.code, e, ctx, { held: true, arg: t.arg }).value;
     }
-    const me = { production: e2.production, wagePP: wagePP(e2), self: true };
+    const me = { production: comparisonProduction(e2, ctx.situation), model: e2, situation: ctx.situation, wagePP: wagePP(e2), self: true };
     for (const cw of ctx.situation?.coworkerModels || []) {
       const theirs = (cw.e.traits || []).filter(t => PEER_TRAITS.includes(t.code));
       if (!theirs.length) continue;
@@ -225,6 +232,24 @@ const EmployeeCore = (() => {
     w.common = Math.max(0, w.common - moved);
     const total = RARITIES.reduce((a, r) => a + w[r], 0);
     return Object.fromEntries(RARITIES.map(r => [r, w[r] / total]));
+  }
+
+  // A one-step forecast: extra Luck changes the rarity of the remaining draws.
+  // Their values exclude further Luck forecasts and Second Wind recursion.
+  function futureLuckValue(e, delta, ctx = {}) {
+    if (ctx.futureTraining === false || !delta) return 0;
+    const days = workingDays(e), count = Math.max(0, e.potentialLeft || 0);
+    if (days <= 0 || !count) return 0;
+    const outlook = trainingOutlook(e, { ...ctx, futureTraining: false }, { depth: 0 });
+    const mean = luck => {
+      const odds = rarityOdds(luck, ctx.management || 0);
+      const norm = outlook.rarities.reduce((n, r) => n + odds[r.rarity], 0);
+      return norm ? outlook.rarities.reduce((n, r) => n + odds[r.rarity] * r.value, 0) / norm : 0;
+    };
+    const gain = mean(e.luck + delta) - mean(e.luck);
+    let total = 0;
+    for (let k = 1; k <= count; k++) total += gain * Math.max(0, days - k / (e.trainingsPerDay || 1)) / days;
+    return total;
   }
 
   // Expected value of one training: rarity roll, then the best of a random
@@ -342,12 +367,15 @@ const EmployeeCore = (() => {
     gender: 'male',
     coworkers: 2,               // Break Room level 3, the top, holds 3 employees
     femaleCoworkers: 1,         // of the coworkers
+    sameNationalityCoworkers: null,
+    homeCore: null,
     otherNationalities: 0,      // distinct coworker nationalities other than the employee's
-    strongerCoworker: true,     // a coworker with more Production (hired + trained, before traits)
+    strongerCoworker: true,     // a coworker with more Production after ordinary traits
     weakerCoworker: true,
-    peers: null,                // the coworkers, if known: [{ production, wagePP }] (hired + trained,
+    peers: null,                // the coworkers, if known: [{ production, wagePP }] (after ordinary traits,
                                 // hourly wage in PP); then they decide stronger, weaker and betterPaid
     coworkerModels: null,       // each coworker as { e, ctx }, their peers marking this employee self: true
+    coworkerIds: [],
     betterPaid: 0,              // coworkers paid more
     coworkerHappiness: null,    // their average happiness today; null = unknown, so gains aren't capped
     place: 'homeCore',          // 'homeCore' | 'home' (home country, not core) | 'abroad'
@@ -371,16 +399,16 @@ const EmployeeCore = (() => {
   const TRAITS = [
     ['handy', 'Handy', 'positive', 5, '+40% output while holding a tool', x => x.s.hasTool ? x.pct(40) : 0],
     ['improviser', 'Improviser', 'positive', 5, '+25% output without a tool', x => x.s.hasTool ? 0 : x.pct(25)],
-    ['nationalist', 'Nationalist', 'positive', 10, '+2 Responsibility and +5 happiness when all coworkers share nationality', x => x.s.coworkers && !x.s.otherNationalities ? x.resp(2) + x.happy(5) : 0],
+    ['nationalist', 'Nationalist', 'positive', 10, '+2 Responsibility and +5 happiness with a coworker of the same nationality', x => (x.s.sameNationalityCoworkers ?? (x.s.coworkers && !x.s.otherNationalities)) ? x.resp(2) + x.happy(5) : 0],
     ['xenophobe', 'Xenophobe', 'negative', 10, '−2 Production and −5 happiness with a coworker of another nationality', x => x.s.otherNationalities ? x.prod(-2) + x.happy(-5) : 0],
     ['cosmopolitan', 'Cosmopolitan', 'positive', 10, '+2 Prod per other nationality, cap +4', x => x.prod(per(x.s.otherNationalities, 2, 4))],
     ['loner', 'Loner', 'positive', 5, '+100% output and +5 happiness as the sole employee', x => x.s.coworkers ? 0 : x.pct(100) + x.happy(5)],
     ['sociable', 'Sociable', 'mixed', 10, '+25% output per coworker, capped at +50%; −10 happiness alone', x => x.s.coworkers ? x.pct(per(x.s.coworkers, 25, 50)) : x.happy(-10)],
-    ['comic', 'Comic', 'mixed', 10, '−1 Prod, coworkers +10 happiness', x => x.s.coworkers ? x.prod(-1) + x.teamHappy(10) : 0],
-    ['mentor', 'Mentor', 'mixed', 2, 'a coworker with lower hired + trained Production gains +2 Production; self −1 Production', x => x.s.weakerCoworker ? x.teamProd(2) + x.prod(-1) : 0],
+    ['comic', 'Comic', 'mixed', 10, '−1 Prod, coworkers +10 happiness; multiple Comics do not stack', x => x.s.coworkers ? x.prod(-1) + x.teamHappy(10) : 0],
+    ['mentor', 'Mentor', 'mixed', 2, 'a coworker with lower Production before peer effects gains +2 Production; self −1 Production', x => x.s.weakerCoworker ? x.teamProd(2) + x.prod(-1) : 0],
     ['foreman', 'Foreman', 'positive', 5, 'coworkers +3 Resp', x => x.s.coworkers ? x.teamResp(3) : 0],
-    ['rival', 'Rival', 'mixed', 5, '+3 Production with a coworker whose hired + trained Production is higher; −1 Production otherwise', x => x.prod(x.s.strongerCoworker ? 3 : -1)],
-    ['primaDonna', 'Prima Donna', 'mixed', 5, 'highest-paid employee with coworkers: +20% output, −10 happiness', x => x.s.coworkers && !x.s.betterPaid ? x.pct(20) + x.happy(-10) : 0],
+    ['rival', 'Rival', 'mixed', 5, '+3 Production with a stronger coworker before peer effects; −1 otherwise; no effect alone', x => x.s.coworkers ? x.prod(x.s.strongerCoworker ? 3 : -1) : 0],
+    ['primaDonna', 'Prima Donna', 'mixed', 5, '+20% output if highest paid; otherwise −10 happiness; no effect alone', x => x.s.coworkers ? (x.s.betterPaid ? x.happy(-10) : x.pct(20)) : 0],
     ['bully', 'Bully', 'mixed', 5, '+2 Prod, coworkers −10 happiness', x => x.s.coworkers ? x.prod(2) + x.teamHappy(-10) : 0],
     ['envious', 'Envious', 'negative', 10, '−5 happiness per better-paid coworker', x => x.happy(per(x.s.betterPaid, -5, -10))],
     ['oldFriends', 'Old Friends', 'positive', 2, '+15% output while the linked employee is present', x => x.pct(15), { partner: true }],
@@ -405,8 +433,8 @@ const EmployeeCore = (() => {
     ['lateBloomer', 'Late Bloomer', 'positive', 5, '+2 Production per 10 years over age 40, capped at +6', x => x.prod(Math.min(6, 2 * Math.floor(Math.max(0, x.age - 40) / 10)))],
     ['earlyBloomer', 'Early Bloomer', 'positive', 5, '+6 Production below age 40, then −2 per 10 years, none from 60', x => x.prod(Math.max(0, 6 - 2 * Math.floor(Math.max(0, x.age - 30) / 10)))],
     ['wornOut', 'Worn Out', 'negative', 10, '−2 Production per 10 years over age 50, capped at −6', x => x.prod(-Math.min(6, 2 * Math.floor(Math.max(0, x.age - 50) / 10)))],
-    ['patriot', 'Patriot', 'positive', 10, '+2 Production and +10 happiness in a core region of their home country', x => x.s.place === 'homeCore' ? x.prod(2) + x.happy(10) : 0],
-    ['homesick', 'Homesick', 'negative', 10, '−2 Production and −10 happiness outside their home country', x => x.s.place === 'abroad' ? x.prod(-2) + x.happy(-10) : 0],
+    ['patriot', 'Patriot', 'positive', 10, '+2 Production and +10 happiness in a core region of their home country', x => (x.s.homeCore ?? x.s.place === 'homeCore') ? x.prod(2) + x.happy(10) : 0],
+    ['homesick', 'Homesick', 'negative', 10, '−2 Production and −10 happiness outside their home country', x => x.s.place === 'abroad' && !x.s.homeCore ? x.prod(-2) + x.happy(-10) : 0],
     ['expat', 'Expat', 'positive', 10, '+2 Production outside their home country', x => x.s.place === 'abroad' ? x.prod(2) : 0],
     ['taxShy', 'Tax Shy', 'negative', 10, '−1% output per income tax percentage point, capped at −30%', x => x.pct(-Math.min(30, x.s.incomeTax))],
     ['statist', 'Statist', 'positive', 10, '+2 Responsibility when income tax is at least 20%', x => x.s.incomeTax >= 20 ? x.resp(2) : 0],
@@ -493,10 +521,9 @@ const EmployeeCore = (() => {
     e = { ...DEFAULT_EMPLOYEE, ...e };
     ctx = { ...DEFAULT_CONTEXT, ...ctx };
     const s = { ...DEFAULT_SITUATION, ...ctx.situation };
+    if (t.partner && !s.coworkerIds.includes(arg)) return { value: 0, outcomes: [] };
     if (s.peers) {
       const own = wagePP(e);
-      s.strongerCoworker = s.peers.some(p => p.production > e.production);
-      s.weakerCoworker = s.peers.some(p => p.production < e.production);
       s.betterPaid = s.peers.filter(p => p.wagePP > own + 1e-9).length;
     }
     const B = careerBonus(e), sr = ctx.sellRatio;
@@ -505,10 +532,12 @@ const EmployeeCore = (() => {
     const coworkerBase = ctx.coworkerOutput != null ? ctx.coworkerOutput / (1 + B) : pph(e) * sr;
     // Held, the happiness is already in today's value, so none of it is capped.
     const gain = (n, h) => held ? n : happyGain(n, h);
+    let productionBase = e.production;
+    let happyRecipients = s.coworkers;
     const base = {
       e, s, held, male: Math.max(0, s.coworkers - s.femaleCoworkers), loss: e.happinessLoss,
       // Production never drops below 1, so a loss only counts down to it.
-      prod: d => (Math.max(1, e.production + d) - Math.max(1, e.production)) / CFG.outputDivisor * (1 + B) * sr,
+      prod: d => (Math.max(1, productionBase + d) - Math.max(1, productionBase)) / CFG.outputDivisor * (1 + B) * sr,
       pct: p => pph(e) * p / 100 * sr,
       happy: h => pph(e) * sr * gain(h, e.happiness) / 100,
       resp: d => pph(e) * sr * gain(CFG.respHappiness * d, e.happiness) / 100,
@@ -516,8 +545,9 @@ const EmployeeCore = (() => {
       boxes: rate => rate * ctx.toolboxValue,
       wage: f => -paidPph(e) * e.wageExpectation * f,
       raise: k => -paidPph(e) * 0.02 * k * wageTraitMultiplier(e),   // k × +0.02 wage expectation
-      teamHappy: h => s.coworkers * coworkerBase * gain(h, s.coworkerHappiness) / 100,
-      teamProd: d => d / CFG.outputDivisor * (1 + B) * sr,
+      teamHappy: h => happyRecipients * coworkerBase * gain(h, s.coworkerHappiness) / 100,
+      teamProd: d => (s.peers ? s.weakerCount : Number(s.weakerCoworker))
+        * d / CFG.outputDivisor * (1 + B) * sr,
       teamResp: d => s.coworkers * coworkerBase * gain(CFG.respHappiness * d, s.coworkerHappiness) / 100,
       quickStudy: pph(e) * (careerBonus(e, 2) - B) * sr,
     };
@@ -525,11 +555,104 @@ const EmployeeCore = (() => {
     const outcomes = traitArgs(t, arg, s, held).map(({ arg: a, p }) => {
       let total = 0;
       for (let d = 0; d < workingDays(e); d++) {
+        productionBase = ordinaryProduction({ ...e, traits: (e.traits || []).filter(t => t.code !== code) }, s, d);
+        if (s.peers) {
+          const own = comparisonProduction(e, s, d);
+          const activePeers = s.peers.filter(p => !p.model || p.model.age + d < CFG.retireAge);
+          const peers = activePeers.map(p => p.model ? comparisonProduction(p.model, p.situation, d) : p.production);
+          happyRecipients = code === 'comic' && activePeers.every(p => p.model?.traits)
+            ? activePeers.filter(recipient => !activePeers.some(other => other !== recipient
+              && other.model.traits.some(t => t.code === 'comic'))).length : activePeers.length;
+          s.coworkers = peers.length;
+          const nationality = e.nationality || s.nationality;
+          if (nationality && activePeers.every(p => p.model?.nationality)) {
+            Object.assign(s, nationalitySituation(nationality, activePeers.map(p => p.model)));
+          }
+          Object.assign(s, productionStanding(own, peers));
+          if (code === 'rival' || code === 'mentor') {
+            const row = (model, situation, production) => ({
+              production: model ? ordinaryProduction(model, situation, d) : production,
+              rival: model?.traits?.some(t => t.code === 'rival') || false,
+              mentor: model?.traits?.some(t => t.code === 'mentor') || false,
+            });
+            const subject = row(e, s);
+            const coworkers = activePeers.map(p => row(p.model, p.situation, p.production));
+            const without = peerProduction([{ ...subject, [code]: false }, ...coworkers]);
+            const withTrait = peerProduction([{ ...subject, [code]: true }, ...coworkers]);
+            total += withTrait.reduce((v, production, i) => v + production - without[i], 0)
+              / CFG.outputDivisor * (1 + B) * sr * 24;
+            continue;
+          }
+        }
         total += t.hourly({ ...base, arg: a, age: e.age + d, tenure: s.tenureDays + d, employed: s.employedDays + d }) * 24;
       }
       return { arg: a, p, value: total };
     });
     return { value: outcomes.reduce((a, o) => a + o.p * o.value, 0), outcomes: outcomes.length > 1 ? outcomes : [] };
+  }
+
+  // Rival and Mentor compare a frozen pass of ordinary stat effects. Neither
+  // their self effects nor incoming Mentor bonuses participate in this pass.
+  function comparisonProduction(e, situation = {}, day = 0) {
+    return Math.max(1, ordinaryProduction(e, situation, day));
+  }
+
+  // Preserve the raw sum when pricing a stat change. Flooring this baseline
+  // early would overvalue positive effects on employees below Production 1.
+  function ordinaryProduction(e, situation = {}, day = 0) {
+    const s = { ...DEFAULT_SITUATION, ...situation };
+    if (s.peers) {
+      const active = s.peers.filter(p => !p.model || p.model.age + day < CFG.retireAge);
+      s.coworkers = active.length;
+      const nationality = e.nationality || s.nationality;
+      if (nationality && active.every(p => p.model?.nationality)) {
+        Object.assign(s, nationalitySituation(nationality, active.map(p => p.model)));
+      }
+    }
+    let production = e.production;
+    const noop = () => 0;
+    const prod = n => { production += n; return 0; };
+    const x = { e, s, age: e.age + day, tenure: s.tenureDays + day + 1e-9, held: true,
+      male: s.coworkers - s.femaleCoworkers, prod, pct: noop, happy: noop, resp: noop,
+      luck: noop, boxes: noop, wage: noop, raise: noop, teamHappy: noop, teamProd: noop,
+      teamResp: noop, quickStudy: 0, loss: 0 };
+    x.stat = (stat, n) => stat === 'production' ? prod(n) : 0;
+    for (const t of e.traits || []) {
+      if (['rival', 'mentor'].includes(t.code)) continue;
+      TRAIT[t.code]?.hourly?.({ ...x, arg: t.arg });
+    }
+    return production;
+  }
+
+  function nationalitySituation(nationality, coworkers) {
+    return {
+      sameNationalityCoworkers: coworkers.filter(e => e.nationality === nationality).length,
+      otherNationalities: new Set(coworkers.map(e => e.nationality).filter(n => n && n !== nationality)).size,
+    };
+  }
+
+  function locationSituation(country, coreCountry, nationality) {
+    return { place: country !== nationality ? 'abroad' : coreCountry === nationality ? 'homeCore' : 'home',
+      homeCore: coreCountry === nationality };
+  }
+
+  function productionStanding(own, peers) {
+    const weakerCount = peers.filter(p => p < own).length;
+    return { strongerCoworker: peers.some(p => p > own), weakerCoworker: weakerCount > 0, weakerCount };
+  }
+
+  // Inputs are raw ordinary stat sums, before either peer trait. Freeze the
+  // comparisons, apply all self and teammate effects, then floor final output.
+  function peerProduction(rows) {
+    const basis = rows.map(r => Math.max(1, r.production));
+    return rows.map((row, i) => {
+      const others = rows.flatMap((r, j) => j === i ? [] : [{ ...r, basis: basis[j] }]);
+      const standing = productionStanding(basis[i], others.map(r => r.basis));
+      const rival = row.rival && others.length ? standing.strongerCoworker ? 3 : -1 : 0;
+      const mentor = row.mentor && standing.weakerCoworker ? -1 : 0;
+      const incoming = 2 * others.filter(r => r.mentor && r.basis > basis[i]).length;
+      return Math.max(1, row.production + rival + mentor + incoming);
+    });
   }
 
   // Values for the trait cards. e.traits is what the employee holds:
@@ -766,10 +889,10 @@ const EmployeeCore = (() => {
   // energy would earn elsewhere (`alt`, PP per 10 energy). Training k
   // happens k days in, when that much less working life is left. A
   // training worth less than alt counts 0: the energy goes elsewhere.
-  function potentialValue(e, ctx, potential, alt) {
+  function potentialValue(e, ctx, potential, alt, trainingValue) {
     const days = workingDays(e);
     if (!days || !potential) return 0;
-    const o = trainingOutlook(e, ctx).value;
+    const o = trainingValue ?? trainingOutlook(e, ctx).value;
     let total = 0;
     for (let k = 0; k < potential; k++) {
       total += Math.max(0, o * Math.max(0, days - k / (e.trainingsPerDay || 1)) / days - alt);
@@ -966,94 +1089,12 @@ const EmployeeCore = (() => {
     };
   }
 
-  /* ── Keep or replace ───────────────────────────────────────
-   * Firing frees a Break Room slot and costs coworkers nothing.
-   */
-  // What keeping an employee is worth over their working life left, in PP:
-  // output after wages, the traits they hold, and the trainings their
-  // potential still holds, net of what the same energy earns elsewhere
-  // (`alt`). Trait Production is priced by its trait, as its condition
-  // comes and goes, so the output leaves it out. Greedy and Modest are
-  // already in the wage. e.potentialMax keeps Second Wind within the cap.
-  // e.traitBonus is the part of today's bonus the held traits give (their
-  // happiness and output percentages); the traits price it, so the output
-  // leaves it out too.
-  // { value, output, traits, potential, unpriced: [code] }.
-  function employeeValue(e, ctx = {}, { alt = 0, trainingsLeft = 0 } = {}) {
-    e = { ...DEFAULT_EMPLOYEE, ...e };
-    ctx = { ...DEFAULT_CONTEXT, ...ctx };
-    const output = hourlyProfit({ ...e, extraProduction: 0, bonus: e.bonus - (e.traitBonus || 0) }, ctx) * hoursLeft(e);
-    let traits = 0;
-    const unpriced = [];
-    for (const t of e.traits || []) {
-      if (t.code === 'greedy' || t.code === 'modest') continue;
-      const v = traitValue(t.code, e, ctx, { held: true, arg: t.arg }).value;
-      if (v == null) unpriced.push(t.code);
-      else traits += v;
-    }
-    const potential = potentialValue(e, ctx, trainingsLeft, alt);
-    return { value: output + traits + potential, output, traits, potential, unpriced };
-  }
-
-  // An employee record from the API after picking card c from their dealt
-  // hand, until the next reload shows the real one. The draw already set
-  // the day's training (lastTrainedAt, trainingsToday) and spent the energy
-  // and the potential, so the pick only applies the card. Production and
-  // the wage expectation scale the wage (paid on hired + trained
-  // Production); Production scales the output estimate. What the game rolls
-  // on the pick (Wild card's trait and stat, a gained trait's target) isn't
-  // known, so it's listed in `rolled` and left for the reload.
-  // opts.wageExpectation: the employee's, as a multiplier (default 1).
-  function takeCard(emp, c, { wageExpectation = 1, now = new Date() } = {}) {
-    const out = {
-      ...emp,
-      base: { ...emp.base },
-      breakdown: Object.fromEntries(Object.entries(emp.breakdown || {}).map(([k, v]) => [k, { ...v }])),
-      estimate: emp.estimate ? { ...emp.estimate } : emp.estimate,
-      traits: [...(emp.traits || [])],
-    };
-    delete out.pendingTraining;
-    const rolled = [];
-    const addStat = (stat, d) => {
-      const was = out.base[stat] || 0;
-      out.base[stat] = was + d;
-      if (out.breakdown[stat]) out.breakdown[stat].total = (out.breakdown[stat].total ?? was) + d;
-      if (stat !== 'production') return;
-      if (was > 0 && typeof out.wage === 'number') out.wage *= (was + d) / was;
-      const total = (out.breakdown.production?.total ?? was + d) - d;
-      if (total > 0 && typeof out.estimate?.production === 'number') out.estimate.production *= (total + d) / total;
-    };
-    if (c.card === 'wildCard') rolled.push('the trait', '+1 stat');
-    else if (c.card === 'secondWind') out.potentialMax = Math.min(CFG.potentialMaxCap, (out.potentialMax || 0) + c.gain);
-    else {
-      const model = { ...DEFAULT_EMPLOYEE, ...emp.base, traits: emp.traits || [], wage: emp.wage, wageExpectation, negotiationExpectation: emp.wageExpectation };
-      const next = cardOutcomes(model, c)[0]?.employee;
-      if (next) {
-        if (c.card === 'drill') addStat(c.stat, next[c.stat] - model[c.stat]);
-        if (typeof out.wage === 'number') out.wage = next.wage;
-        if (c.card === 'negotiation' && next.negotiationExpectation != null) out.wageExpectation = next.negotiationExpectation;
-        out.traits = next.traits.map(t => {
-          const held = model.traits.find(h => h.code === t.code);
-          if (held) return held;
-          const def = TRAIT[t.code];
-          if (def?.arg || def?.partner) rolled.push(`${def.name}'s ${def.arg === 'good' ? 'good' : def.arg === 'stat' ? 'stat' : 'partner'}`);
-          return { code: t.code, revealed: true };
-        });
-      }
-    }
-    if (out.lastTrainedAt?.slice(0, 10) !== now.toISOString().slice(0, 10)) {
-      out.lastTrainedAt = now.toISOString();
-      out.trainingsToday = 1;
-    }
-    return { emp: out, rolled };
-  }
-
   return {
     CFG, RARITIES, NUMERIC_CARDS, PROD_TRAIT_CARDS, TRAIT_CARDS, DEFAULT_EMPLOYEE, DEFAULT_CONTEXT, LADDER_FLAGS,
     TRAITS, TRAIT, DEFAULT_SITUATION, HABIT_POLARITY, EXCLUSIVE, currentTraits,
-    cardPool, cardOutcomes, secondWindValue, expectedMax, trainingOutlook, rolledTraitValue, takeCard,
-    potentialValue, candidateValue, freshSetValue, employeeValue,
-    eligibleTraits, wildCardRisk, canNegotiate, traitValue, traitChart, traitUnit,
+    cardPool, cardOutcomes, secondWindValue, expectedMax, trainingOutlook, rolledTraitValue, futureLuckValue,
+    potentialValue, candidateValue, freshSetValue,
+    comparisonProduction, productionStanding, peerProduction, nationalitySituation, locationSituation, eligibleTraits, wildCardRisk, canNegotiate, traitValue, traitChart, traitUnit,
     drill, neg, wind, cardValue, rankTier, rankHand, rarityOdds, ladder,
     expectedTrainingValue, marginPerPoint, drillBeatsNegotiationBelow, hourlyProfit, careerBonus, workingDays,
   };

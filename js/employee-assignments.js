@@ -118,6 +118,7 @@ const EmployeeAssignments = (() => {
       const reasons = [];
       if (![e.base?.production, e.base?.responsibility, e.breakdown?.production?.total, e.breakdown?.responsibility?.total,
         e.productionBonus?.total, e.happinessBreakdown?.value, e.estimate?.production, e.age, e.wage].every(Number.isFinite) || !e.nationality || !Number.isFinite(tenure)) reasons.push(`${e.name}'s current stats did not load`);
+      if (e.eventModifiers?.some(event => event.kind === 'away' && hoursUntil(event.until, now) > 0)) reasons.push(`${e.name} is temporarily away; absence forecasts are not supported`);
       if (!e.specializations) reasons.push(`${e.name}'s saved specializations did not load`);
       if (reasons.length) excluded.set(company._id, [...(excluded.get(company._id) || []), ...reasons]);
       return { id: e._id, name: e.name, company: company._id, age: e.age, locked: pinned.has(e._id),
@@ -127,6 +128,8 @@ const EmployeeAssignments = (() => {
         gender: e.gender, nationality: e.nationality, traits: e.traits || [], specializations: { ...e.specializations, [company.itemCode]: currentSpec },
         tenure, employedDays: Math.max(0, (now - Date.parse(e.createdAt)) / 864e5),
         moveAgeHours: e.lastMovedAt ? Math.max(0, (now - Date.parse(e.lastMovedAt)) / 36e5) : Infinity,
+        productionEvents: (e.productionBonus?.contributions || []).filter(x => x.source === 'event')
+          .map(x => ({ delta: x.percent, hours: hoursUntil(x.until, now) })),
         happiness: external.map(h => ({ delta: h.delta, hours: hoursUntil(h.until, now), reason: h.reason })),
         observed: { production: e.breakdown?.production?.total, responsibility: e.breakdown?.responsibility?.total,
           happiness: e.happinessBreakdown?.value, bonus: e.productionBonus?.total, output: e.estimate?.production }, equipped };
