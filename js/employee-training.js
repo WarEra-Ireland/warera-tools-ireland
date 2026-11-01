@@ -61,6 +61,8 @@ const EmployeeTrainingTool = (() => {
     return `<span class="tr-help${trait ? ' tr-trait-help' : ' tr-section-help'}"><button type="button" class="tr-help-trigger" aria-expanded="false"${trait ? '' : ` aria-label="${escapeHtml(label)}"`}>${trait ? label : '<span aria-hidden="true">ⓘ</span>'}</button><span class="tr-help-content" role="tooltip" hidden>${content}</span></span>`;
   }
 
+  const profitPricingHelp = '<p>Prices use recent market trades, with market tax deducted from sales. The game uses a slower price average and excludes market tax, so its profit figures can differ.</p>';
+
   function wireHelp() {
     const view = document.querySelector('[data-view="training"]');
     let active = null;
@@ -1247,16 +1249,16 @@ const EmployeeTrainingTool = (() => {
           <td class="tr-roster-wide">Prod ${stat(emp, 'production')} · Resp ${stat(emp, 'responsibility')} · Luck ${stat(emp, 'luck')}</td>
           <td class="tr-roster-wide">${pips(emp)} <span class="tr-muted">${left}</span></td>
           <td><span class="tr-badges">${flagsOf(emp, entry, verdicts, topTrain)}</span></td>
-          <td class="num${profit != null && profit < 0 ? ' tr-neg' : ''}">${moneyFmt(profit)}/h</td></tr>`;
+          <td class="num${profit != null && profit < 0 ? ' tr-neg' : ''}">${dailyProfitFmt(profit)}</td></tr>`;
       }).join('');
       // Phones hide three columns, so the heading spans fewer there.
       const head = `${companyLink(company)} <span class="tr-muted">${productIcon(company.itemCode)}${p ? ` (${p.ratio.toFixed(2)}×)` : ''} · ${employees.length} of ${headcountCap(company)}</span>`;
       return `<tbody style="--co:var(--tr-co-${i % 8 + 1})"><tr class="tr-roster-co"><th colspan="5" scope="colgroup" class="tr-roster-wide">${head}</th>
           <th colspan="2" scope="colgroup" class="tr-roster-narrow">${head}</th>
-          <td class="num${cProfit != null && cProfit < 0 ? ' tr-neg' : ''}">${moneyFmt(cProfit)}/h</td></tr>${rows}</tbody>`;
+          <td class="num${cProfit != null && cProfit < 0 ? ' tr-neg' : ''}">${dailyProfitFmt(cProfit)}</td></tr>${rows}</tbody>`;
     }).join('');
     return `<table class="tr-roster"><thead><tr><th scope="col">Employee</th><th scope="col" class="num tr-roster-wide">Age</th><th scope="col" class="tr-roster-wide">Stats</th>
-      <th scope="col" class="tr-roster-wide">Trainings</th><th scope="col">Flags</th><th scope="col" class="num">Profit</th></tr></thead>${body}</table>`;
+      <th scope="col" class="tr-roster-wide">Trainings</th><th scope="col">Flags</th><th scope="col" class="num">Profit / day ${help('How daily profit is calculated', `<p>Profit per day is 24 hours of output at current product margins, minus wages. Company totals also subtract manager pay.</p>${profitPricingHelp}`)}</th></tr></thead>${body}</table>`;
   }
 
   /* ── Candidates ──────────────────────────────────────────── */
@@ -1770,7 +1772,7 @@ const EmployeeTrainingTool = (() => {
   const EMP_SORTS = {
     company: ['By company', () => 0, 1],
     name: ['Name', r => r.emp.name.toLowerCase(), 1],
-    profit: ['Profit', r => r.profit, -1],
+    profit: ['Profit / day', r => r.profit, -1],
     next: ['Next training value', r => r.next?.value, -1],
     left: ['Trainings left', r => r.left, -1],
     production: ['Production', r => r.prod, -1],
@@ -1872,7 +1874,7 @@ const EmployeeTrainingTool = (() => {
         <td data-label="Next training" class="num">${next ? `≈ ${signedPP(next.value)} PP` : '<span class="tr-muted">—</span>'}</td>
         <td data-label="Traits" class="tr-emps-traits">${traitList(emp)}</td>
         <td data-label="Happiness" class="tr-emps-happy">${happinessCell(emp)}</td>
-        <td data-label="Profit" class="num${profit != null && profit < 0 ? ' tr-neg' : ''}">${moneyFmt(profit)}/h</td>
+        <td data-label="Profit / day" class="num${profit != null && profit < 0 ? ' tr-neg' : ''}">${dailyProfitFmt(profit)}</td>
         <td data-label="Open" class="tr-emps-open">${[['train', 'Train'], ['keep', 'Keep or replace']].map(([tab, text]) =>
           `<button type="button" class="tr-use" data-go-tab="${tab}" data-go-emp="${emp._id}" aria-label="${escapeHtml(`${text}: ${emp.name}`)}">${text}</button>`).join('')}</td>
       </tr>`;
@@ -1885,13 +1887,14 @@ const EmployeeTrainingTool = (() => {
       </div>
       <div class="tr-emps-wrap"><table class="tr-emps">
         <thead><tr>${[['name', 'Employee'], ['age', 'Age', 1], ['production', 'Prod', 1], ['responsibility', 'Resp', 1], ['luck', 'Luck', 1], ['left', 'Trainings'],
-          ['next', 'Next training', 1], ['traits', 'Traits'], ['happiness', 'Happiness'], ['profit', 'Profit', 1]].map(([key, label, num]) => {
+          ['next', 'Next training', 1], ['traits', 'Traits'], ['happiness', 'Happiness'], ['profit', 'Profit / day', 1]].map(([key, label, num]) => {
             const on = empView.sort === key, dir = EMP_SORTS[key][2] * (empView.flip ? -1 : 1);
             return `<th scope="col"${num ? ' class="num"' : ''} aria-sort="${on ? (dir > 0 ? 'ascending' : 'descending') : 'none'}"><button type="button" class="tr-emps-sort" data-emp-sort="${key}">${label}${on ? `<span aria-hidden="true">${dir > 0 ? '▲' : '▼'}</span>` : ''}</button></th>`;
           }).join('')}<th scope="col"><span class="tr-muted">Open</span></th></tr></thead>
         <tbody>${body || '<tr><td colspan="11" class="tr-muted">No employees match.</td></tr>'}</tbody></table></div>`;
   }
 
+  const dailyProfitFmt = hourly => `${moneyFmt(hourly == null ? null : hourly * 24)}/day`;
   const moneyFmt = v => v == null ? '—' : (v < 0 ? '−' : '') + Math.abs(v).toFixed(3);
 
   // Overview: the team's totals, Next actions and the roster; then the
@@ -1924,7 +1927,7 @@ const EmployeeTrainingTool = (() => {
     const missing = team.companies.filter(x => x.rosterMissing);
     $team.innerHTML = `
       ${missing.length ? `<p class="tr-warn">Employee lists failed to load for ${missing.map(x => escapeHtml(companyName(x.company))).join(', ')}. Recommendations omit these companies. <button type="button" class="tr-link" data-reload>Retry</button>.</p>` : ''}
-      <div class="tr-section-heading"><h3 class="tr-pane-title">Summary</h3>${help('How summary totals are calculated', `<p><strong>Employee profit</strong> uses current employee estimates at today's prices, after wages and manager pay. It excludes engines and self-work.</p><p><strong>Total profit</strong> combines current engine output with employee output from the last full UTC day. It uses today's prices and subtracts wages and manager pay. It excludes self-work.</p><p>The estimate below Total profit adds self-work using one full energy bar and your Production stat. It uses today's prices at your company with the highest margin per production point. It assumes space in production storage and does not include energy regenerated while working.</p>`)}</div>
+      <div class="tr-section-heading"><h3 class="tr-pane-title">Summary</h3>${help('How summary totals are calculated', `${profitPricingHelp}<p><strong>Employee profit</strong> uses current employee estimates at today's prices, after wages and manager pay. It excludes engines and self-work.</p><p><strong>Total profit</strong> combines current engine output with employee output from the last full UTC day. It uses today's prices and subtracts wages and manager pay. It excludes self-work.</p><p>The estimate below Total profit adds self-work using one full energy bar and your Production stat. It uses today's prices at your company with the highest margin per production point. It assumes space in production storage and does not include energy regenerated while working.</p>`)}</div>
       <div class="tr-tiles">
         ${tile('Employees', all.length, `${team.companies.length} companies`)}
         ${tile('Production', `${(prod * 24).toFixed(2)} PP/day`, 'from employees')}
@@ -2068,7 +2071,7 @@ const EmployeeTrainingTool = (() => {
         <span>${stat('production')} · ${stat('responsibility')} · ${stat('luck')}</span>
         <span><b>${left}</b> of ${emp.potentialMax || 0} trainings left</span>
         ${hb && typeof hb.value === 'number' ? `<span class="${hb.value < 30 ? 'tr-warn' : ''}">Happiness <b>${fmtNum(hb.value)}</b></span>` : ''}
-        <span>Profit <b class="${profit != null && profit < 0 ? 'tr-neg' : ''}">${moneyFmt(profit)}/h</b></span></div>
+        <span>Profit <b class="${profit != null && profit < 0 ? 'tr-neg' : ''}">${dailyProfitFmt(profit)}</b></span></div>
       ${status}`;
   }
 
