@@ -441,6 +441,11 @@ const EmployeeTrainingTool = (() => {
   const ARG_SHORT = { production: 'Prod', responsibility: 'Resp', luck: 'Luck', match: 'its product', other: 'other good' };
 
   let cardPricer = null, cardRevision = null;
+  // A number per object, for memo keys over objects that are replaced
+  // rather than changed (team, market, employees).
+  const objectIds = new WeakMap();
+  let nextObjectId = 0;
+  const objectId = x => x == null ? 0 : objectIds.get(x) ?? (objectIds.set(x, ++nextObjectId), nextObjectId);
 
   // Handy and Improviser hang on holding a tool. Card values start from the
   // registered tools the assignment plan hands out, and may give the employee
@@ -459,10 +464,12 @@ const EmployeeTrainingTool = (() => {
         const url = document.getElementById('tr-assignments-body').dataset.worker;
         return new Worker(`${url}&core=${tag('employee-core')}&planner=${tag('employee-planner')}`);
       },
-      onUpdate: () => { renderResult(); renderTeam(); renderFire(); },
+      onUpdate: () => renderAfter({ train: ['result', 'team', 'fire'], keep: ['fire', 'result', 'team'] }[view.tab] || ['team', 'result', 'fire']),
     });
     const settings = assignments?.cardSettings();
-    const revision = JSON.stringify([team, market, settings]);
+    // team and market are replaced, never changed in place, so their
+    // identity stands for their contents.
+    const revision = JSON.stringify([objectId(team), objectId(market), settings]);
     if (revision !== cardRevision) {
       cardRevision = revision;
       const prepared = settings && !taken.size ? EmployeeAssignments.snapshotOf(team, market, settings) : { errors: ['No workforce loaded.'] };
@@ -475,6 +482,17 @@ const EmployeeTrainingTool = (() => {
     return { subjectId: emp._id, cards, options: { employee: { ...employeeOf(inp), potentialMax: emp.potentialMax },
       context: plannedTool(emp._id) ? withTool(contextOf(inp)) : contextOf(inp), feed, assigned: plannedTools() } };
   }
+  // What the worker prices first follows the open tab: on Train, the hand
+  // on screen, then the other hands; elsewhere, the energy feed behind
+  // Next actions comes first.
+  const pricingRank = kind => (view.tab === 'train' ? { selected: 0, hands: 1, feed: 2 } : { feed: 0, selected: 1, hands: 2 })[kind];
+  let selectedKey = null;
+  function rankPricing() {
+    if (!cardPricer) return;
+    if (feedMemo.key) cardPricer.reprioritize(feedMemo.key, pricingRank('feed'));
+    for (const key of prefetchKeys) if (key !== selectedKey) cardPricer.reprioritize(key, pricingRank('hands'));
+    if (selectedKey) cardPricer.reprioritize(selectedKey, pricingRank('selected'));
+  }
   function selectedPricing(cards, kind) {
     const pricer = prepareCardPricing();
     const found = findEmployee(input.pick);
@@ -482,7 +500,10 @@ const EmployeeTrainingTool = (() => {
     if (input.hand?.missing) return { status: 'fallback', reason: 'The dealt hand contains an unknown card. Reload its offers.' };
     if (!cards.length) return { status: 'fallback', reason: 'No hand dealt.' };
     const job = pricingJob(found.emp, found.entry, cards);
-    const batch = pricer.request(JSON.stringify([kind, job]), [job], kind === 'hand' ? 0 : 1);
+    // The hand left behind goes back in line with the others (or last).
+    if (selectedKey && selectedKey !== JSON.stringify([kind, job])) pricer.reprioritize(selectedKey, prefetchKeys.includes(selectedKey) ? pricingRank('hands') : 9);
+    selectedKey = JSON.stringify([kind, job]);
+    const batch = pricer.request(selectedKey, [job], pricingRank('selected'));
     prefetchHands();
     return batch;
   }
@@ -506,11 +527,11 @@ const EmployeeTrainingTool = (() => {
         if (!input.hand || input.hand.missing) continue;
         const job = pricingJob(emp, entry, input.hand.slots.map(slotCard).filter(Boolean));
         keys.push(JSON.stringify(['hand', job]));
-        pricer.request(keys.at(-1), [job], 1);
+        pricer.request(keys.at(-1), [job], pricingRank('hands'));
       }
     } finally { input = saved; }
-    // Hands priced for an older plan wait behind everything else.
-    for (const key of prefetchKeys) if (!keys.includes(key)) pricer.reprioritize(key, 9);
+    // Hands priced for an older plan are dropped.
+    for (const key of prefetchKeys) if (!keys.includes(key)) pricer.cancel(key);
     prefetchKeys = keys;
   }
   function pricingLabel(batch, group = batch.result?.groups[0]) {
@@ -917,9 +938,19 @@ const EmployeeTrainingTool = (() => {
   // Break Room level n holds n employees; a company without it has level 1, the free one.
   const headcountCap = company => company.activeUpgradeLevels?.breakRoom ?? 1;
 
+  // The outlook depends on the employee, their coworkers, prices and
+  // management; a card taken elsewhere leaves it as it was.
+  let outlookMemo = { market: null, management: null, rows: new Map() };
   function trainRow(emp, entry) {
-    const inp = inputsFor(emp, entry);
-    const o = EC.trainingOutlook({ ...employeeOf(inp), potentialMax: emp.potentialMax }, contextOf(inp));
+    if (outlookMemo.market !== market || outlookMemo.management !== team?.management) outlookMemo = { market, management: team?.management, rows: new Map() };
+    const key = objectId(emp) + '|' + entry.company._id + '|' + entry.employees.map(objectId).join(',');
+    let o = outlookMemo.rows.get(key);
+    if (!o) {
+      const inp = inputsFor(emp, entry);
+      o = EC.trainingOutlook({ ...employeeOf(inp), potentialMax: emp.potentialMax }, contextOf(inp));
+      if (outlookMemo.rows.size >= 500) outlookMemo.rows.delete(outlookMemo.rows.keys().next().value);
+      outlookMemo.rows.set(key, o);
+    }
     const perDay = emp.trainingsPerDay || 1;
     return {
       kind: 'train', value: o.value, emp, entry, outlook: o, perDay,
@@ -1322,21 +1353,27 @@ const EmployeeTrainingTool = (() => {
           .map(({ value, ...c }) => c);
         return job;
       });
-      const batch = jobs.length ? pricer.request(JSON.stringify(['feed', jobs]), jobs, 2) : { status: 'fallback', reason: 'No trainings available.' };
-      feedMemo = { revision, batch, rows, jobs, published: false };
+      // A feed for an older plan would only delay this one.
+      if (feedMemo.key) pricer.cancel(feedMemo.key);
+      const key = jobs.length ? JSON.stringify(['feed', jobs]) : null;
+      const batch = key ? pricer.request(key, jobs, pricingRank('feed')) : { status: 'fallback', reason: 'No trainings available.' };
+      feedMemo = { revision, batch, rows, jobs, key, published: false };
     }
     const { batch, jobs } = feedMemo;
     if (batch.status === 'done' && !feedMemo.published) {
-      const results = new Map(jobs.map((job, i) => {
+      const results = new Map(jobs.flatMap((job, i) => {
         const group = batch.result.groups[i];
+        if (group.valid === false) return [];
         const quotes = new Map(job.cards.map((c, j) => [cardKey(c), group.quotes[j]]));
         const outlook = EC.trainingOutlook(job.options.employee, job.options.context, { price: c => quotes.get(cardKey(c))?.value ?? null });
-        return [job.subjectId, { outlook }];
+        return [[job.subjectId, { outlook }]];
       }));
       feedMemo.rows = feedMemo.rows.map(r => {
         const result = r.kind === 'train' && results.get(r.emp._id);
-        return result ? { ...r, value: result.outlook.value, outlook: result.outlook,
-          basis: 'avg next hand, incl. moves; restricted pairs; unpriced effects count zero' } : { ...r, basis: 'current-company hire estimate' };
+        if (result) return { ...r, value: result.outlook.value, outlook: result.outlook,
+          basis: 'avg next hand, incl. moves; restricted pairs; unpriced effects count zero' };
+        const failed = r.kind === 'train' && batch.result.groups[jobs.findIndex(j => j.subjectId === r.emp._id)];
+        return { ...r, basis: failed ? `current-company fallback: ${failed.reason}` : 'current-company hire estimate' };
       });
       const alt = altFrom(feedMemo.rows).value;
       feedMemo.rows = feedMemo.rows.map(r => r.kind === 'hire' ? hireRow(r.entry, alt) : r)
@@ -1353,11 +1390,18 @@ const EmployeeTrainingTool = (() => {
   // bar would fund; otherwise the least valuable training; with no team
   // loaded, a typical employee's. Self-work sets it instead when it pays more.
   const energyValue = () => altFrom(feedRows());
+  // A typical employee's next training depends only on management, and
+  // every render asks for it while no training is ready.
+  const typicalOutlooks = new Map();
+  const typicalOutlook = management => {
+    if (!typicalOutlooks.has(management)) typicalOutlooks.set(management, EC.trainingOutlook({}, { management }).value);
+    return typicalOutlooks.get(management);
+  };
   function altFrom(rows) {
     const trains = rows.filter(r => r.kind === 'train' && r.ready && !pendingHand(r.emp)).sort((a, b) => b.value - a.value);
     const self = selfWorkValue();
     let best;
-    if (!trains.length) best = { value: EC.trainingOutlook({}, { management: team?.management ?? 0 }).value, from: 'a typical employee\'s next training' };
+    if (!trains.length) best = { value: typicalOutlook(team?.management ?? 0), from: 'a typical employee\'s next training' };
     else {
       const bar = team.energy ? Math.max(1, Math.floor(team.energy / 10)) : trains.length;
       const r = trains[Math.min(bar, trains.length) - 1];
@@ -1390,22 +1434,46 @@ const EmployeeTrainingTool = (() => {
   // matching hire helps a Nationalist; a foreign hire costs a Xenophobe and helps a
   // Cosmopolitan; gender moves Girl Power and the like; Production moves
   // Rival and Mentor; a higher wage makes an Envious coworker unhappier.
-  function coworkerImpact(entry, { nationality, gender, production, wage }) {
+  // Each coworker's model and current trait values, worked out once per
+  // company roster rather than once per newcomer priced against it.
+  const coworkerBases = new WeakMap();
+  function coworkerBase(entry) {
+    let bases = coworkerBases.get(entry);
+    if (bases?.market === market && bases.management === team?.management) return bases;
+    bases = (entry?.employees || []).map(emp => {
+      const inp = inputsFor(emp, entry, { models: false });
+      const e = employeeOf(inp), ctx = contextOf(inp);
+      return { emp, inp, e, ctx,
+        was: inp.traits.map(t => EC.traitValue(t.code, e, ctx, { held: true, arg: t.arg }).value) };
+    });
+    Object.assign(bases, { market, management: team?.management });
+    coworkerBases.set(entry, bases);
+    return bases;
+  }
+  const impacts = new WeakMap();
+  function coworkerImpact(entry, newcomer) {
+    const bases = coworkerBase(entry);
+    let memo = impacts.get(bases);
+    if (!memo) impacts.set(bases, memo = new Map());
+    const key = [newcomer.nationality, newcomer.gender, newcomer.production, newcomer.wage].join('|');
+    let impact = memo.get(key);
+    if (!impact) memo.set(key, impact = coworkerImpactUncached(entry, newcomer));
+    return impact;
+  }
+  function coworkerImpactUncached(entry, { nationality, gender, production, wage }) {
     let value = 0;
     const notes = [];
-    for (const emp of entry?.employees || []) {
-      const inp = inputsFor(emp, entry, { models: false });
-      const e = employeeOf(inp), ctx = contextOf(inp), s = ctx.situation;
-      const joined = { ...entry, employees: [...entry.employees, { _id: 'newcomer', age: 20,
-        nationality, gender, base: { production }, wage, traits: [] }] };
+    const joined = { ...entry, employees: [...entry.employees, { _id: 'newcomer', age: 20,
+      nationality, gender, base: { production }, wage, traits: [] }] };
+    for (const { emp, inp, e, was: wasAll } of coworkerBase(entry)) {
       const after = contextOf(inputsFor(emp, joined, { models: false }));
-      for (const t of inp.traits) {
-        const was = EC.traitValue(t.code, e, ctx, { held: true, arg: t.arg }).value;
+      inp.traits.forEach((t, i) => {
+        const was = wasAll[i];
         const now = EC.traitValue(t.code, e, after, { held: true, arg: t.arg }).value;
-        if (was == null || now == null || Math.abs(now - was) < 0.5) continue;
+        if (was == null || now == null || Math.abs(now - was) < 0.5) return;
         value += now - was;
         notes.push(`${emp.name}'s ${traitName(t.code)}`);
-      }
+      });
     }
     return { value, notes };
   }
@@ -1538,8 +1606,25 @@ const EmployeeTrainingTool = (() => {
   // Nationalities only change the newcomer's own value through where
   // they'd work and how many other nationalities they'd meet, so those
   // share a key.
+  // A fresh set depends on the company, who else works there, the slots, the
+  // value of 10 energy and the team-wide nationality mix; taking a card
+  // changes few of those, so most sets carry over.
+  let freshMemo = { market: null, management: null, sets: new Map() };
   function freshSet(entry, alt, slots = recruit.cands.length) {
-    const groups = nationalityMix(entry).map(({ nationality, count }) => {
+    if (freshMemo.market !== market || freshMemo.management !== team?.management) freshMemo = { market, management: team?.management, sets: new Map() };
+    const key = [entry?.company._id, (entry?.employees || []).map(objectId).join(','), alt, slots, JSON.stringify(nationalityMix(entry))].join('|');
+    let set = freshMemo.sets.get(key);
+    if (!set) {
+      if (freshMemo.sets.size >= 500) freshMemo.sets.delete(freshMemo.sets.keys().next().value);
+      freshMemo.sets.set(key, set = freshSetUncached(entry, alt, slots));
+    }
+    return set;
+  }
+  function freshSetUncached(entry, alt, slots) {
+    return EC.freshSetValue(freshGroups(entry), { alt, slots, rate: 'slot' });
+  }
+  function freshGroups(entry) {
+    return nationalityMix(entry).map(({ nationality, count }) => {
       const { ctx, opts } = setupFor(entry, { nationality, gender: 'male' });
       return {
         weight: count, ctx, ...opts, key: `${nationality}|${ctx.situation.place}|${ctx.situation.homeCore}|${ctx.situation.otherNationalities}|${ctx.situation.sameNationalityCoworkers}`,
@@ -1547,7 +1632,6 @@ const EmployeeTrainingTool = (() => {
           coworkerImpact(entry, { nationality, gender, production, wage: wagePP * market.ppValue }).value : null,
       };
     });
-    return EC.freshSetValue(groups, { alt, slots, rate: 'slot' });
   }
 
   /* ── Keep or replace ─────────────────────────────────────── */
@@ -1560,7 +1644,16 @@ const EmployeeTrainingTool = (() => {
   // them, plus the hire's 10 energy. Firing costs coworkers nothing. So
   // look at the candidates before firing.
   const HIRE_LOCK_MS = 12 * 36e5;   // a new hire can't be fired for 12h
-  const without = (entry, emp) => ({ ...entry, employees: entry.employees.filter(x => x._id !== emp._id) });
+  // The company less one employee, one object per pair, so work keyed on
+  // the roster (coworkerImpact, coworkerBase) carries over between uses.
+  const withouts = new WeakMap();
+  const without = (entry, emp) => {
+    let byEmp = withouts.get(entry);
+    if (!byEmp) withouts.set(entry, byEmp = new Map());
+    let rest = byEmp.get(emp._id);
+    if (!rest) byEmp.set(emp._id, rest = { ...entry, employees: entry.employees.filter(x => x._id !== emp._id) });
+    return rest;
+  };
   const fireFrom = emp => {
     const t = Date.parse(emp.createdAt);
     return Number.isFinite(t) && Date.now() - t < HIRE_LOCK_MS ? new Date(t + HIRE_LOCK_MS) : null;
@@ -1595,32 +1688,114 @@ const EmployeeTrainingTool = (() => {
   }
 
   // Every employee, most worth replacing first, once per team and price set.
-  let keepMemo = { team: null, market: null, key: null, rows: [], reasons: new Map() };
+  let keepMemo = { key: null, rows: [], reasons: new Map() };
+  // Verdicts are worked out in the background, a few employees at a time,
+  // so a change (prices or card values landing) never freezes the page.
+  // Until they're ready the last verdicts stand, matched to the current
+  // records; `pending` marks them as such.
   function keepRows() {
     if (!team || !market?.ppValue || taken.size) return [];
     const feed = feedRows();
     const alt = altFrom(feed).value;
     const settings = assignments?.cardSettings() || { horizon: 'career', inventory: [], equippedHours: {}, pinned: [] };
-    const key = JSON.stringify([feedMemo.revision, feedMemo.published, alt, todayUtc(), settings]);
-    if (keepMemo.team !== team || keepMemo.market !== market || keepMemo.key !== key) {
-      const prepared = EmployeeAssignments.snapshotOf(team, market, settings);
-      const session = !prepared.errors.length && EmployeePlanner.retentionSession(prepared.snapshot);
-      const reasons = new Map(), rows = [];
-      for (const entry of team.companies) {
-        if (entry.rosterMissing) continue;
-        for (const emp of entry.employees) {
-          if (emp.pendingTraining) continue;
-          const projection = session ? session.price(emp._id) : { valid: false, reason: prepared.errors.join(' ') };
-          if (!projection.valid) { reasons.set(emp._id, projection.reason); continue; }
-          const training = feed.find(r => r.kind === 'train' && r.emp._id === emp._id);
-          rows.push(keepRow(emp, entry, alt, {
-            ...projection, own: projection.own / market.ppValue, coworkers: projection.coworkers / market.ppValue,
-          }, training?.value));
-        }
-      }
-      keepMemo = { team, market, key, reasons, rows: rows.sort((a, b) => (keepVerdict(b) === 'fire') - (keepVerdict(a) === 'fire') || b.chance - a.chance) };
+    const key = JSON.stringify([objectId(team), objectId(market), feedMemo.revision, feedMemo.published, alt, todayUtc(), settings]);
+    if (keepMemo.key === key) return keepMemo.rows;
+    if (keepJob?.key !== key) keepJob = { key, team, market, feed, alt, settings };
+    scheduleKeep();
+    const rows = keepMemo.rows.flatMap(r => { const now = findEmployee(r.emp._id); return now ? [{ ...r, ...now }] : []; });
+    rows.pending = true;
+    return rows;
+  }
+  // What keeping each employee earns in their company, and what their leaving
+  // costs the rest. It doesn't depend on the feed or the value of energy, so
+  // it carries over when those land.
+  let retentionMemo = { key: null };
+  function retention(job) {
+    const key = JSON.stringify([objectId(job.team), objectId(job.market), todayUtc(), job.settings]);
+    if (retentionMemo.key !== key) {
+      const prepared = EmployeeAssignments.snapshotOf(job.team, job.market, job.settings);
+      retentionMemo = { key, errors: prepared.errors, prices: new Map(),
+        session: !prepared.errors.length && EmployeePlanner.retentionSession(prepared.snapshot) };
     }
-    return keepMemo.rows;
+    return retentionMemo;
+  }
+  function retentionOf(job, id) {
+    const memo = retention(job);
+    if (!memo.session) return { valid: false, reason: memo.errors.join(' ') };
+    if (!memo.prices.has(id)) memo.prices.set(id, memo.session.price(id));
+    return memo.prices.get(id);
+  }
+  let keepJob = null, keepRunning = false;
+  // Panes left undrawn while hidden, drawn when opened.
+  const stalePanes = new Set();
+  const paneHidden = name => !!$shell.querySelector(`[data-pane="${name}"]`)?.hidden;
+  // Yields to the browser (input, paint) without setTimeout's 4 ms clamp.
+  const nextTask = () => new Promise(resolve => { const c = new MessageChannel(); c.port1.onmessage = () => { c.port1.close(); resolve(); }; c.port2.postMessage(0); });
+  // Redraws queued after a change, one per task so the page answers in
+  // between. A part queued again before it runs is drawn once, with the
+  // latest data.
+  const RENDERS = {
+    team: () => renderTeam(),
+    result: () => renderResult(),
+    fire: () => renderFire(),
+    side: () => { if (!$pick.hidden) renderSide(); },
+    // The candidate form keeps what's typed; only the full-company view,
+    // which lists keep verdicts, redraws when they land.
+    recruit: () => { const entry = recruitEntry(); if (entry && entry.employees.length >= headcountCap(entry.company)) renderRecruitForm(); },
+    recruitForm: () => renderRecruitForm(),
+    picker: () => renderPicker(),
+    assignments: () => { assignments?.refresh(); assignments?.run({ auto: true }); },
+  };
+  const renderQueue = new Set();
+  let rendering = false;
+  async function renderAfter(parts) {
+    for (const part of parts) renderQueue.add(part);
+    if (rendering) return;
+    rendering = true;
+    try {
+      while (renderQueue.size) {
+        await nextTask();
+        const [part] = renderQueue;
+        renderQueue.delete(part);
+        if (team) RENDERS[part]();
+      }
+    } finally { rendering = false; }
+  }
+  async function scheduleKeep() {
+    if (keepRunning) return;
+    keepRunning = true;
+    try {
+      while (keepJob) {
+        const job = keepJob;
+        const rows = [], reasons = new Map();
+        let start = performance.now();
+        const breathe = async () => { if (performance.now() - start > 12) { await nextTask(); start = performance.now(); } };
+        for (const entry of job.team.companies) {
+          if (entry.rosterMissing) continue;
+          for (const emp of entry.employees) {
+            if (keepJob !== job) break;
+            if (emp.pendingTraining) continue;
+            const projection = retentionOf(job, emp._id);
+            if (!projection.valid) { reasons.set(emp._id, projection.reason); continue; }
+            await breathe();
+            // A new company setting needs the newcomer's tables, which take
+            // longest: built a few steps at a time first.
+            for (const _ of EC.freshSetWarm(freshGroups(without(entry, emp)))) await breathe();
+            if (keepJob !== job) break;
+            const training = job.feed.find(r => r.kind === 'train' && r.emp._id === emp._id);
+            rows.push(keepRow(emp, entry, job.alt, {
+              ...projection, own: projection.own / job.market.ppValue, coworkers: projection.coworkers / job.market.ppValue,
+            }, training?.value));
+            await breathe();
+          }
+        }
+        if (keepJob !== job) continue;
+        keepJob = null;
+        if (job.team !== team || job.market !== market || taken.size) continue;
+        keepMemo = { key: job.key, reasons, rows: rows.sort((a, b) => (keepVerdict(b) === 'fire') - (keepVerdict(a) === 'fire') || b.chance - a.chance) };
+        renderAfter(['team', 'fire', 'side', 'recruit']);
+      }
+    } finally { keepRunning = false; }
   }
 
   const utcTime = d => `${d.toISOString().slice(11, 16)} UTC`;
@@ -1637,6 +1812,8 @@ const EmployeeTrainingTool = (() => {
   // replacing them is worth (use case 3), then a line on the whole team.
   function renderFire() {
     if (!$fire) return;
+    if (team && paneHidden('keep')) { stalePanes.add('keep'); return; }
+    stalePanes.delete('keep');
     if (!team) { $fire.innerHTML = '<p class="tr-muted">Load your employees above to see who is worth keeping.</p>'; return; }
     if (!market?.ppValue) { $fire.innerHTML = '<p class="tr-muted">Loading prices…</p>'; return; }
     if (taken.size) { $fire.innerHTML = '<p class="tr-warn">Reload from the game after the recorded training choice before comparing replacements.</p>'; return; }
@@ -1644,6 +1821,7 @@ const EmployeeTrainingTool = (() => {
     const rows = keepRows();
     const act = rows.filter(r => ['fire', 'replace'].includes(keepVerdict(r)));
     const r = rows.find(x => x.emp._id === input.pick);
+    if (!r && rows.pending) { $fire.innerHTML = '<p class="tr-muted" role="status">Working out who is worth keeping…</p>'; return; }
     if (!r) { $fire.innerHTML = `<p class="tr-muted">${escapeHtml(keepMemo.reasons.get(input.pick) || 'Choose an employee with a complete roster and verified stats.')}</p>`; return; }
     const { emp, entry } = r;
     const v = keepVerdict(r);
@@ -1678,6 +1856,7 @@ const EmployeeTrainingTool = (() => {
       : `Nobody is marked Fire or Replace. The highest replacement chance is ${odds(rows[0].chance)}, for ${rows[0] === r ? 'this employee' : `<button type="button" class="tr-link" data-go-tab="keep" data-go-emp="${rows[0].emp._id}">${escapeHtml(rows[0].emp.name)}</button>`}.`;
     $fire.innerHTML = `
       ${help('How this is worked out', `<p><strong>Worth keeping</strong> includes the employee's output, traits and remaining trainings, plus the value their traits add to coworkers.</p><p><strong>Worth replacing</strong> uses the best candidate from a fresh set, minus the hire's 10 energy. Firing costs coworkers nothing.</p><p>Both values subtract what a new hire would earn in that slot over the same working days. This accounts for the work you give up by keeping either employee in the slot.</p><p><strong>Replace</strong> means a fresh hire wins at least two times in three. <strong>Close</strong> means at least one time in three. <strong>Fire</strong> means the employee costs more than they earn.</p>`)}
+      ${rows.pending ? '<p class="tr-calc-sub" role="status">Updating for your latest change…</p>' : ''}
       <div class="tr-verdict tr-keep-${v}"><span class="tr-verdict-take">${VERDICT[v]}${v === 'close' ? ' call' : ''}</span><small>${why}</small>
         ${r.from ? `<small class="tr-warn">Just hired: can be fired from ${utcTime(r.from)}.</small>` : ''}</div>
       <div class="tr-keep-cols">
@@ -1831,6 +2010,8 @@ const EmployeeTrainingTool = (() => {
 
   function renderEmployees() {
     if (!team) return;
+    if (paneHidden('employees')) { stalePanes.add('employees'); return; }
+    stalePanes.delete('employees');
     const verdicts = new Map(keepRows().map(r => [r.emp._id, keepVerdict(r)]));
     const topTrain = new Set(feedRows().filter(r => r.kind === 'train' && r.ready).slice(0, 5).map(r => r.emp._id));
     const nextOf = new Map(feedRows().filter(r => r.kind === 'train').map(r => [r.emp._id, r]));
@@ -1917,6 +2098,14 @@ const EmployeeTrainingTool = (() => {
     // The planner's steps, as in Next actions; blank while it searches.
     tabCount('assignments', plan?.gain > 1e-7 ? plan.changes : 0);
     const energy = energyNow(), bar = team.energyBar;
+    // A hidden pane is drawn when it's opened (showTab).
+    if (paneHidden('overview')) {
+      stalePanes.add('overview');
+      renderEmployees();
+      if (market) for (const fn of watchers) fn(snapshot());
+      return;
+    }
+    stalePanes.delete('overview');
     const total = team.totalProfit;
     const totalAvailable = total && !total.statsMissing && !total.unpriced;
     const totalNote = !total ? 'could not load total profit'
@@ -2088,18 +2277,15 @@ const EmployeeTrainingTool = (() => {
     cardPricer = null;
     cardRevision = null;
     plan = null;
+    keepJob = null;
     renderResult();
     renderEmpHead();
     $calc.querySelector('.tr-emp-took')?.focus({ preventScroll: true });
-    // Let the confirmation paint before recalculating recommendations.
-    requestAnimationFrame(() => setTimeout(() => {
-      renderFire();
-      renderTeam();
-      renderRecruitForm();
-      renderPicker();
-      assignments?.refresh();
-      assignments?.run({ auto: true });
-    }, 0));
+    // Advice is paused until the reload, so the other parts only swap in
+    // their notices; the open tab's first.
+    const parts = ['picker', 'assignments', 'team', 'fire', 'recruitForm'];
+    const first = { overview: 'team', employees: 'team', keep: 'fire', hire: 'recruitForm', train: 'picker' }[view.tab];
+    requestAnimationFrame(() => renderAfter([first, ...parts.filter(x => x !== first)].filter(Boolean)));
   }
 
   /* ── Tabs and the selected employee ──────────────────────── */
@@ -2122,6 +2308,8 @@ const EmployeeTrainingTool = (() => {
       if (on && focus) b.focus();
     }
     for (const p of $shell.querySelectorAll('[data-pane]')) p.hidden = p.dataset.pane !== view.tab;
+    rankPricing();
+    if (stalePanes.has(view.tab)) ({ overview: renderTeam, employees: renderEmployees, keep: renderFire })[view.tab]();
     renderPicker();
     writeState();
     // Opened from further down the page: bring the tabs back into view.

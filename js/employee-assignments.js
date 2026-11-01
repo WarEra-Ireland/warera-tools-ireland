@@ -685,9 +685,20 @@ const EmployeeAssignments = (() => {
   }
   // A separate worker owns all expensive projections. Revision changes discard
   // every quote, including replies already queued by a terminated worker.
+  // Settled batches are kept for reuse, least recently asked for first, up
+  // to this many; pending ones stay until answered or cancelled.
+  const SETTLED_KEPT = 200;
   function createCardPricer({ workerFactory, onUpdate = () => {} }) {
     let worker = null, revision = null, generation = 0, serial = 0, failure = null;
     const batches = new Map();
+    function prune() {
+      let settled = 0;
+      for (const b of batches.values()) if (b.status !== 'pending') settled++;
+      for (const [key, b] of batches) {
+        if (settled <= SETTLED_KEPT) break;
+        if (b.status !== 'pending') { batches.delete(key); settled--; }
+      }
+    }
     const fail = reason => {
       worker?.terminate(); worker = null;
       failure = reason;
@@ -707,6 +718,7 @@ const EmployeeAssignments = (() => {
           if (!batch || batch.status !== 'pending') return;
           Object.assign(batch, data.result.valid ? { status: 'done', result: data.result }
             : { status: 'fallback', reason: data.result.reason || 'Projection could not finish.' });
+          prune();
           onUpdate();
         };
         worker.onerror = () => { if (gen === generation) { worker?.terminate(); fail('The valuation worker failed.'); } };
@@ -721,9 +733,18 @@ const EmployeeAssignments = (() => {
       batch.priority = priority;
       try { worker.postMessage({ kind: 'cards:priority', generation, id: batch.id, priority }); } catch { /* keeps its place */ }
     }
+    // Drop a queued batch nothing shows any more; asking again re-queues it.
+    function cancel(key) {
+      const batch = batches.get(key);
+      if (!batch) return;
+      batches.delete(key);
+      if (batch.status !== 'pending') return;
+      try { worker.postMessage({ kind: 'cards:cancel', generation, id: batch.id }); } catch { /* it finishes unseen */ }
+    }
     function request(key, jobs, priority = 2) {
       const known = batches.get(key);
       if (known) {
+        batches.delete(key); batches.set(key, known);
         if (priority < known.priority) reprioritize(key, priority);
         return known;
       }
@@ -733,9 +754,10 @@ const EmployeeAssignments = (() => {
         try { worker.postMessage({ kind: 'cards', generation, id: batch.id, jobs, priority }); }
         catch { Object.assign(batch, { status: 'fallback', reason: 'The worker could not receive this batch.' }); }
       }
+      prune();
       return batch;
     }
-    return { reset, request, reprioritize, get generation() { return generation; },
+    return { reset, request, reprioritize, cancel, get generation() { return generation; },
       dispose() { generation++; worker?.terminate(); worker = null; batches.clear(); } };
   }
   return { mount, sanitize, fieldErrors, snapshotOf, careerDays, createCardPricer };

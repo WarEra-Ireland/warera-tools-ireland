@@ -145,18 +145,19 @@ const EmployeeCore = (() => {
     return 0;
   }
 
-  // Value of a card over the employee's remaining working life.
-  function cardValue(e, c, ctx, depth = 1) {
+  // Value of a card over the employee's remaining working life. `memo`
+  // holds work shared by the cards of one pool (same employee and context).
+  function cardValue(e, c, ctx, depth = 1, memo = {}) {
     e = { ...DEFAULT_EMPLOYEE, ...e };
     ctx = { ...DEFAULT_CONTEXT, ...ctx };
-    if (c.card === 'secondWind') return secondWindValue(e, c, ctx, depth);
+    if (c.card === 'secondWind') return secondWindValue(e, c, ctx, depth, null, memo);
     let v = traitCardValue(e, c, ctx);
     if (v === undefined) {
       const h = hourlyGain(e, c, ctx);
       v = h === null ? null : h * hoursLeft(e);
     }
     if (v === null) return null;
-    if (c.card === 'drill' && c.stat === 'luck') v += futureLuckValue(e, c.delta, ctx);
+    if (c.card === 'drill' && c.stat === 'luck') v += futureLuckValue(e, c.delta, ctx, memo);
     const after = afterCard(e, c);
     return after ? v + peerShift(e, after, ctx) : v;
   }
@@ -209,11 +210,11 @@ const EmployeeCore = (() => {
   // made that many days later, when less working life remains.
   // potentialLeft counts sessions after this draw.
   // Each is priced like any training: the whole card pool, trait cards too.
-  function secondWindValue(e, c, ctx, depth, price = null) {
+  function secondWindValue(e, c, ctx, depth, price = null, memo = {}) {
     if (depth <= 0) return 0;
     const days = workingDays(e);
     if (!days) return 0;
-    const perTraining = trainingOutlook(e, ctx, { price, depth: depth - 1 }).value;   // value if trained today
+    const perTraining = trainingOutlook(e, ctx, { price, depth: depth - 1, memo }).value;   // value if trained today
     let total = 0;
     for (let j = 1; j <= c.gain; j++) {
       const daysUntil = (e.potentialLeft + j) / e.trainingsPerDay;
@@ -236,11 +237,12 @@ const EmployeeCore = (() => {
 
   // A one-step forecast: extra Luck changes the rarity of the remaining draws.
   // Their values exclude further Luck forecasts and Second Wind recursion.
-  function futureLuckValue(e, delta, ctx = {}) {
+  // The outlook is the same for every Luck card in a pool, so `memo` keeps it.
+  function futureLuckValue(e, delta, ctx = {}, memo = {}) {
     if (ctx.futureTraining === false || !delta) return 0;
     const days = workingDays(e), count = Math.max(0, e.potentialLeft || 0);
     if (days <= 0 || !count) return 0;
-    const outlook = trainingOutlook(e, { ...ctx, futureTraining: false }, { depth: 0 });
+    const outlook = memo.luckOutlook ??= trainingOutlook(e, { ...ctx, futureTraining: false }, { depth: 0 });
     const mean = luck => {
       const odds = rarityOdds(luck, ctx.management || 0);
       const norm = outlook.rarities.reduce((n, r) => n + odds[r.rarity], 0);
@@ -552,37 +554,67 @@ const EmployeeCore = (() => {
       quickStudy: pph(e) * (careerBonus(e, 2) - B) * sr,
     };
     base.stat = (stat, k) => stat === 'production' ? base.prod(k) : stat === 'responsibility' ? base.resp(k) : base.luck(k);
+    // A day's ordinary Production and standing among the coworkers. They only
+    // change on the days peerSteps finds, so each stretch is worked out once,
+    // and kept for other trait values of the same employee in the same
+    // situation (a card pool asks for dozens).
+    const days = workingDays(e);
+    const steps = peerSteps(e, s, days);
+    const others = e.traits ? { ...e, traits: e.traits.filter(t => t.code !== code) } : e;
+    const prefix = `${code}|${JSON.stringify([e.production, e.age, e.nationality, e.traits])}|${
+      JSON.stringify(s, (k, v) => k === 'coworkerModels' ? undefined : v)}|`;
+    let stretches = DAY_STATES.get(prefix);
+    if (!stretches) {
+      if (DAY_STATES.size >= 4000) DAY_STATES.delete(DAY_STATES.keys().next().value);
+      DAY_STATES.set(prefix, stretches = new Map());
+    }
+    const dayState = d => {
+      let st = stretches.get(steps[d]);
+      if (st) return st;
+      st = { productionBase: ordinaryProduction(others, s, d), happyRecipients: null, patch: null, peerTotal: null };
+      if (s.peers) {
+        const own = comparisonProduction(e, s, d);
+        const activePeers = s.peers.filter(p => !p.model || p.model.age + d < CFG.retireAge);
+        const peers = activePeers.map(p => p.model ? comparisonProduction(p.model, p.situation, d) : p.production);
+        st.happyRecipients = code === 'comic' && activePeers.every(p => p.model?.traits)
+          ? activePeers.filter(recipient => !activePeers.some(other => other !== recipient
+            && other.model.traits.some(t => t.code === 'comic'))).length : activePeers.length;
+        st.patch = { coworkers: peers.length };
+        const nationality = e.nationality || s.nationality;
+        if (nationality && activePeers.every(p => p.model?.nationality)) {
+          Object.assign(st.patch, nationalitySituation(nationality, activePeers.map(p => p.model)));
+        }
+        Object.assign(st.patch, productionStanding(own, peers));
+        if (code === 'rival' || code === 'mentor') {
+          // Settled with the day's standing in place, as the hourly pass sees it.
+          const saved = { ...s };
+          Object.assign(s, st.patch);
+          const row = (model, situation, production) => ({
+            production: model ? ordinaryProduction(model, situation, d) : production,
+            rival: model?.traits?.some(t => t.code === 'rival') || false,
+            mentor: model?.traits?.some(t => t.code === 'mentor') || false,
+          });
+          const subject = row(e, s);
+          const coworkers = activePeers.map(p => row(p.model, p.situation, p.production));
+          const without = peerProduction([{ ...subject, [code]: false }, ...coworkers]);
+          const withTrait = peerProduction([{ ...subject, [code]: true }, ...coworkers]);
+          st.peerTotal = withTrait.reduce((v, production, i) => v + production - without[i], 0)
+            / CFG.outputDivisor * (1 + B) * sr * 24;
+          Object.assign(s, saved);
+        }
+      }
+      stretches.set(steps[d], st);
+      return st;
+    };
     const outcomes = traitArgs(t, arg, s, held).map(({ arg: a, p }) => {
       let total = 0;
-      for (let d = 0; d < workingDays(e); d++) {
-        productionBase = ordinaryProduction({ ...e, traits: (e.traits || []).filter(t => t.code !== code) }, s, d);
-        if (s.peers) {
-          const own = comparisonProduction(e, s, d);
-          const activePeers = s.peers.filter(p => !p.model || p.model.age + d < CFG.retireAge);
-          const peers = activePeers.map(p => p.model ? comparisonProduction(p.model, p.situation, d) : p.production);
-          happyRecipients = code === 'comic' && activePeers.every(p => p.model?.traits)
-            ? activePeers.filter(recipient => !activePeers.some(other => other !== recipient
-              && other.model.traits.some(t => t.code === 'comic'))).length : activePeers.length;
-          s.coworkers = peers.length;
-          const nationality = e.nationality || s.nationality;
-          if (nationality && activePeers.every(p => p.model?.nationality)) {
-            Object.assign(s, nationalitySituation(nationality, activePeers.map(p => p.model)));
-          }
-          Object.assign(s, productionStanding(own, peers));
-          if (code === 'rival' || code === 'mentor') {
-            const row = (model, situation, production) => ({
-              production: model ? ordinaryProduction(model, situation, d) : production,
-              rival: model?.traits?.some(t => t.code === 'rival') || false,
-              mentor: model?.traits?.some(t => t.code === 'mentor') || false,
-            });
-            const subject = row(e, s);
-            const coworkers = activePeers.map(p => row(p.model, p.situation, p.production));
-            const without = peerProduction([{ ...subject, [code]: false }, ...coworkers]);
-            const withTrait = peerProduction([{ ...subject, [code]: true }, ...coworkers]);
-            total += withTrait.reduce((v, production, i) => v + production - without[i], 0)
-              / CFG.outputDivisor * (1 + B) * sr * 24;
-            continue;
-          }
+      for (let d = 0; d < days; d++) {
+        const st = dayState(d);
+        productionBase = st.productionBase;
+        if (st.patch) {
+          happyRecipients = st.happyRecipients;
+          Object.assign(s, st.patch);
+          if (st.peerTotal != null) { total += st.peerTotal; continue; }
         }
         total += t.hourly({ ...base, arg: a, age: e.age + d, tenure: s.tenureDays + d, employed: s.employedDays + d }) * 24;
       }
@@ -590,6 +622,34 @@ const EmployeeCore = (() => {
     });
     return { value: outcomes.reduce((a, o) => a + o.p * o.value, 0), outcomes: outcomes.length > 1 ? outcomes : [] };
   }
+
+  // For each working day, the first day of its stretch: a day on which
+  // ordinaryProduction or the peer standing can change. Those depend on day
+  // d only through who has retired and each model's age and tenure in whole
+  // decades (age and tenure traits step at multiples of 10), so a stretch
+  // starts wherever one of those moves. Computed with the same arithmetic
+  // the traits use.
+  function peerSteps(e, s, days) {
+    const decades = [], retire = [];
+    const tenureOf = sit => sit && Object.hasOwn(sit, 'tenureDays') ? sit.tenureDays : DEFAULT_SITUATION.tenureDays;
+    decades.push(e.age, s.tenureDays + 1e-9);
+    for (const p of s.peers || []) {
+      if (!p.model) continue;
+      retire.push(p.model.age);
+      decades.push(p.model.age, tenureOf(p.situation) + 1e-9);
+      for (const q of p.situation?.peers || []) if (q.model) retire.push(q.model.age);
+    }
+    const steps = new Array(days);
+    let start = 0;
+    for (let d = 0; d < days; d++) {
+      if (d && (decades.some(x => Math.floor((x + d) / 10) !== Math.floor((x + d - 1) / 10))
+        || retire.some(a => (a + d < CFG.retireAge) !== (a + d - 1 < CFG.retireAge)))) start = d;
+      steps[d] = start;
+    }
+    return steps;
+  }
+  // Day states by trait, employee and situation, then by stretch (see traitValue).
+  const DAY_STATES = new Map();
 
   // Rival and Mentor compare a frozen pass of ordinary stat effects. Neither
   // their self effects nor incoming Mentor bonuses participate in this pass.
@@ -763,20 +823,20 @@ const EmployeeCore = (() => {
   // Every card a training could deal this employee now, priced, by rarity
   // (the game's training card pool). Unpriced traits count as 0.
   // e.potentialMax, if given, keeps Second Wind within the cap.
-  function cardPool(e, ctx = {}, { price = null, depth = 1 } = {}) {
+  function cardPool(e, ctx = {}, { price = null, depth = 1, memo = {} } = {}) {
     e = { ...DEFAULT_EMPLOYEE, ...e };
     ctx = { ...DEFAULT_CONTEXT, ...ctx };
     const s = { ...DEFAULT_SITUATION, ...ctx.situation };
     const held = e.traits || [];
     const codes = held.map(h => h.code);
-    const value = c => (price ? price(c) : cardValue(e, c, ctx, depth)) ?? 0;
+    const value = c => (price ? price(c) : cardValue(e, c, ctx, depth, memo)) ?? 0;
     const traitV = {};
     const tv = code => (traitV[code] ??= (price ? price({ card: 'habit', code }) : traitValue(code, e, ctx).value) ?? 0);
     const pool = Object.fromEntries(RARITIES.map(r => [r, []]));
     for (const r of RARITIES) {
       for (const c of NUMERIC_CARDS[r]) {
         if (c.card === 'secondWind' && e.potentialMax != null && e.potentialMax + c.gain > CFG.potentialMaxCap) continue;
-        const v = price ? price(c) : cardValue(e, c, ctx, depth);
+        const v = price ? price(c) : cardValue(e, c, ctx, depth, memo);
         if (v !== null) pool[r].push({ ...c, value: v });
       }
     }
@@ -959,64 +1019,102 @@ const EmployeeCore = (() => {
   // slot's own rate, where the pick earns its 10 energy (alt) and no more.
   // { best (the pick's surplus), gross (its value), days, rate, average,
   // coworkers, beat(bar) on the surplus }.
+  const OWN_TABLES = new Map();
+  const WAGE_GRID = Array.from({ length: 11 }, (_, i) => 0.6 + i * 0.1);   // expectation × Greedy/Modest
+  // The newcomer's own tables for a company setting, apart from the
+  // trainings' surplus over alt. A generator, so a page can build them a
+  // few steps at a time (freshSetWarm); freshSetValue runs it to the end.
+  const ownKey = g => JSON.stringify([{ ...DEFAULT_CONTEXT, ...g.ctx }, g.bonus || 0, g.happinessLoss ?? DEFAULT_EMPLOYEE.happinessLoss]);
+  function* ownTables(g) {
+    const ctx = { ...DEFAULT_CONTEXT, ...g.ctx };
+    const hire = { ...DEFAULT_EMPLOYEE, extraProduction: 0, bonus: g.bonus || 0, specialization: 0, happinessLoss: g.happinessLoss ?? DEFAULT_EMPLOYEE.happinessLoss, traits: [], trainingsPerDay: 1 };
+    const ages = HIRE.maxAge - HIRE.minAge + 1;
+    const mid = { ...hire, age: 31, production: HIRE.avgStat, wageExpectation: 1 };
+    const midDays = workingDays(mid);
+    // Per age: output per paid point before wages (by Responsibility),
+    // hours left, working days.
+    const gross = [], hours = [], days = [];
+    for (let R = HIRE.minStat; R <= HIRE.maxStat; R++) gross[R] = [];
+    for (let a = 0; a < ages; a++) {
+      const e = { ...hire, age: HIRE.minAge + a, production: CFG.outputDivisor, wageExpectation: 0 };
+      for (let R = HIRE.minStat; R <= HIRE.maxStat; R++) {
+        gross[R].push(hourlyProfit({ ...e, bonus: withHappiness(hire.bonus, hireHappiness(R, hire.happinessLoss)) }, ctx));
+      }
+      hours.push(hoursLeft(e)); days.push(workingDays(e));
+    }
+    // A training's value a day, by Production.
+    const perDay = [];
+    for (let P = HIRE.minStat; P <= HIRE.maxStat; P++) {
+      perDay[P] = trainingOutlook({ ...mid, production: P }, ctx).value / midDays;
+      yield;
+    }
+    // Rollable traits by gender, each priced by Production at age 31.
+    const traits = {};
+    for (const gender of ['male', 'female']) {
+      const gctx = { ...ctx, situation: { ...ctx.situation, gender } };
+      const list = [];
+      for (const t of TRAITS.filter(t => t.weight && (!t.gender || t.gender === gender))) {
+        list.push({ code: t.code, weight: t.weight, mult: wageMult(t.code),
+          value: [0, 1, 2, 3, 4].map(P => !P || t.partner || WAGE_MULT[t.code] ? 0
+            : traitValue(t.code, { ...mid, production: P }, gctx).value ?? 0) });
+        yield;
+      }
+      const total = list.reduce((a, t) => a + t.weight, 0);
+      // Greedy and Modest are worth 0, so by wage multiplier: the weight
+      // and the weighted value of the traits with it.
+      const byMult = [1, ...Object.values(WAGE_MULT)].map(m => {
+        const of = list.filter(t => t.mult === m);
+        return { m, weight: of.reduce((a, t) => a + t.weight, 0), value: [0, 1, 2, 3, 4].map(P => of.reduce((a, t) => a + t.weight * t.value[P], 0)) };
+      });
+      // The trait's average as the card reads, given the wage reading x.
+      const seen = (P, x) => {
+        let w = 0, v = 0;
+        for (const b of byMult) { const f = wageFit(x, b.m); w += f * b.weight; v += f * b.value[P]; }
+        return w ? v / w : byMult.reduce((a, b) => a + b.value[P], 0) / total;
+      };
+      traits[gender] = { list, total, seen };
+    }
+    const base = { gross, hours, days, perDay, traits, midDays };
+    if (OWN_TABLES.size >= 200) OWN_TABLES.delete(OWN_TABLES.keys().next().value);
+    OWN_TABLES.set(ownKey(g), base);
+    return base;
+  }
+  const runToEnd = it => { for (;;) { const r = it.next(); if (r.done) return r.value; } };
+  // Builds the tables a fresh set over these groups will need, yielding
+  // between steps. With a memoised coworkers(), it warms that grid too.
+  function* freshSetWarm(groups) {
+    for (const g of Array.isArray(groups) ? groups : [groups || {}]) {
+      if (!OWN_TABLES.has(ownKey(g))) yield* ownTables(g);
+      if (!g.coworkers) continue;
+      for (const gender of ['male', 'female']) for (let P = 1; P <= 4; P++) {
+        for (const x of WAGE_GRID) g.coworkers(P, P / CFG.outputDivisor * x, gender);
+        yield;
+      }
+    }
+  }
   function freshSetValue(groups, { alt = 0, slots = 3, draws = 6000, seed = 1, rate = 0 } = {}) {
     if (!Array.isArray(groups)) groups = [groups || {}];
     const ages = HIRE.maxAge - HIRE.minAge + 1;
-    const wageGrid = Array.from({ length: 11 }, (_, i) => 0.6 + i * 0.1);   // expectation × Greedy/Modest
+    const wageGrid = WAGE_GRID;
     const own = new Map();
     const tables = groups.map(g => {
-      const ctx = { ...DEFAULT_CONTEXT, ...g.ctx };
-      const hire = { ...DEFAULT_EMPLOYEE, extraProduction: 0, bonus: g.bonus || 0, specialization: 0, happinessLoss: g.happinessLoss ?? DEFAULT_EMPLOYEE.happinessLoss, traits: [], trainingsPerDay: 1 };
       const key = g.key ?? own.size;
+      // The newcomer's own tables, apart from the trainings' surplus over
+      // alt, depend only on these, so sets priced for other employees in
+      // the same setting reuse them.
+      let base = !own.has(key) && OWN_TABLES.get(ownKey(g));
+      if (!own.has(key) && !base) base = runToEnd(ownTables(g));
       if (!own.has(key)) {
-        const mid = { ...hire, age: 31, production: HIRE.avgStat, wageExpectation: 1 };
-        const midDays = workingDays(mid);
-        // Per age: output per paid point before wages (by Responsibility),
-        // hours left, working days.
-        const gross = [], hours = [], days = [];
-        for (let R = HIRE.minStat; R <= HIRE.maxStat; R++) gross[R] = [];
-        for (let a = 0; a < ages; a++) {
-          const e = { ...hire, age: HIRE.minAge + a, production: CFG.outputDivisor, wageExpectation: 0 };
-          for (let R = HIRE.minStat; R <= HIRE.maxStat; R++) {
-            gross[R].push(hourlyProfit({ ...e, bonus: withHappiness(hire.bonus, hireHappiness(R, hire.happinessLoss)) }, ctx));
-          }
-          hours.push(hoursLeft(e)); days.push(workingDays(e));
-        }
-        // Trainings by Production, age and potential.
+        // Trainings by Production, age and potential, above what 10 energy earns.
         const pot = [];
         for (let P = HIRE.minStat; P <= HIRE.maxStat; P++) {
-          const perDay = trainingOutlook({ ...mid, production: P }, ctx).value / midDays;
-          pot[P] = days.map(d => {
+          pot[P] = base.days.map(d => {
             const byN = [0];
-            for (let k = 0; k < HIRE.maxPotential; k++) byN.push(byN[k] + Math.max(0, perDay * Math.max(0, d - k) - alt));
+            for (let k = 0; k < HIRE.maxPotential; k++) byN.push(byN[k] + Math.max(0, base.perDay[P] * Math.max(0, d - k) - alt));
             return byN;
           });
         }
-        // Rollable traits by gender, each priced by Production at age 31.
-        const traits = {};
-        for (const gender of ['male', 'female']) {
-          const gctx = { ...ctx, situation: { ...ctx.situation, gender } };
-          const list = TRAITS.filter(t => t.weight && (!t.gender || t.gender === gender)).map(t => ({
-            code: t.code, weight: t.weight, mult: wageMult(t.code),
-            value: [0, 1, 2, 3, 4].map(P => !P || t.partner || WAGE_MULT[t.code] ? 0
-              : traitValue(t.code, { ...mid, production: P }, gctx).value ?? 0),
-          }));
-          const total = list.reduce((a, t) => a + t.weight, 0);
-          // Greedy and Modest are worth 0, so by wage multiplier: the weight
-          // and the weighted value of the traits with it.
-          const byMult = [1, ...Object.values(WAGE_MULT)].map(m => {
-            const of = list.filter(t => t.mult === m);
-            return { m, weight: of.reduce((a, t) => a + t.weight, 0), value: [0, 1, 2, 3, 4].map(P => of.reduce((a, t) => a + t.weight * t.value[P], 0)) };
-          });
-          // The trait's average as the card reads, given the wage reading x.
-          const seen = (P, x) => {
-            let w = 0, v = 0;
-            for (const b of byMult) { const f = wageFit(x, b.m); w += f * b.weight; v += f * b.value[P]; }
-            return w ? v / w : byMult.reduce((a, b) => a + b.value[P], 0) / total;
-          };
-          traits[gender] = { list, total, seen };
-        }
-        own.set(key, { gross, hours, days, pot, traits, midDays });
+        own.set(key, { ...base, pot });
       }
       // What a newcomer does to the coworkers, by gender, Production and wage.
       const cw = {};
@@ -1093,7 +1191,7 @@ const EmployeeCore = (() => {
     CFG, RARITIES, NUMERIC_CARDS, PROD_TRAIT_CARDS, TRAIT_CARDS, DEFAULT_EMPLOYEE, DEFAULT_CONTEXT, LADDER_FLAGS,
     TRAITS, TRAIT, DEFAULT_SITUATION, HABIT_POLARITY, EXCLUSIVE, currentTraits,
     cardPool, cardOutcomes, secondWindValue, expectedMax, trainingOutlook, rolledTraitValue, futureLuckValue,
-    potentialValue, candidateValue, freshSetValue,
+    potentialValue, candidateValue, freshSetValue, freshSetWarm,
     comparisonProduction, productionStanding, peerProduction, nationalitySituation, locationSituation, eligibleTraits, wildCardRisk, canNegotiate, traitValue, traitChart, traitUnit,
     drill, neg, wind, cardValue, rankTier, rankHand, rarityOdds, ladder,
     expectedTrainingValue, marginPerPoint, drillBeatsNegotiationBelow, hourlyProfit, careerBonus, workingDays,

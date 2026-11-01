@@ -75,47 +75,75 @@ const EmployeePlanner = (() => {
   // The training callbacks supply the shared trait rules. Helpers collect
   // physical effects here, rather than converting each effect into money.
   // Algebraic/team effects whose callbacks value money need explicit handling.
+  // Rival and Mentor are settled together in instant (peerProduction).
+  const SKIP_HOURLY = new Set(['rival', 'mentor', 'loyal', 'stockpiler', 'anchor', 'climber', 'luckyCharm', 'jinx']);
+  // What an employee's traits see of their coworkers; fixed while the roster is.
+  const scenes = new WeakMap();
+  function scene(e, company, roster) {
+    let byRoster = scenes.get(roster);
+    if (!byRoster) scenes.set(roster, byRoster = new Map());
+    let sc = byRoster.get(e);
+    if (sc) return sc;
+    const others = roster.filter(x => x.id !== e.id);
+    const femaleCoworkers = others.filter(x => x.gender === 'female').length;
+    sc = { others, partners: new Set(others.map(o => o.id)), femaleCoworkers, s: {
+      coworkers: others.length, femaleCoworkers,
+      ...EC.nationalitySituation(e.nationality, others),
+      ...EC.locationSituation(company.country, company.coreCountry, e.nationality),
+      itemType: company.type, product: company.product, incomeTax: company.tax,
+      smallStorage: company.storage <= 2, storageFull: company.full,
+    } };
+    byRoster.set(e, sc);
+    return sc;
+  }
   function effects(e, company, roster, hour, tool) {
     const moved = e.company !== company.id;
-    const others = roster.filter(x => x.id !== e.id);
+    const { others, partners, femaleCoworkers, s: fixed } = scene(e, company, roster);
     // Tenure is continuous: Veteran, Diamond and Burnout switch at the exact
     // hour, which projectCompany adds as a boundary. Age, for Early Bloomer,
     // Late Bloomer and Worn Out, steps at the daily boundaries.
     const tenure = (moved ? 0 : e.tenure) + hour / 24 + EPS;
     const fx = { production: 0, responsibility: 0, bonus: 0, happiness: [], teamHappiness: [], teamProduction: 0, teamResponsibility: 0 };
+    if (!e.traits.length) return fx;
     const add = (key, n) => { fx[key] += n; return 0; };
     const happy = n => { fx.happiness.push(n); return 0; };
-    const s = {
-      coworkers: others.length, femaleCoworkers: others.filter(x => x.gender === 'female').length,
-      ...EC.nationalitySituation(e.nationality, others),
-      betterPaid: others.filter(x => wageAt(x, hour) > wageAt(e, hour) + 1e-9).length,
-      ...EC.locationSituation(company.country, company.coreCountry, e.nationality),
-      itemType: company.type, product: company.product, incomeTax: company.tax,
-      smallStorage: company.storage <= 2, storageFull: company.full, hasTool: !!tool,
-    };
+    const own = wageAt(e, hour) + 1e-9;
+    let betterPaid = 0;
+    for (const x of others) if (wageAt(x, hour) > own) betterPaid++;
+    const s = { ...fixed, betterPaid, hasTool: !!tool };
     const x = {
-      s, e, age: e.age + Math.floor(hour / 24), tenure, held: true, loss: 0, male: others.length - s.femaleCoworkers,
+      s, e, age: e.age + Math.floor(hour / 24), tenure, held: true, loss: 0, male: others.length - femaleCoworkers,
       prod: n => add('production', n), pct: n => add('bonus', n), happy,
       resp: n => add('responsibility', n), luck: () => 0, boxes: () => 0, wage: () => 0,
       teamHappy: n => { fx.teamHappiness.push(n); return 0; },
-      teamProd: n => add('teamProduction', n), teamResp: n => add('teamResponsibility', n), quickStudy: 0,
+      teamProd: n => add('teamProduction', n), teamResp: n => add('teamResponsibility', n), quickStudy: 0, arg: undefined,
     };
     x.stat = (stat, n) => stat === 'production' ? x.prod(n) : stat === 'responsibility' ? x.resp(n) : 0;
     for (const t of e.traits) {
-      if (['rival', 'mentor', 'loyal', 'stockpiler', 'anchor', 'climber', 'luckyCharm', 'jinx'].includes(t.code)) continue;
+      if (SKIP_HOURLY.has(t.code)) continue;
       if (t.code === 'creatureOfHabit') {
         if ((moved ? hour : hour + e.moveAgeHours) < 72 - 1e-6) fx.bonus -= 30;
-      } else if (t.code === 'comic') {
+        continue;
+      }
+      // Comics don't stack: instant gives coworkers the first one's boost.
+      if (t.code === 'comic') {
         EC.TRAIT.comic.hourly({ ...x, teamHappy: n => { fx.comicHappiness = n; return 0; } });
-      } else if (EC.TRAIT[t.code]?.partner) {
-        if (others.some(o => o.id === t.arg)) EC.TRAIT[t.code].hourly({ ...x, arg: t.arg });
-      } else EC.TRAIT[t.code]?.hourly?.({ ...x, arg: t.arg });
+        continue;
+      }
+      const def = EC.TRAIT[t.code];
+      if (!def?.hourly || def.partner && !partners.has(t.arg)) continue;
+      x.arg = t.arg;
+      def.hourly(x);
     }
     return fx;
   }
 
-  function instant(s, company, members, hour) {
-    const roster = members.filter(({ e }) => hour < (EC.CFG.retireAge - e.age) * 24).map(({ e }) => e);
+  function instant(s, company, members, hour, rosters = null) {
+    let roster = members.filter(({ e }) => hour < (EC.CFG.retireAge - e.age) * 24).map(({ e }) => e);
+    if (rosters) {
+      const key = roster.map(e => e.id).join(',');
+      roster = rosters.get(key) || (rosters.set(key, roster), roster);
+    }
     const rows = members.filter(({ e }) => roster.includes(e)).map(({ e, tool }) => {
       const activeTool = tool && hour < tool.hours && compatible(tool, company) ? tool : null;
       return { e, tool: activeTool, fx: effects(e, company, roster, hour, activeTool) };
@@ -123,7 +151,8 @@ const EmployeePlanner = (() => {
     const productions = EC.peerProduction(rows.map(({ e, fx }) => ({
       production: e.production + fx.production, rival: has(e, 'rival'), mentor: has(e, 'mentor'),
     })));
-    return rows.map(({ e, tool, fx }, index) => {
+    const calc = [];
+    const result = rows.map(({ e, tool, fx }, index) => {
       const day = Math.floor(hour / 24);
       const comic = rows.find(other => other.e.id !== e.id && other.fx.comicHappiness);
       if (comic) fx.happiness.push(comic.fx.comicHappiness);
@@ -148,11 +177,21 @@ const EmployeePlanner = (() => {
       const output = production / 4 * Math.max(0, 1 + bonus / 100);
       // Current pay already includes Greedy, Modest and past Climber raises.
       const wage = wageAt(e, hour);
-      return { id: e.id, company: company.id, tool: tool?.id || null, production, responsibility, happiness: mood, specialization, bonus,
+      const row = { id: e.id, company: company.id, tool: tool?.id || null, production, responsibility, happiness: mood, specialization, bonus,
         parts: { company: company.bonus, traits: fx.bonus + anchor, events, specialization, happiness: mood - 50, tool: tool?.bonus || 0, traitProduction: production - e.production },
         output, wage, profit: output * company.margin - wage };
+      calc.push({ production, pre: company.bonus + fx.bonus + events, mood, tool: tool?.bonus || 0, anchor, saved, rate: has(e, 'quickStudy') ? 2 : 1, wage });
+      return row;
     });
+    result.calc = calc;
+    return result;
   }
+  // A row's profit on a later day of the same stretch, where only
+  // specialization moves: instant's arithmetic in the same order.
+  const profitOn = (c, d, margin) =>
+    c.production / 4 * Math.max(0, 1 + (c.pre + Math.min(20, c.saved + d * c.rate) + c.mood - 50 + c.tool + c.anchor) / 100) * margin - c.wage;
+  // Traits whose effect steps with age (a year a day, in decades).
+  const AGE_TRAITS = new Set(['lateBloomer', 'earlyBloomer', 'wornOut']);
 
   // Hours at which an employee's trait conditions or wage change.
   function traitHours(e, moved, end) {
@@ -170,27 +209,38 @@ const EmployeePlanner = (() => {
 
   function projectCompany(s, company, members) {
     const end = s.days * 24;
+    // Effects are worked out afresh only where something other than
+    // specialization can change; days in between reuse them (profitOn).
     const boundaries = new Set([0, end]);
-    for (let h = 24; h < end; h += 24) boundaries.add(h);
     for (const { e, tool } of members) {
       const moved = e.company !== company.id;
       for (const h of [tool?.hours, (EC.CFG.retireAge - e.age) * 24, ...e.happiness.map(x => x.hours), ...(e.productionEvents || []).map(x => x.hours), ...traitHours(e, moved, end)]) {
         if (h > 0 && h < end) boundaries.add(h);
+      }
+      if (e.traits.some(t => AGE_TRAITS.has(t.code))) {
+        for (let d = 1; d < s.days; d++) if (Math.floor((e.age + d) / 10) !== Math.floor((e.age + d - 1) / 10)) boundaries.add(d * 24);
       }
     }
     const hours = [...boundaries].sort((a, b) => a - b), totals = new Map(members.map(({ e }) => [e.id, 0]));
     const minHappiness = new Map(members.map(({ e }) => [e.id, 100]));
     const daily = new Array(s.days).fill(0);
     let value = 0;
+    const rosters = new Map();
+    let first = null;
     for (let i = 0; i < hours.length - 1; i++) {
-      const rows = instant(s, company, members, hours[i]);
-      for (const row of rows) {
-        const gain = row.profit * (hours[i + 1] - hours[i]);
-        value += gain; daily[Math.floor(hours[i] / 24)] += gain; totals.set(row.id, totals.get(row.id) + gain);
-        minHappiness.set(row.id, Math.min(minHappiness.get(row.id), row.happiness));
+      const rows = instant(s, company, members, hours[i], rosters);
+      if (i === 0) first = rows;
+      for (let h = hours[i], start = Math.floor(h / 24); h < hours[i + 1];) {
+        const day = Math.floor(h / 24), next = Math.min(hours[i + 1], (day + 1) * 24);
+        for (let r = 0; r < rows.length; r++) {
+          const row = rows[r], gain = (day === start ? row.profit : profitOn(rows.calc[r], day, company.margin)) * (next - h);
+          value += gain; daily[day] += gain; totals.set(row.id, totals.get(row.id) + gain);
+          minHappiness.set(row.id, Math.min(minHappiness.get(row.id), row.happiness));
+        }
+        h = next;
       }
     }
-    return { value, daily, employees: instant(s, company, members, 0).map(r => ({ ...r, value: totals.get(r.id), minHappiness: minHappiness.get(r.id) })) };
+    return { value, daily, employees: (first || instant(s, company, members, 0, rosters)).map(r => ({ ...r, value: totals.get(r.id), minHappiness: minHappiness.get(r.id) })) };
   }
 
   // Projections are cached per (company, roster, tools); `misses` counts the
@@ -440,6 +490,10 @@ const EmployeePlanner = (() => {
   // Coworker plans still apply when the subject is pinned.
   const CARD_PLAN_CAP = 256;
   const CARD_CACHE_CAP = 20000;
+  // The short menu: the best plans overall, and the best at each place the
+  // subject could work. Matched the full menu on a 36-employee, 12-company
+  // workforce (2026-11-01) at a fraction of the projections.
+  const SCREEN_TOP = 16, SCREEN_PER_PLACE = 3;
   function localPlans(s, subject, allowMoves) {
     const companies = s.companies.filter(c => !c.excluded).sort(byId);
     const people = s.employees.filter(e => companies.some(c => c.id === e.company)).sort(byId);
@@ -478,8 +532,14 @@ const EmployeePlanner = (() => {
     const subjects = new Map(), cache = new Map();
     const companies = s.companies.filter(c => !c.excluded).sort(byId);
     const tools = new Map(s.tools.map(t => [t.id, t]));
-    const fingerprint = e => JSON.stringify([e.id, e.traits.filter(t => !['luckyCharm', 'jinx', 'recruiter', 'trainer'].includes(t.code)),
-      e.production, e.responsibility, e.wage, e.climberRaise]);
+    const people = new Map(s.employees.map(x => [x.id, x]));
+    const fingerprints = new WeakMap();
+    const fingerprint = e => {
+      let f = fingerprints.get(e);
+      if (f === undefined) fingerprints.set(e, f = JSON.stringify([e.id, e.traits.filter(t => !['luckyCharm', 'jinx', 'recruiter', 'trainer'].includes(t.code)),
+        e.production, e.responsibility, e.wage, e.climberRaise]));
+      return f;
+    };
     // The assignment result includes nulls so removing an equipped tool is preserved.
     function price(subjectId, cards, { budget = 80000, employee = {}, context = {}, feed = false, assigned = {} } = {}) {
       const subject = s.employees.find(e => e.id === subjectId);
@@ -542,38 +602,73 @@ const EmployeePlanner = (() => {
         for (let depth = 0; plans.length < CARD_PLAN_CAP && queues.some(q => depth < q.length); depth++) {
           for (const q of queues) if (q[depth] && plans.length < CARD_PLAN_CAP) plans.push(q[depth]);
         }
-        state = { plans, total: Math.max(menu.total, queues.reduce((n, q) => n + q.length, 0)), best: null, quotes: new Map() };
+        state = { plans, total: Math.max(menu.total, queues.reduce((n, q) => n + q.length, 0)), best: null, quotes: new Map(), layouts: new Map() };
         subjects.set(stateKey, state);
       }
-      const project = (variant, plan) => {
+      // Each plan's companies, members sorted and keyed with the subject left
+      // as a gap: a projection then only fills in the subject's variant.
+      const layoutOf = plan => {
+        let layout = state.layouts.get(plan.key);
+        if (layout) return layout;
+        const stay = plan === state.plans[0] ? null : layoutOf(state.plans[0]);
         const changed = new Map(plan.changes);
         const toolIn = x => tools.get(plan.equipment[x.id]) || null;
-        const groups = companies.map(c => {
+        const part = m => (m.tool ? `@${m.tool.id}:${m.tool.hours}` : '');
+        layout = companies.map(c => {
           const members = s.employees.filter(x => (changed.get(x.id) || x.company) === c.id)
-            .map(x => ({ e: x.id === subjectId ? variant : x, tool: toolIn(x) })).sort((a, b) => byId(a.e, b.e));
-          const key = c.id + ':' + members.map(m => fingerprint(m.e) + (m.tool ? `@${m.tool.id}:${m.tool.hours}` : '')).join('|');
-          if (!cache.has(key)) {
-            if (++used > budget) throw new Error('Projection budget reached.');
-            if (cache.size >= CARD_CACHE_CAP) cache.delete(cache.keys().next().value);
-            cache.set(key, projectCompany(s, c, members));
-          }
-          return cache.get(key);
+            .map(x => ({ e: x, tool: toolIn(x) })).sort((a, b) => byId(a.e, b.e));
+          const at = members.findIndex(m => m.e.id === subjectId);
+          const keys = members.map((m, i) => (i === at ? '' : fingerprint(m.e)) + part(m));
+          const head = c.id + ':' + (at < 0 ? keys.join('|') : keys.slice(0, at).map(k => k + '|').join(''));
+          return { c, members, at, head, tail: at < 0 ? '' : keys.slice(at).join('|') };
         });
-        return { value: groups.reduce((v, g) => v + g.value, 0), rows: groups.flatMap(g => g.employees) };
+        // The companies this plan arranges differently from staying.
+        layout.touched = stay ? layout.flatMap((g, i) => g.head + g.tail !== stay[i].head + stay[i].tail ? [i] : []) : [];
+        state.layouts.set(plan.key, layout);
+        return layout;
       };
-      const best = (variant, plans = state.plans) => {
+      const project = (variant, plan) => {
+        const layout = layoutOf(plan);
+        let value = 0;
+        const groups = layout.map(g => {
+          // Held on the layout: a company without the subject, or the
+          // subject's company for this variant.
+          let r = g.at < 0 ? g.fixed : g.variants?.get(variant);
+          if (!r) {
+            const key = g.at < 0 ? g.head : g.head + fingerprint(variant) + g.tail;
+            r = cache.get(key);
+            if (!r) {
+              if (++used > budget) throw new Error('Projection budget reached.');
+              if (cache.size >= CARD_CACHE_CAP) cache.delete(cache.keys().next().value);
+              const members = g.at < 0 ? g.members : g.members.map((m, i) => i === g.at ? { e: variant, tool: m.tool } : m);
+              cache.set(key, r = projectCompany(s, g.c, members));
+            }
+            if (g.at < 0) g.fixed = r;
+            else (g.variants ||= new WeakMap()).set(variant, r);
+          }
+          value += r.value;
+          return r;
+        });
+        return { value, groups, touched: layout.touched };
+      };
+      const rowsOf = p => p.groups.flatMap(g => g.employees);
+      const best = (variant, plans = state.plans, scores = null) => {
         const stay = project(variant, state.plans[0]);
-        let result = { ...stay, plan: state.plans[0] };
+        let result = { ...stay, plan: state.plans[0] }, stayHappiness = null;
         for (const plan of plans) {
           if (plan.kind === 'stay') continue;
           const p = project(variant, plan);
-          const unsafe = p.rows.some(row => {
-            const who = s.employees.find(x => x.id === row.id);
-            const threshold = has(who.id === subjectId ? variant : who, 'flightRisk') ? 50 : 30;
-            return !has(who.id === subjectId ? variant : who, 'anchor') && row.minHappiness < threshold
-              && stay.rows.find(x => x.id === row.id)?.minHappiness >= threshold;
-          });
-          if (!unsafe && p.value > result.value + EPS) result = { ...p, plan };
+          scores?.set(plan, p.value);
+          if (!(p.value > result.value + EPS)) continue;
+          // Companies arranged as when staying have the same rows, so only
+          // those the plan changes can push someone below their threshold.
+          stayHappiness ||= new Map(rowsOf(stay).map(row => [row.id, row.minHappiness]));
+          const unsafe = p.touched.some(i => p.groups[i].employees.some(row => {
+            const who = row.id === subjectId ? variant : people.get(row.id);
+            const threshold = has(who, 'flightRisk') ? 50 : 30;
+            return !has(who, 'anchor') && row.minHappiness < threshold && stayHappiness.get(row.id) >= threshold;
+          }));
+          if (!unsafe) result = { ...p, plan };
         }
         return result;
       };
@@ -581,11 +676,30 @@ const EmployeePlanner = (() => {
       const explain = plan => ({ ...plan, description: plan.kind === 'stay' ? 'stay in current arrangement'
         : plan.kind === 'tool' ? `reassign tools: ${Object.entries(plan.equipment).filter(([id, tool]) => tool !== (toolOf(s.employees.find(x => x.id === id))?.id || null)).map(([id, tool]) => `${nameOf(id)} ${tool ? `gets ${tools.get(tool).name}` : 'has no tool'}`).join('; ')}`
         : `${plan.kind}: ${plan.changes.map(([id, co]) => `${s.employees.find(x => x.id === id).name} to ${s.companies.find(c => c.id === co).name} (${s.companies.find(c => c.id === co).product})`).join('; ')}` });
+      // A short menu for forecasts (the card pool behind Second Wind and the
+      // energy feed): a card changes only the subject, so the plans that win
+      // for a changed subject are, in practice, among the best for the
+      // current one at each place they could work (company and tool), plus
+      // the best few overall.
+      const screened = () => {
+        if (state.screened) return state.screened;
+        const ranked = state.plans.slice(1).sort((a, b) => state.scores.get(b) - state.scores.get(a));
+        const keep = new Set([state.plans[0], state.best.plan, ...ranked.slice(0, SCREEN_TOP)]);
+        const seen = new Map();
+        for (const plan of ranked) {
+          const place = (new Map(plan.changes).get(subjectId) || subject.company) + '|' + (plan.equipment[subjectId] || '');
+          const n = seen.get(place) || 0;
+          if (n < SCREEN_PER_PLACE) { keep.add(plan); seen.set(place, n + 1); }
+        }
+        return state.screened = state.plans.filter(plan => keep.has(plan));
+      };
       try {
-        state.best ||= best(e);
+        if (!state.best) { state.scores = new Map(); state.best = best(e, state.plans, state.scores); }
         const baselineStay = project(e, state.plans[0]).value;
-        const quote = c => {
-          const key = JSON.stringify([c, employee, context, feed]);
+        // `pool` prices a card as part of a forecast over the whole card pool
+        // (the feed, and the trainings Second Wind adds) on the short menu.
+        const quote = (c, pool = feed) => {
+          const key = JSON.stringify([c, employee, context, pool]);
           if (state.quotes.has(key)) return state.quotes.get(key);
           let q;
           if (c.card === 'secondWind') {
@@ -603,10 +717,10 @@ const EmployeePlanner = (() => {
             if (unpriced || c.card === 'rehab' && EC.TRAIT[c.code]?.polarity !== 'negative' || c.card === 'negotiation' && !EC.canNegotiate(e, c)) {
               q = { value: null, stay: null, outcomes: [], note: unpriced && !EC.TRAIT[unpriced] ? 'Trait not known to this tool.' : EC.TRAIT[unpriced]?.unpriced || (EC.TRAIT[unpriced]?.partner ? 'Linked employee is unknown; this trait is not a Habit outcome.' : 'Card is not available.'), plan: explain(state.plans[0]) };
             } else {
-              let plans = state.plans;
-              if (feed && c.card === 'habitPair') {
+              let plans = pool ? screened() : state.plans;
+              if (pool && c.card === 'habitPair') {
                 const singles = c.codes.flatMap(code => {
-                  const q = quote({ card: 'habit', code });
+                  const q = quote({ card: 'habit', code }, true);
                   return q.outcomes.length ? q.outcomes.map(o => o.plan) : [q.plan];
                 });
                 plans = [...new Map([state.plans[0], state.best.plan, ...singles].map(p => [p.key, p])).values()];
@@ -620,7 +734,7 @@ const EmployeePlanner = (() => {
               });
               const mean = k => outcomes.reduce((v, o) => v + o.p * o[k], 0);
               q = { value: mean('value'), stay: mean('stay'), outcomes: outcomes.length > 1 ? outcomes : [],
-                plan: outcomes[0]?.plan || explain(state.plans[0]), coverage: feed && c.card === 'habitPair' ? 'restricted-pair' : 'full-menu',
+                plan: outcomes[0]?.plan || explain(state.plans[0]), coverage: pool ? c.card === 'habitPair' ? 'restricted-pair' : 'short-menu' : 'full-menu',
                 note: c.card === 'wildCard' ? 'Unpriced non-output effects count as zero.' : null };
             }
           }
@@ -629,7 +743,7 @@ const EmployeePlanner = (() => {
         const quotes = cards.map(c => quote(c));
         return { valid: true, basis: 'rearranged', horizon, quotes, baseline: explain(state.best.plan),
           coverage: { tested: state.plans.length, total: state.total }, projections: used,
-          warnings: state.best.rows.filter(r => r.minHappiness < 30).map(r => `${r.id} is already below 30 happiness.`) };
+          warnings: rowsOf(state.best).filter(r => r.minHappiness < 30).map(r => `${r.id} is already below 30 happiness.`) };
       } catch (error) { return { valid: false, basis: 'current-company', reason: error.message }; }
     }
     return { valid: !errors.length, horizon, price };
