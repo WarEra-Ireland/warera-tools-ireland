@@ -454,8 +454,6 @@ const EmployeeTrainingTool = (() => {
   const plannedTool = id => plan && !plan.running ? (plan.tools || []).find(x => x.employee === id)?.tool || null : null;
   const plannedTools = () => Object.fromEntries((plan && !plan.running ? plan.tools || [] : []).map(x => [x.employee, x.tool?.id || null]));
   const withTool = ctx => ({ ...ctx, situation: { ...ctx.situation, hasTool: true } });
-  const spareTools = () => assignments?.cardSettings().inventory || [];
-  const toolTypeFor = code => Object.keys(EmployeePlanner.TOOL_TYPES).find(t => EmployeePlanner.TOOL_TYPES[t].includes(code)) || null;
   const cardKey = c => JSON.stringify(Object.fromEntries(Object.entries(c).filter(([k]) => k !== 'value')));
   function prepareCardPricing() {
     if (!cardPricer) cardPricer = EmployeeAssignments.createCardPricer({
@@ -703,11 +701,10 @@ const EmployeeTrainingTool = (() => {
     const codes = hand.flatMap(({ c }) => c.card === 'habitPair' ? c.codes || [] : c.card === 'mentoring' ? [c.code, c.to]
       : c.card === 'habit' || c.card === 'rehab' ? [c.code] : []);
     if (emp.toolItem || ![...(emp.traits || []).map(t => t.code), ...codes].some(code => TOOL_TRAITS.includes(code))) return '';
-    const who = escapeHtml(emp.name), planned = plannedTool(emp._id), type = toolTypeFor(entry.company.itemCode);
-    const add = type ? ` <button type="button" class="tr-link" data-add-tool="${type}">Add a ${type}</button>` : '';
+    const who = escapeHtml(emp.name), planned = plannedTool(emp._id);
     const text = planned ? `The assignment plan gives ${who} ${escapeHtml(planned.name)}; card values count it.`
       : plan?.running ? 'The assignment plan is still placing your tools.'
-        : `Card values can reassign compatible tools from your companies or registered spares.${add}`;
+        : 'Card values can reassign compatible tools from your companies or your spare tools.';
     return `<p class="tr-tool-for tr-muted">${text}</p>`;
   }
 
@@ -721,6 +718,47 @@ const EmployeeTrainingTool = (() => {
     const exact = profiles.find(u => u && typeof u.username === 'string' && u.username.toLowerCase() === needle);
     if (!exact) throw new Error(`No exact match for "${username}"`);
     return exact;
+  }
+
+  /* The account's tools from its transaction log (EmployeeAssignments.toolLogOf).
+   * Only tool rows are kept, saved per account, so later loads fetch just the
+   * pages newer than the last. Toolbox openings filter by item; dismantling,
+   * crafting and item market rows do not, so those go back only to the first
+   * opening or TOOLS_SINCE, whichever is earlier: a tool cannot leave before it came. */
+  const TOOLS_SINCE = '2026-10-20T00:00:00.000Z';
+  const TOOL_LOG_PAGES = 50;
+  async function loadToolLog(userId) {
+    const key = `tr-tool-log-v1:${userId}`;
+    let saved = null;
+    try { saved = JSON.parse(localStorage.getItem(key) || 'null'); } catch { /* unreadable: start again */ }
+    if (!Array.isArray(saved?.rows) || typeof saved.opened !== 'string' || typeof saved.other !== 'string') saved = { rows: [], opened: '', other: '' };
+    const slim = x => ({ _id: x._id, transactionType: x.transactionType, sellerId: x.sellerId, buyerId: x.buyerId, createdAt: x.createdAt,
+      item: { _id: x.item?._id, code: x.item?.code, skills: { production: x.item?.skills?.production } } });
+    // Newest first, down to `until` (exclusive).
+    async function pages(input, until) {
+      const rows = [];
+      let cursor;
+      for (let i = 0; i < TOOL_LOG_PAGES; i++) {
+        const page = await trpc('transaction.getPaginatedTransactions', { userId, limit: 100, ...input, ...(cursor ? { cursor } : {}) }, { retry: true });
+        const items = Array.isArray(page?.items) ? page.items : [];
+        rows.push(...items.filter(x => x.createdAt > until));
+        cursor = page?.nextCursor;
+        if (!cursor || !items.length || items.at(-1).createdAt <= until) return { rows, complete: true };
+      }
+      return { rows, complete: false };
+    }
+    const opened = await pages({ transactionType: 'openCase', itemCode: 'toolbox' }, saved.opened);
+    const first = [TOOLS_SINCE, ...[...saved.rows, ...opened.rows].filter(x => x.transactionType === 'openCase').map(x => x.createdAt)].sort()[0];
+    const other = await pages({ transactionType: ['dismantleItem', 'craftItem', 'itemMarket'] }, saved.other || first);
+    const isTool = x => /^[a-z]+\d*$/.test(x.item?.code || '') && Object.keys(EmployeePlanner.TOOL_TYPES).some(t => x.item.code.startsWith(t));
+    const byId = new Map([...saved.rows, ...[...opened.rows, ...other.rows].filter(isTool).map(slim)].map(x => [x._id, x]));
+    const rows = [...byId.values()], complete = opened.complete && other.complete;
+    const newest = (list, fallback) => list.reduce((m, x) => x.createdAt > m ? x.createdAt : m, fallback);
+    // An incomplete fetch would leave a gap below the saved mark, so it is not saved.
+    if (complete) {
+      try { localStorage.setItem(key, JSON.stringify({ rows, opened: newest(opened.rows, saved.opened), other: newest(other.rows, saved.other) })); } catch { /* storage blocked */ }
+    }
+    return { owned: EmployeeAssignments.toolLogOf(userId, rows), complete };
   }
 
   async function loadTeam(username) {
@@ -744,6 +782,7 @@ const EmployeeTrainingTool = (() => {
     let profitSub = '';
     const by = companies.map(c => ({ companyId: c._id }));
     const regionIds = [...new Set(companies.map(c => c.region).filter(Boolean))];
+    const toolLog = loadToolLog(user._id).catch(err => { console.warn('[training] tool history failed', err); return null; });
     const [rosters, estimates, regions, managers, totalProfit] = await Promise.all([
       trpcManyValues('employee.getCompanyEmployees', by, {
         onProgress: (done, total) => steps.setStep(3, 'active', { count: `${done}/${total} rosters` }),
@@ -771,6 +810,7 @@ const EmployeeTrainingTool = (() => {
     steps.setStep(4, 'done', { sub: profitSub, count: '' });
     return {
       userId: user._id,
+      toolLog: await toolLog,
       totalProfit,
       username: user.username,
       management: managementLevel(user.skills?.management),
@@ -1216,8 +1256,6 @@ const EmployeeTrainingTool = (() => {
         sub: `${escapeHtml(m)}: −1 Production there instead of +3 · ${where(entry)}${to.planned ? ' · the planner\'s move'
           : to.company ? ` · try ${companyLabelHtml(to.company)}${team.companies.find(x => x.company === to.company).employees.length >= headcountCap(to.company) ? ' (full, so a swap)' : ''}` : ''}` });
     }
-    if (!spareTools().length) groups.check.push({ icon: '🧰', go: { tab: 'assignments', tools: true }, what: 'Enter your spare tools',
-      sub: 'Equipped tools come from the game. Spare ones need entering so assignments and card values can place them' });
 
     for (const { emp, entry } of all) {
       if (doneToday(emp) && !pendingHand(emp)) groups.done.push({ go: { tab: 'train', emp: emp._id }, what: escapeHtml(emp.name),
@@ -1230,7 +1268,7 @@ const EmployeeTrainingTool = (() => {
     const heads = { now: 'Do now', energy: `Spend energy${energyHead}`, check: 'Check' };
     let n = 0;
     const item = (a, done) => a.cut ? `<li class="tr-act-cut">${a.expand ? `<button type="button" class="tr-act-more" data-next-actions-toggle aria-expanded="${nextActionsExpanded}" aria-controls="tr-next-actions">${escapeHtml(a.cut)}</button>` : escapeHtml(a.cut)}</li>`
-      : `<li><button type="button" class="tr-act${a.go.tab === 'train' ? ' tr-act-training' : a.go.tab === 'keep' ? ' tr-act-replacement' : ''}${done ? ' done' : ''}" data-go-tab="${a.go.tab}"${a.go.emp ? ` data-go-emp="${a.go.emp}"` : ''}${a.go.tools ? ' data-go-tools' : ''}${a.go.company ? ` data-go-company="${a.go.company}"` : ''}>
+      : `<li><button type="button" class="tr-act${a.go.tab === 'train' ? ' tr-act-training' : a.go.tab === 'keep' ? ' tr-act-replacement' : ''}${done ? ' done' : ''}" data-go-tab="${a.go.tab}"${a.go.emp ? ` data-go-emp="${a.go.emp}"` : ''}${a.go.company ? ` data-go-company="${a.go.company}"` : ''}>
           <span class="tr-act-rank">${done ? '✓' : ++n}</span><span class="tr-act-icon" aria-hidden="true">${a.icon || ''}</span>
           <span class="tr-act-main">${a.what}<small>${a.sub}</small></span>
           ${a.value ? `<span class="tr-act-value">${a.value}<small>${a.unit}</small></span>` : ''}</button></li>`;
@@ -1697,7 +1735,7 @@ const EmployeeTrainingTool = (() => {
     if (!team || !market?.ppValue || taken.size) return [];
     const feed = feedRows();
     const alt = altFrom(feed).value;
-    const settings = assignments?.cardSettings() || { horizon: 'career', inventory: [], equippedHours: {}, pinned: [] };
+    const settings = assignments?.cardSettings() || EmployeeAssignments.sanitize(null).settings;
     const key = JSON.stringify([objectId(team), objectId(market), feedMemo.revision, feedMemo.published, alt, todayUtc(), settings]);
     if (keepMemo.key === key) return keepMemo.rows;
     if (keepJob?.key !== key) keepJob = { key, team, market, feed, alt, settings };
@@ -2461,9 +2499,7 @@ const EmployeeTrainingTool = (() => {
         if (b.dataset.goEmp) selectEmployee(b.dataset.goEmp, b.dataset.goTab);
         else showTab(b.dataset.goTab, { reveal: true });
         if (b.dataset.goTab === 'assignments' && b.dataset.goEmp) focusPlanStep(b.dataset.goEmp);
-        if (b.dataset.goTools !== undefined) document.querySelector('#tr-assignments-body [data-tool-add]')?.focus();
       }
-      else if (b.dataset.addTool) { showTab('assignments', { reveal: true }); assignments.addTool(b.dataset.addTool); }
       else if (b.dataset.planOpen !== undefined) { showTab('assignments', { reveal: true }); assignments.reveal(); }
       else if (b.dataset.sideEmp) selectFromSide(b.dataset.sideEmp);
       else if (b.dataset.took !== undefined) takeSlot(+b.dataset.took);

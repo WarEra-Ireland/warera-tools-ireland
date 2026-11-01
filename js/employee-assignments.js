@@ -1,4 +1,4 @@
-/* Manual inventory and the advisory workforce planner. No game mutations. */
+/* Tools from the game, and the advisory workforce planner. No game mutations. */
 const EmployeeAssignments = (() => {
   const EP = typeof module !== 'undefined' ? require('./employee-planner.js') : EmployeePlanner;
   const EC = typeof module !== 'undefined' ? require('./employee-core.js') : EmployeeCore;
@@ -9,15 +9,17 @@ const EmployeeAssignments = (() => {
   const toolType = code => Object.keys(EP.TOOL_TYPES).find(t => code?.startsWith(t));
   // 'career' values changes until the last planned employee retires.
   const HORIZONS = ['career', '30', '14', '7'];
-  const MAX_ROWS = 50, MAX_TOOLS = 100;
+  const MAX_TOOLS = 100;
   // The game shows a tool's capacity left as a percentage; a new tool lasts
   // 500 working hours. Inputs are percentages, saved and planned as hours.
   const TOOL_HOURS = 500;
   const toHours = pct => String(pct ?? '').trim() === '' ? '' : String(Number(pct) * TOOL_HOURS / 100);
   const toPct = hours => String(hours ?? '').trim() === '' ? '' : String(Math.round(Number(hours) / TOOL_HOURS * 1e4) / 100);
-  const blank = () => ({ id: newId(), name: '', type: 'hammer', bonus: '', hours: '500', quantity: '1' });
-  const defaults = () => ({ horizon: 'career', inventory: [], equippedHours: {}, pinned: [] });
-  function newId() { return globalThis.crypto?.randomUUID?.() || `t${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`; }
+  const ITEM_ID = /^[\w-]{1,64}$/;
+  // seenEquipped: by game item ID, each tool's capacity when last seen
+  // equipped, which it keeps once unequipped. gone: spares marked as no longer
+  // owned, for losses the transaction log does not show.
+  const defaults = () => ({ horizon: 'career', equippedHours: {}, pinned: [], seenEquipped: {}, gone: [] });
 
   /* Saved settings are untrusted: rebuild them field by field and say what
    * was dropped, rather than failing later on a malformed value. */
@@ -30,50 +32,93 @@ const EmployeeAssignments = (() => {
       if (HORIZONS.includes(String(raw.horizon))) settings.horizon = String(raw.horizon);
       else notices.push('The saved horizon was invalid; valuing changes over careers.');
     }
-    const text = (v, max) => typeof v === 'string' ? v.slice(0, max) : typeof v === 'number' && Number.isFinite(v) ? String(v) : '';
-    if (raw.inventory !== undefined && !Array.isArray(raw.inventory)) notices.push('Saved tools were unreadable and have been removed.');
-    const rows = Array.isArray(raw.inventory) ? raw.inventory : [];
-    const ids = new Set();
-    let fixed = 0;
-    for (const row of rows.slice(0, MAX_ROWS)) {
-      if (!row || typeof row !== 'object') { fixed++; continue; }
-      let id = typeof row.id === 'string' && /^[\w-]{1,64}$/.test(row.id) && !ids.has(row.id) ? row.id : null;
-      if (!id) { id = newId(); fixed++; }
-      ids.add(id);
-      const type = EP.TOOL_TYPES[row.type] ? row.type : 'hammer';
-      if (type !== row.type) fixed++;
-      settings.inventory.push({ id, name: text(row.name, 60), type, bonus: text(row.bonus, 12), hours: text(row.hours, 12), quantity: text(row.quantity, 12) });
-    }
-    if (rows.length > MAX_ROWS) notices.push(`Only the first ${MAX_ROWS} saved tool rows were kept.`);
-    if (fixed || fieldErrors(settings).length) notices.push('Some saved tool rows were incomplete. Check the highlighted fields before comparing.');
-    if (raw.equippedHours && typeof raw.equippedHours === 'object' && !Array.isArray(raw.equippedHours)) {
+    // Spare tools were typed in before they came from the transaction log.
+    if (Array.isArray(raw.inventory) && raw.inventory.length) notices.push('Spare tools now come from your toolbox history, so the tools entered by hand were removed.');
+    const object = v => v && typeof v === 'object' && !Array.isArray(v);
+    if (object(raw.equippedHours)) {
       for (const [id, v] of Object.entries(raw.equippedHours)) {
         const n = Number(v);
         if (v !== '' && v !== null && Number.isFinite(n) && n >= 0 && n <= TOOL_HOURS) settings.equippedHours[id] = String(n);
       }
     }
+    if (object(raw.seenEquipped)) {
+      for (const [id, t] of Object.entries(raw.seenEquipped)) {
+        if (!ITEM_ID.test(id) || !object(t) || !Number.isFinite(t.hours) || t.hours < 0 || t.hours > TOOL_HOURS) continue;
+        settings.seenEquipped[id] = { hours: t.hours, at: Number.isFinite(t.at) ? t.at : 0,
+          holder: typeof t.holder === 'string' ? t.holder.slice(0, 60) : '', company: typeof t.company === 'string' ? t.company.slice(0, 64) : '' };
+      }
+    }
+    if (Array.isArray(raw.gone)) settings.gone = [...new Set(raw.gone.filter(id => typeof id === 'string' && ITEM_ID.test(id)))].slice(0, 500);
     if (Array.isArray(raw.pinned)) settings.pinned = [...new Set(raw.pinned.filter(id => typeof id === 'string' && id.length <= 64))];
     return { settings, notices };
   }
 
-  // Per-field problems, in page order, keyed by input ID.
+  // Per-field problems, keyed by input ID.
   function fieldErrors(settings, equippedIds = []) {
     const errors = [];
-    const num = v => String(v ?? '').trim() === '' ? NaN : Number(v);
-    for (const row of settings.inventory) {
-      const bonus = num(row.bonus), hours = num(row.hours), quantity = num(row.quantity);
-      if (!(bonus >= 3 && bonus <= 65)) errors.push([`plan-${row.id}-bonus`, 'Enter the rolled bonus, from 3 to 65 %.']);
-      if (!(hours > 0 && hours <= TOOL_HOURS)) errors.push([`plan-${row.id}-hours`, 'Enter the capacity left, above 0 and up to 100 %.']);
-      if (!(Number.isInteger(quantity) && quantity >= 1 && quantity <= 50)) errors.push([`plan-${row.id}-quantity`, 'Enter a whole number from 1 to 50.']);
-    }
     for (const id of equippedIds) {
-      const v = settings.equippedHours[id], hours = num(v);
+      const v = settings.equippedHours[id], hours = String(v ?? '').trim() === '' ? NaN : Number(v);
       if (v !== undefined && !(hours >= 0 && hours <= TOOL_HOURS)) errors.push([`plan-equipped-${id}`, 'Enter the capacity left, from 0 to 100 %.']);
     }
     return errors;
   }
 
   const activeOf = entry => entry.employees.filter(e => !e.leftAt);
+  const unloadedOf = team => new Set(team.companies.filter(x => x.rosterMissing).map(x => x.company._id));
+
+  /* The transaction log lists each tool an account gets (toolbox openings,
+   * crafting, item market buys) and loses (dismantling, item market sales),
+   * with the game item ID its employees later show. Rows may come in any
+   * order. Returns the tools still owned: [{ id, type, bonus, at, how }]. */
+  function toolLogOf(userId, rows) {
+    const owned = new Map();
+    const sorted = rows.filter(x => x && typeof x === 'object' && Number.isFinite(Date.parse(x.createdAt)))
+      .sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
+    for (const x of sorted) {
+      const item = x.item, type = /^([a-z]+)\d*$/.exec(item?.code || '')?.[1];
+      if (!EP.TOOL_TYPES[type] || typeof item._id !== 'string' || !ITEM_ID.test(item._id)) continue;
+      const kind = x.transactionType;
+      if (kind === 'dismantleItem' || (kind === 'itemMarket' && x.sellerId === userId && x.buyerId !== userId)) owned.delete(item._id);
+      else if (['openCase', 'craftItem', 'itemMarket'].includes(kind)) {
+        owned.set(item._id, { id: item._id, type, bonus: Number(item.skills?.production) || 0, at: x.createdAt,
+          how: kind === 'openCase' ? 'toolbox' : kind === 'craftItem' ? 'crafted' : 'bought' });
+      }
+    }
+    return [...owned.values()];
+  }
+
+  /* Spare tools: those the account owns, less the ones equipped now and those
+   * marked gone. A tool last seen equipped in a company whose roster did not
+   * load is taken as still there. Capacity left is the last reading while
+   * equipped; a tool never seen equipped is taken as new. Spent tools are left out. */
+  function sparesOf(owned, equippedIds, settings, unloaded = new Set()) {
+    if (!owned) return [];
+    const skip = new Set([...equippedIds, ...settings.gone]);
+    return owned.filter(t => !skip.has(t.id) && !unloaded.has(settings.seenEquipped[t.id]?.company)).map(t => {
+      const seen = settings.seenEquipped[t.id] || null;
+      return { ...t, hours: seen ? seen.hours : TOOL_HOURS, seen };
+    }).filter(t => t.hours > 0);
+  }
+
+  /* Records each equipped tool's capacity, so it is known once unequipped.
+   * An unchanged reading keeps its time. With the full list of owned tools,
+   * readings for tools no longer owned are dropped. */
+  function observeEquipped(seen, equipped, owned = null, now = Date.now()) {
+    const next = { ...seen };
+    for (const t of equipped) {
+      const old = next[t.id];
+      if (old?.hours === t.hours && old.holder === t.holder && old.company === t.company) continue;
+      next[t.id] = { hours: t.hours, at: now, holder: t.holder, company: t.company };
+    }
+    if (owned) {
+      const keep = new Set([...owned.map(t => t.id), ...equipped.map(t => t.id)]);
+      for (const id of Object.keys(next)) if (!keep.has(id)) delete next[id];
+    }
+    return next;
+  }
+  const equippedToolIds = team => team.companies.flatMap(activeOf).filter(e => e.toolItem?._id).map(e => e.toolItem._id);
+  // team.toolLog: { owned, complete } from the page's load, or null when it failed.
+  const sparesFor = (team, settings) => sparesOf(team.toolLog?.owned || null, equippedToolIds(team), settings, unloadedOf(team));
   // Days until the youngest retires: age rises one a day, and the planner allows at most 47.
   const careerDays = ages => Math.min(47, Math.max(1, ...ages.filter(Number.isFinite).map(age => Math.ceil(EC.CFG.retireAge - age))));
 
@@ -136,11 +181,8 @@ const EmployeeAssignments = (() => {
     }));
     for (const c of companies) if (excluded.has(c.id)) c.excluded = `Not planned: ${excluded.get(c.id).join('; ')}.`;
     const tools = employees.flatMap(e => e.equipped ? [e.equipped] : []);
-    for (const row of settings.inventory) {
-      const n = Number(row.quantity), bonus = Number(row.bonus), hours = Number(row.hours);
-      for (let j = 0; j < n; j++) tools.push({ id: `${row.id}:${j}`, name: `${row.name.trim() || row.type[0].toUpperCase() + row.type.slice(1)} (+${bonus}%)${n > 1 ? ` ${j + 1}` : ''}`, type: row.type, bonus, hours });
-    }
-    if (tools.length > MAX_TOOLS) errors.push(`Plan at most ${MAX_TOOLS} tools at a time, counting equipped tools and quantities.`);
+    for (const t of sparesFor(team, settings)) tools.push({ id: `spare:${t.id}`, name: `${cap(t.type)} (+${t.bonus}%)`, type: t.type, bonus: t.bonus, hours: t.hours });
+    if (tools.length > MAX_TOOLS) errors.push(`Plan at most ${MAX_TOOLS} tools at a time, counting equipped and spare tools.`);
     const days = settings.horizon === 'career' ? careerDays(employees.filter(e => !excluded.has(e.company)).map(e => e.age)) : Number(settings.horizon);
     return { errors, snapshot: { companies, employees, tools, days } };
   }
@@ -221,7 +263,8 @@ const EmployeeAssignments = (() => {
     let account = null, settings = defaults(), notices = [], worker = null, runId = 0, best = null, running = null, chartData = null;
     let draft = null;
     const key = () => `tr-assignments-v1:${account}`;
-    const save = () => { notices = []; try { localStorage.setItem(key(), JSON.stringify(settings)); } catch { /* storage blocked */ } };
+    const persist = () => { try { localStorage.setItem(key(), JSON.stringify(settings)); } catch { /* storage blocked */ } };
+    const save = () => { notices = []; persist(); };
     const $ = sel => root.querySelector(sel);
     const dialog = document.createElement('dialog');
     dialog.className = 'tr-asg-dialog';
@@ -254,16 +297,14 @@ const EmployeeAssignments = (() => {
 
     /* Tool cards. `holders` maps a tool ID to the employee who gets it. */
     function shelf(team, { holders = null, unusedWhy = () => '' } = {}) {
-      const invalid = new Set(fieldErrors(settings, equippedIds(team)).map(([id]) => id.replace(/^plan-(equipped-)?/, '').replace(/-(bonus|hours|quantity)$/, '')));
+      const invalid = new Set(fieldErrors(settings, equippedIds(team)).map(([id]) => id.replace(/^plan-equipped-/, '')));
       const life = hours => `<span class="tr-asg-life" title="About ${esc(num(Number(hours) || 0, 0))} of ${TOOL_HOURS} working hours left"><span style="width:${Math.max(0, Math.min(100, (Number(hours) || 0) / TOOL_HOURS * 100))}%"></span></span>`;
-      const card = row => {
-        const n = Number(row.quantity) || 1, got = holders ? Array.from({ length: n }, (_, j) => holders.get(`${row.id}:${j}`)).filter(Boolean) : [];
-        const who = invalid.has(row.id) ? '<small class="tr-asg-who is-warn">Check this tool</small>'
-          : !holders ? '' : got.length ? `<small class="tr-asg-who">→ <b>${got.map(esc).join(', ')}</b>${got.length < n ? ` · ${n - got.length} unused` : ''}</small>`
-          : `<small class="tr-asg-who is-warn">${esc(unusedWhy(row))}</small>`;
-        return `<button type="button" class="tr-asg-tool${invalid.has(row.id) ? ' is-invalid' : ''}" data-tool-edit="${esc(row.id)}" aria-label="Edit ${esc(cap(row.type))}${row.bonus !== '' ? ` +${esc(row.bonus)}%` : ''}${row.name ? `, ${esc(row.name)}` : ''}">
-          <span class="tr-asg-tool-top">${icon(row.type)}<span><b>${row.bonus !== '' ? `+${esc(row.bonus)}%` : '?'}</b><small>${esc(row.name.trim() || cap(row.type))}</small></span>${n > 1 ? `<span class="tr-asg-qty">×${esc(row.quantity)}</span>` : ''}</span>
-          ${life(row.hours)}<small>${esc(toPct(row.hours))}% left · <span class="tr-asg-products">${products(row.type)}</span></small>${who}</button>`;
+      const spare = t => {
+        const got = holders?.get(`spare:${t.id}`);
+        const who = !holders ? '' : got ? `<small class="tr-asg-who">→ <b>${esc(got)}</b></small>` : `<small class="tr-asg-who is-warn">${esc(unusedWhy(t))}</small>`;
+        return `<button type="button" class="tr-asg-tool" data-spare="${esc(t.id)}" aria-label="${esc(cap(t.type))} +${esc(num(t.bonus, 0))}%, spare: details">
+          <span class="tr-asg-tool-top">${icon(t.type)}<span><b>+${esc(num(t.bonus, 0))}%</b><small>${esc(cap(t.type))} · spare</small></span></span>
+          ${life(t.hours)}<small>${esc(toPct(t.hours))}% left${t.seen ? '' : ' · unused'} · <span class="tr-asg-products">${products(t.type)}</span></small>${who}</button>`;
       };
       const eq = e => {
         const type = toolType(e.toolItem.code) || 'hammer', hours = equippedHours(e);
@@ -271,27 +312,46 @@ const EmployeeAssignments = (() => {
           <span class="tr-asg-tool-top">${icon(type)}<span><b>+${esc(num(e.toolStatus?.rolledPercent ?? e.toolItem.skills?.production ?? 0, 0))}%</b><small>${esc(cap(type))} · equipped</small></span></span>
           ${life(hours)}<small>${esc(toPct(hours))}% left</small><small class="tr-asg-who">${holders ? (holders.has(`equipped:${e._id}`) ? `Assigned to <b>${esc(holders.get(`equipped:${e._id}`))}</b>` : 'Unused') : `Currently with <b>${esc(e.name)}</b>`}</small></button>`;
       };
-      return `${settings.inventory.map(card).join('')}${equippedOf(team).map(eq).join('')}
-        <button type="button" class="tr-asg-tool is-add" data-tool-add${settings.inventory.length >= MAX_ROWS ? ' disabled' : ''}>${icon('plus')}<span>Add tool</span></button>`;
+      const cards = [...sparesFor(team, settings).map(spare), ...equippedOf(team).map(eq)];
+      return cards.length ? cards.join('') : '<p class="tr-muted">No tools yet. Tools you open from toolboxes appear here.</p>';
+    }
+
+    // Where spares come from, and whether the log loaded.
+    function toolSource(team) {
+      const log = team.toolLog, owned = log?.owned || [];
+      const hidden = owned.filter(t => settings.gone.includes(t.id)).length;
+      const restore = hidden ? ` <button type="button" class="tr-link" data-spares-restore>Show ${plural(hidden, 'tool')} marked as gone</button>` : '';
+      if (!log) return '<p class="tr-warn">Your toolbox history did not load, so spare tools are left out. Reload employees to try again.</p>';
+      return `<p class="tr-muted">Spares are tools from your toolboxes that no employee holds. Each keeps its capacity from when it was last seen equipped; one never seen equipped counts as new.${restore}</p>
+        ${log.complete ? '' : '<p class="tr-warn">Only your most recent tool history loaded, so older tools may be missing.</p>'}`;
     }
 
     // Only the tool cards change, so the page keeps its scroll position.
     function redrawShelf(focus) {
-      $('[data-plan-shelf]').innerHTML = shelf(getTeam());
-      root.querySelector(focus)?.focus({ preventScroll: true });
+      const team = getTeam();
+      $('[data-plan-source]').innerHTML = toolSource(team);
+      $('[data-plan-shelf]').innerHTML = shelf(team);
+      (root.querySelector(focus) || $('[data-plan-shelf] button'))?.focus({ preventScroll: true });
     }
 
     function refresh(focus = null) {
-      runId++; stop(); best = null; onResult(null);
+      runId++; stop(); best = null;
       const team = getTeam();
-      if (!team) { root.innerHTML = '<p class="tr-muted">Load your employees above to compare company and tool assignments.</p>'; return; }
+      if (!team) { onResult(null); root.innerHTML = '<p class="tr-muted">Load your employees above to compare company and tool assignments.</p>'; return; }
       const nextAccount = team.userId || team.username.toLowerCase();
       if (account !== nextAccount) {
         account = nextAccount;
         let raw = null;
         try { raw = JSON.parse(localStorage.getItem(key()) || 'null'); } catch { notices = ['Saved planner inputs were unreadable and have been reset.']; }
         ({ settings, notices } = sanitize(raw));
+        if (raw?.inventory) persist();
       }
+      const equipped = team.companies.flatMap(entry => activeOf(entry).filter(e => e.toolItem?._id).map(e => ({ id: e.toolItem._id,
+        hours: Math.max(0, Math.min(TOOL_HOURS, Number(equippedHours(e)) || 0)), holder: e.name, company: entry.company._id })));
+      const seen = observeEquipped(settings.seenEquipped, equipped, team.toolLog?.complete ? team.toolLog.owned : null);
+      if (JSON.stringify(seen) !== JSON.stringify(settings.seenEquipped)) { settings.seenEquipped = seen; persist(); }
+      // After recording, so the page's card values see this load's spares.
+      onResult(null);
       const people = team.companies.flatMap(entry => activeOf(entry).map(e => ({ e, company: entry.company })));
       const career = careerDays(people.map(({ e }) => e.age));
       const horizon = h => h === 'career' ? `Careers · ${career} d` : `${h} d`;
@@ -309,12 +369,13 @@ const EmployeeAssignments = (() => {
         <div class="tr-asg-grid">
           <div class="tr-asg-main" data-plan-result></div>
           <div class="tr-asg-side">
-            <section class="tr-asg-box tr-asg-tools" aria-labelledby="plan-tools-heading"><h4 id="plan-tools-heading">Your tools <span class="tr-muted">· select one to edit</span></h4>
+            <section class="tr-asg-box tr-asg-tools" aria-labelledby="plan-tools-heading"><h4 id="plan-tools-heading">Your tools</h4>
+              <div data-plan-source>${toolSource(team)}</div>
               <div class="tr-asg-shelf" data-plan-shelf>${shelf(team)}</div></section>
             <section class="tr-asg-box" aria-labelledby="plan-pins-heading"><h4 id="plan-pins-heading">Keep in place</h4>
               <p class="tr-muted">Selected employees stay in their company. They can still get a tool.</p>
               <div class="tr-asg-pins">${people.map(({ e, company }) => `<button type="button" class="tr-asg-pin" data-plan-pin="${esc(e._id)}" aria-pressed="${settings.pinned.includes(e._id)}" title="${esc(companyName(company._id) || company.name || '')}">${productIcon(company.itemCode)}${esc(e.name)}</button>`).join('')}</div></section>
-            <details class="tr-more"><summary>What the comparison includes</summary><p class="tr-calc-sub">The planner scores whole company rosters: Craftsman on manufactured goods and weapons, Laborer on raw resources, Handy and Improviser, coworker traits, company bonuses and taxes, happiness, saved specialization, tenure and retirement. Moving an employee between your companies costs no happiness, but Creature of Habit loses 30 bonus points for three days. Company tenure restarts; the same product keeps its specialization, and another product restores that product's saved progress. Tools stop after their entered working hours and are not replaced.</p><p class="tr-calc-sub">Careers value every change until the last planned employee retires at ${EC.CFG.retireAge}, one year older each day. A retired employee's place stays empty: hiring a replacement is not valued. A shorter window ignores everything after it, so it favours quick wins over moves that pay back later.</p><p class="tr-calc-sub">This is a bounded search for a better arrangement, not a guarantee of the best one. Each employee moves at most once. A company with a hidden or unknown trait, or whose current numbers the planner cannot reproduce, is left exactly as it is and is not part of the totals. Future training, recruiting, toolboxes, quitting and price changes are not valued. Equipped tools can be reassigned to any compatible employee. Nothing is changed in the game.</p></details>
+            <details class="tr-more"><summary>What the comparison includes</summary><p class="tr-calc-sub">The planner scores whole company rosters: Craftsman on manufactured goods and weapons, Laborer on raw resources, Handy and Improviser, coworker traits, company bonuses and taxes, happiness, saved specialization, tenure and retirement. Moving an employee between your companies costs no happiness, but Creature of Habit loses 30 bonus points for three days. Company tenure restarts; the same product keeps its specialization, and another product restores that product's saved progress. Tools stop when their capacity runs out and are not replaced.</p><p class="tr-calc-sub">Careers value every change until the last planned employee retires at ${EC.CFG.retireAge}, one year older each day. A retired employee's place stays empty: hiring a replacement is not valued. A shorter window ignores everything after it, so it favours quick wins over moves that pay back later.</p><p class="tr-calc-sub">This is a bounded search for a better arrangement, not a guarantee of the best one. Each employee moves at most once. A company with a hidden or unknown trait, or whose current numbers the planner cannot reproduce, is left exactly as it is and is not part of the totals. Future training, recruiting, toolboxes, quitting and price changes are not valued. Equipped tools can be reassigned to any compatible employee. Nothing is changed in the game.</p></details>
           </div>
         </div>`;
       if (focus) root.querySelector(focus)?.focus();
@@ -336,50 +397,31 @@ const EmployeeAssignments = (() => {
       if (note) { note.textContent = ''; note.hidden = true; }
     }
     const field = (id, label, input, hint = '') => `<div class="tr-field"><label for="${id}">${label}</label>${input}${hint}<small class="tr-plan-err" id="${id}-err" hidden></small></div>`;
+    const day = at => new Date(at).toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+    const close = '<button type="button" class="tr-asg-close" data-dialog-close aria-label="Close">✕</button>';
 
     function drawDialog() {
       const team = getTeam(), d = draft;
-      if (d.equipped) {
-        const e = equippedOf(team).find(e => e._id === d.equipped), type = toolType(e.toolItem.code) || 'hammer', id = `plan-equipped-${e._id}`;
-        dialog.innerHTML = `<form method="dialog" data-dialog-form novalidate><header><h3 id="plan-dialog-title">${esc(e.name)}'s ${esc(type)}</h3><button type="button" class="tr-asg-close" data-dialog-close aria-label="Close">✕</button></header>
-          <div class="tr-asg-dialog-body"><p class="tr-muted">Equipped tools can be reassigned to compatible employees. Capacity left starts from the game; a new tool lasts ${TOOL_HOURS} working hours. Correct it if it has changed.</p>
-          ${field(id, 'Capacity left %', `<input id="${id}" type="number" inputmode="decimal" autocomplete="off" min="0" max="100" step="any" data-dialog-field="hours" value="${esc(toPct(d.hours))}" aria-describedby="${id}-err">`, `<small class="tr-muted">From the game: ${esc(toPct(estimateHours(e)))}%</small>`)}</div>
-          <footer><span class="tr-asg-preview">${icon(type)}<span><b>${esc(cap(type))} · equipped</b><br><small class="tr-muted">Currently with ${esc(e.name)}</small></span></span>
-          <span class="tr-asg-buttons"><button type="button" data-dialog-close>Cancel</button><button type="submit" class="btn-primary" data-dialog-save>Save</button></span></footer></form>`;
+      if (d.spare) {
+        const t = sparesFor(team, settings).find(t => t.id === d.spare), how = { toolbox: 'Opened from a toolbox', crafted: 'Crafted', bought: 'Bought' }[t.how];
+        dialog.innerHTML = `<form method="dialog" data-dialog-form novalidate><header><h3 id="plan-dialog-title">${esc(cap(t.type))} +${esc(num(t.bonus, 0))}%</h3>${close}</header>
+          <div class="tr-asg-dialog-body"><p>${how} on ${esc(day(t.at))}. ${t.seen ? `Last seen equipped${t.seen.holder ? ` by ${esc(t.seen.holder)}` : ''} with ${esc(toPct(t.hours))}% left${t.seen.at ? `, on ${esc(day(t.seen.at))}` : ''}.` : 'Not seen equipped yet, so it counts as new.'}</p>
+          <p class="tr-muted">If you no longer have it, mark it as gone so the planner stops offering it.</p></div>
+          <footer><span class="tr-asg-preview">${icon(t.type)}<span><b>${esc(cap(t.type))} · spare</b><br><small class="tr-muted">${esc(toPct(t.hours))}% left</small></span></span>
+          <span class="tr-asg-buttons"><button type="button" data-dialog-close>Cancel</button><button type="button" data-dialog-gone>Mark as gone</button></span></footer></form>`;
         return;
       }
-      const r = d.row, id = f => `plan-${r.id}-${f}`;
-      const tiles = Object.keys(EP.TOOL_TYPES).map(type => `<button type="button" class="tr-asg-type" data-dialog-type="${type}" aria-pressed="${r.type === type}">${icon(type)}<b>${cap(type)}</b>
-          <span class="tr-asg-products">${products(type)}</span></button>`).join('');
-      const pcts = [100, 75, 50, 25];
-      dialog.innerHTML = `<form method="dialog" data-dialog-form novalidate><header><h3 id="plan-dialog-title">${d.isNew ? 'Add a tool' : 'Edit tool'}</h3><button type="button" class="tr-asg-close" data-dialog-close aria-label="Close">✕</button></header>
-        <div class="tr-asg-dialog-body">
-          <fieldset class="tr-asg-types" aria-describedby="plan-dialog-type-err"><legend>Type</legend>${tiles}<small class="tr-plan-err" id="plan-dialog-type-err" hidden></small></fieldset>
-          <div class="tr-asg-dialog-fields">
-            ${field(id('bonus'), 'Rolled bonus %', `<span class="tr-asg-bonus"><input type="range" min="3" max="65" step="1" value="${esc(Number(r.bonus) || 20)}" data-dialog-range aria-label="Rolled bonus slider" tabindex="-1"><input id="${id('bonus')}" type="number" inputmode="decimal" autocomplete="off" min="3" max="65" step="any" data-dialog-field="bonus" value="${esc(r.bonus)}" aria-describedby="${id('bonus')}-err" required></span>`, '<small class="tr-muted">As shown on the tool, 3 to 65</small>')}
-            ${field(id('hours'), 'Capacity left %', `<input id="${id('hours')}" type="number" inputmode="decimal" autocomplete="off" min="0" max="100" step="any" data-dialog-field="hours" value="${esc(toPct(r.hours))}" aria-describedby="${id('hours')}-err" required>`,
-              `<span class="tr-asg-chips">${pcts.map(p => `<button type="button" data-dialog-pct="${p}" aria-pressed="${Number(toPct(r.hours)) === p}">${p === 100 ? 'New · 100%' : `${p}%`}</button>`).join('')}</span>`)}
-            ${field(id('quantity'), 'How many identical tools', `<span class="tr-asg-qty-input"><button type="button" data-dialog-qty="-1" aria-label="Fewer">−</button><input id="${id('quantity')}" type="number" inputmode="numeric" autocomplete="off" min="1" max="50" step="1" data-dialog-field="quantity" value="${esc(r.quantity)}" aria-describedby="${id('quantity')}-err" required><button type="button" data-dialog-qty="1" aria-label="More">+</button></span>`)}
-            ${field(id('name'), 'Label <em>optional</em>', `<input id="${id('name')}" autocomplete="off" maxlength="60" data-dialog-field="name" value="${esc(r.name)}">`)}
-          </div>
-        </div>
-        <footer><span class="tr-asg-preview" data-dialog-preview></span>
-          <span class="tr-asg-buttons">${d.isNew ? '' : '<button type="button" data-dialog-remove>Remove</button>'}<button type="button" data-dialog-close>Cancel</button><button type="submit" class="btn-primary" data-dialog-save>${d.isNew ? 'Add tool' : 'Save'}</button></span></footer></form>`;
-      preview();
+      const e = equippedOf(team).find(e => e._id === d.equipped), type = toolType(e.toolItem.code) || 'hammer', id = `plan-equipped-${e._id}`;
+      dialog.innerHTML = `<form method="dialog" data-dialog-form novalidate><header><h3 id="plan-dialog-title">${esc(e.name)}'s ${esc(type)}</h3>${close}</header>
+        <div class="tr-asg-dialog-body"><p class="tr-muted">Equipped tools can be reassigned to compatible employees. Capacity left starts from the game; a new tool lasts ${TOOL_HOURS} working hours. Correct it if it has changed.</p>
+        ${field(id, 'Capacity left %', `<input id="${id}" type="number" inputmode="decimal" autocomplete="off" min="0" max="100" step="any" data-dialog-field="hours" value="${esc(toPct(d.hours))}" aria-describedby="${id}-err">`, `<small class="tr-muted">From the game: ${esc(toPct(estimateHours(e)))}%</small>`)}</div>
+        <footer><span class="tr-asg-preview">${icon(type)}<span><b>${esc(cap(type))} · equipped</b><br><small class="tr-muted">Currently with ${esc(e.name)}</small></span></span>
+        <span class="tr-asg-buttons"><button type="button" data-dialog-close>Cancel</button><button type="submit" class="btn-primary" data-dialog-save>Save</button></span></footer></form>`;
     }
-    function preview() {
-      const r = draft.row, el = dialog.querySelector('[data-dialog-preview]');
-      if (!el) return;
-      if (!r.type) { el.innerHTML = '<span class="tr-muted">Choose the tool type</span>'; return; }
-      const n = Number(r.quantity), h = Number(r.hours);
-      el.innerHTML = `${icon(r.type)}<span><b>${Number.isInteger(n) && n > 1 ? `${n} × ` : ''}${esc(cap(r.type))}${r.bonus !== '' ? ` +${esc(r.bonus)}%` : ''}</b><br><small class="tr-muted">${h > 0 ? `${esc(toPct(r.hours))}% ≈ ${num(h / 24, 1)} days of work` : 'Enter the capacity left'}</small></span>`;
-    }
-    function openTool(rowId, errors = [], type = '') {
-      const row = settings.inventory.find(r => r.id === rowId);
-      draft = row ? { row: { ...row }, isNew: false, back: `[data-tool-edit="${CSS.escape(row.id)}"]` } : { row: { ...blank(), type }, isNew: true, back: '[data-tool-add]' };
+    function openSpare(id) {
+      draft = { spare: id, back: `[data-spare="${CSS.escape(id)}"]` };
       drawDialog(); dialog.showModal();
-      showFieldErrors(errors, dialog);
-      (dialog.querySelector('[aria-invalid="true"]') || dialog.querySelector(draft.isNew && !type ? '[data-dialog-type]' : `#plan-${CSS.escape(draft.row.id)}-bonus`))?.focus();
+      dialog.querySelector('[data-dialog-close]:not(.tr-asg-close)')?.focus();
     }
     function openEquipped(id, errors = []) {
       const e = equippedOf(getTeam()).find(e => e._id === id);
@@ -389,65 +431,31 @@ const EmployeeAssignments = (() => {
       dialog.querySelector('[data-dialog-field]')?.select();
     }
     function commit() {
-      const team = getTeam();
-      if (draft.equipped) {
-        const errors = fieldErrors({ inventory: [], equippedHours: { [draft.equipped]: draft.hours } }, [draft.equipped]);
-        if (errors.length) { showFieldErrors(errors, dialog); dialog.querySelector('[aria-invalid="true"]')?.focus(); return; }
-        settings.equippedHours[draft.equipped] = String(Number(draft.hours));
-      } else {
-        if (!draft.row.type) {
-          const note = dialog.querySelector('#plan-dialog-type-err');
-          note.textContent = 'Choose the tool type.'; note.hidden = false;
-          return dialog.querySelector('[data-dialog-type]').focus();
-        }
-        const errors = fieldErrors({ inventory: [draft.row], equippedHours: {} });
-        if (errors.length) { showFieldErrors(errors, dialog); dialog.querySelector('[aria-invalid="true"]')?.focus(); return; }
-        const i = settings.inventory.findIndex(r => r.id === draft.row.id);
-        if (i >= 0) settings.inventory[i] = draft.row; else settings.inventory.push(draft.row);
-      }
-      const back = draft.back === '[data-tool-add]' ? `[data-tool-edit="${CSS.escape(draft.row.id)}"]` : draft.back;
+      if (!draft?.equipped) return;
+      const errors = fieldErrors({ equippedHours: { [draft.equipped]: draft.hours } }, [draft.equipped]);
+      if (errors.length) { showFieldErrors(errors, dialog); dialog.querySelector('[aria-invalid="true"]')?.focus(); return; }
+      settings.equippedHours[draft.equipped] = String(Number(draft.hours));
+      const back = draft.back;
       draft = null; dialog.close(); save();
-      if (team) { redrawShelf(back); stale(); }
+      if (getTeam()) { redrawShelf(back); stale(); }
     }
     dialog.addEventListener('click', ev => {
       const t = ev.target;
       if (t === dialog || t.closest('[data-dialog-close]')) return dialog.close();
-      const type = t.closest('[data-dialog-type]');
-      if (type) { draft.row.type = type.dataset.dialogType; drawDialog(); return dialog.querySelector(`[data-dialog-type="${type.dataset.dialogType}"]`).focus(); }
-      const pct = t.closest('[data-dialog-pct]');
-      if (pct) {
-        draft.row.hours = toHours(pct.dataset.dialogPct);
-        const input = dialog.querySelector('[data-dialog-field="hours"]'); input.value = pct.dataset.dialogPct; clearError(input);
-        for (const b of dialog.querySelectorAll('[data-dialog-pct]')) b.setAttribute('aria-pressed', String(b === pct));
-        return preview();
-      }
-      const qty = t.closest('[data-dialog-qty]');
-      if (qty) {
-        const input = dialog.querySelector('[data-dialog-field="quantity"]');
-        draft.row.quantity = input.value = String(Math.max(1, Math.min(50, (Math.round(Number(input.value)) || 1) + Number(qty.dataset.dialogQty))));
-        clearError(input); return preview();
-      }
-      if (t.closest('[data-dialog-remove]')) {
-        const i = settings.inventory.findIndex(r => r.id === draft.row.id);
-        settings.inventory.splice(i, 1); draft = null; dialog.close(); save();
-        const next = settings.inventory[i] || settings.inventory[i - 1];
-        redrawShelf(next ? `[data-tool-edit="${CSS.escape(next.id)}"]` : '[data-tool-add]'); stale();
+      if (t.closest('[data-dialog-gone]')) {
+        const team = getTeam(), list = sparesFor(team, settings), i = list.findIndex(x => x.id === draft.spare);
+        settings.gone = [...new Set([...settings.gone, draft.spare])];
+        draft = null; dialog.close(); save();
+        const next = list[i + 1] || list[i - 1];
+        redrawShelf(next ? `[data-spare="${CSS.escape(next.id)}"]` : null); stale();
       }
     });
     dialog.addEventListener('submit', ev => { ev.preventDefault(); commit(); });
     dialog.addEventListener('input', ev => {
       const t = ev.target;
-      if (t.dataset.dialogRange !== undefined) {
-        const input = dialog.querySelector('[data-dialog-field="bonus"]');
-        draft.row.bonus = input.value = t.value; clearError(input);
-      } else if (t.dataset.dialogField) {
-        const value = t.dataset.dialogField === 'hours' ? toHours(t.value) : t.value;
-        if (draft.equipped) draft.hours = value; else draft.row[t.dataset.dialogField] = value;
-        if (t.dataset.dialogField === 'bonus' && Number(t.value) >= 3) dialog.querySelector('[data-dialog-range]').value = t.value;
-        if (t.dataset.dialogField === 'hours') for (const b of dialog.querySelectorAll('[data-dialog-pct]')) b.setAttribute('aria-pressed', String(Number(b.dataset.dialogPct) === Number(t.value)));
-        if (t.getAttribute('aria-invalid')) clearError(t);
-      } else return;
-      if (!draft.equipped) preview();
+      if (!t.dataset.dialogField || !draft?.equipped) return;
+      draft.hours = toHours(t.value);
+      if (t.getAttribute('aria-invalid')) clearError(t);
     });
     dialog.addEventListener('close', () => {
       const back = draft?.back; draft = null;
@@ -600,11 +608,10 @@ const EmployeeAssignments = (() => {
       if (!team || !getMarket()?.ppValue) return;
       const errors = fieldErrors(settings, equippedIds(team));
       if (errors.length) {
-        status(`<span class="tr-warn">Fix ${plural(new Set(errors.map(([id]) => id.replace(/-(bonus|hours|quantity)$/, ''))).size, 'tool')} marked below${auto ? ', then compare' : ' before comparing'}.</span>`);
+        status(`<span class="tr-warn">Fix ${plural(errors.length, 'tool')} marked below${auto ? ', then compare' : ' before comparing'}.</span>`);
         if (auto) return;
-        const [first] = errors[0], eq = first.match(/^plan-equipped-(.+)$/);
-        if (eq) openEquipped(eq[1], errors.filter(([id]) => id === first));
-        else { const r = settings.inventory.find(r => first.startsWith(`plan-${r.id}-`)); openTool(r.id, errors.filter(([id]) => id.startsWith(`plan-${r.id}-`))); }
+        const [first] = errors[0];
+        openEquipped(first.replace(/^plan-equipped-/, ''), errors.filter(([id]) => id === first));
         return;
       }
       const prepared = snapshotOf(team, getMarket(), settings);
@@ -652,11 +659,9 @@ const EmployeeAssignments = (() => {
 
     root.addEventListener('click', ev => {
       const b = ev.target.closest('button'); if (!b || b.disabled) return;
-      if (b.dataset.toolAdd !== undefined) openTool(null);
-      else if (b.dataset.toolEdit) {
-        const errors = fieldErrors({ inventory: settings.inventory.filter(r => r.id === b.dataset.toolEdit), equippedHours: {} });
-        openTool(b.dataset.toolEdit, errors);
-      } else if (b.dataset.equippedEdit) openEquipped(b.dataset.equippedEdit, fieldErrors({ inventory: [], equippedHours: settings.equippedHours }, [b.dataset.equippedEdit]));
+      if (b.dataset.spare) openSpare(b.dataset.spare);
+      else if (b.dataset.sparesRestore !== undefined) { settings.gone = []; save(); redrawShelf(null); stale(); }
+      else if (b.dataset.equippedEdit) openEquipped(b.dataset.equippedEdit, fieldErrors({ equippedHours: settings.equippedHours }, [b.dataset.equippedEdit]));
       else if (b.dataset.planHorizon) {
         if (settings.horizon === b.dataset.planHorizon) return;
         settings.horizon = b.dataset.planHorizon;
@@ -675,8 +680,6 @@ const EmployeeAssignments = (() => {
       refresh,
       run,
       cardSettings: () => JSON.parse(JSON.stringify(settings)),
-      // From a card's tool prompt: the Add tool dialog with its type chosen.
-      addTool: type => openTool(null, [], EP.TOOL_TYPES[type] ? type : ''),
       // Opened from the roster: focus the planner's Compare button.
       reveal() {
         root.querySelector('[data-plan-run]')?.focus({ preventScroll: true });
@@ -760,6 +763,6 @@ const EmployeeAssignments = (() => {
     return { reset, request, reprioritize, cancel, get generation() { return generation; },
       dispose() { generation++; worker?.terminate(); worker = null; batches.clear(); } };
   }
-  return { mount, sanitize, fieldErrors, snapshotOf, careerDays, createCardPricer };
+  return { mount, sanitize, fieldErrors, snapshotOf, careerDays, createCardPricer, toolLogOf, sparesOf, observeEquipped };
 })();
 if (typeof module !== 'undefined') module.exports = EmployeeAssignments;
