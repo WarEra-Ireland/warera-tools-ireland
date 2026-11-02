@@ -424,6 +424,7 @@ const EmployeeTrainingTool = (() => {
     const itemType = market?.types?.[inp.product] || inp.sit.itemType;
     return {
       ...EC.DEFAULT_CONTEXT, management: inp.management, sellRatio: product?.ratio ?? 1,
+      energyValue: energyCurve(),
       coworkerOutput: inp.coworkerOutput ?? undefined,
       situation: { ...inp.sit, itemType, product: inp.sit.product ?? (product ? inp.product : null) },
     };
@@ -540,7 +541,7 @@ const EmployeeTrainingTool = (() => {
   function pricingLabel(batch, group = batch.result?.groups[0]) {
     if (batch.status === 'pending') return 'Recalculating arrangements; current-company values shown. Choice pending.';
     if (batch.status === 'fallback') return `Current-company fallback: ${batch.reason}`;
-    return `Rearranged estimate over ${group.horizon} workforce days. ${group.coverage.tested} of ${group.coverage.total} local arrangements tested; tools can be reassigned. Without the card assumes ${group.baseline.description}. No future hires. Second Wind and Luck include forecasts of future training using current card values. ${group.warnings.join(' ')}`;
+    return `Rearranged estimate over ${group.horizon} workforce days. ${group.coverage.tested} of ${group.coverage.total} local arrangements tested; tools can be reassigned. Without the card assumes ${group.baseline.description}. No future hires. Second Wind and Luck include forecasts of future training using current card values; ${energyText()} ${group.warnings.join(' ')}`;
   }
   function quoteDetail(q) {
     if (q.value === null) return q.note || 'Not priced.';
@@ -558,7 +559,9 @@ const EmployeeTrainingTool = (() => {
       const value = EC.cardValue(e, c, ctx);
       const tv = c.card === 'habit' && c.code ? EC.traitValue(c.code, e, ctx) : null;
       const t = EC.TRAIT[c.card === 'mentoring' ? c.to : c.code] || null;
-      return { slot, c, value, outcomes: tv?.outcomes || [], note: t?.unpriced, when: t?.when };
+      // A Wild Card's spread, for the verdict (rearranged quotes carry their own outcomes).
+      const spread = c.card === 'wildCard' ? EC.wildCardOutcomes(e, ctx) : null;
+      return { slot, c, value, outcomes: tv?.outcomes || [], spread, note: t?.unpriced, when: t?.when };
     }).filter(Boolean);
     const batch = selectedPricing(rows.map(x => x.c), 'hand');
     const group = batch.result?.groups[0];
@@ -588,12 +591,35 @@ const EmployeeTrainingTool = (() => {
   // Up to this many rolls are listed on a card; more show as a range.
   const ROLLS_LISTED = 4;
 
-  // The card to take, or a line saying why there's none yet.
+  // A card as the verdict names it.
+  const cardName = c => c.card === 'wildCard' ? 'Wild card' : `${cardTitle(c)} (${effectText(c)})`;
+  // A random card is a gamble against a sure one when this share of its
+  // outcomes is worth less than the runner-up.
+  const GAMBLE_SHARE = 0.25;
+
+  // The card to take, or a line saying why there's none yet. It also says
+  // when the pick is a gamble against a sure card, and which cards it left
+  // out because they can't be priced.
   function verdict(hand) {
     if (!hand.length) return { best: null, html: '' };
     if (hand.pricing?.status === 'pending') return { best: null, html: '<p class="tr-calc-sub">Still working out the values. Wait before you pick.</p>' };
-    const best = hand.filter(x => x.value !== null).sort((a, b) => b.value - a.value)[0];
-    return best ? { best, html: '' } : { best: null, html: '<p class="tr-calc-sub">None of these cards can be priced. Pick by the traits.</p>' };
+    const [best, next] = hand.filter(x => x.value !== null).sort((a, b) => b.value - a.value);
+    if (!best) return { best: null, html: '<p class="tr-calc-sub">None of these cards can be priced. Pick by the traits.</p>' };
+    const notes = [];
+    const outcomes = best.outcomes.length > 1 ? best.outcomes : best.spread || [];
+    if (next && outcomes.length > 1) {
+      const worse = outcomes.reduce((a, o) => a + (o.value < next.value ? o.p : 0), 0);
+      if (worse >= GAMBLE_SHARE) {
+        notes.push(`${escapeHtml(cardName(best.c))} has the highest average, but it's a gamble: ${Math.round(100 * worse)}% of its outcomes are worth less than ${escapeHtml(cardName(next.c))}, the sure option.`);
+      }
+      const unpriced = [...new Set(outcomes.filter(o => o.unpriced).map(o => traitName(o.arg)))];
+      if (unpriced.length) notes.push(`Its outcomes include ${unpriced.length > 1 ? `${unpriced.slice(0, -1).join(', ')} and ${unpriced.at(-1)}` : unpriced[0]}, counted as zero because their effects aren't priced.`);
+    }
+    // Negotiation below the wage floor isn't offered, so it isn't left out.
+    for (const x of hand.filter(x => x.value === null && x.c.card !== 'negotiation')) {
+      notes.push(`${escapeHtml(cardName(x.c))} is left out: ${escapeHtml((x.note || 'it can\'t be priced').replace(/\.$/, ''))}. Weigh it yourself.`);
+    }
+    return { best, html: notes.map(n => `<p class="tr-calc-sub tr-verdict-note">${n}</p>`).join('') };
   }
 
   // A card's effect as the game draws it: a drill shows the gain and the
@@ -671,7 +697,9 @@ const EmployeeTrainingTool = (() => {
     if (!findEmployee(input.pick)) return;
     const t = taken.get(input.pick);
     if (t) {
-      $calc.innerHTML = `<p class="tr-emp-took" role="status" tabindex="-1"><strong>Took ${escapeHtml(t.text)}.</strong> This records your choice; it does not choose a card in the game. Recommendations are paused until you reload. <button type="button" class="tr-link" data-reload>Reload from the game</button> to ${t.rolled.length ? `fetch the actual ${escapeHtml(t.rolled.join(' and '))} and ` : ''}fetch updated employee stats and training availability.</p>`;
+      const wait = t.gaveUp ? `The game hasn't recorded a pick yet. Pick the card in the game, then <button type="button" class="tr-link" data-confirm>check again</button>.`
+        : `Waiting for the game to record it; checking every ${CONFIRM_EVERY_MS / 1000} seconds. <button type="button" class="tr-link" data-confirm>Check now</button>`;
+      $calc.innerHTML = `<p class="tr-emp-took" role="status" tabindex="-1"><strong>Took ${escapeHtml(t.text)}.</strong> This records your choice; it does not choose a card in the game. Recommendations resume once the game shows the pick. ${wait} Or <button type="button" class="tr-link" data-reload>reload everything</button>.</p>`;
       return;
     }
     if (taken.size) { $calc.innerHTML = '<p class="tr-warn">Reload from the game after the recorded training choice before comparing more cards.</p>'; return; }
@@ -687,7 +715,8 @@ const EmployeeTrainingTool = (() => {
     ].filter(Boolean);
     const hand = pricedHand(e, ctx);
     const v = verdict(hand);
-    const note = dealtNote();
+    const done = confirmed?.emp === input.pick ? `<p class="tr-calc-sub tr-confirmed">The game recorded ${escapeHtml(confirmed.text)}.</p>` : '';
+    const note = done + dealtNote();
 
     $calc.innerHTML = `
       ${note ? `<div class="tr-hand">${note}</div>` : ''}
@@ -1438,6 +1467,56 @@ const EmployeeTrainingTool = (() => {
   // bar would fund; otherwise the least valuable training; with no team
   // loaded, a typical employee's. Self-work sets it instead when it pays more.
   const energyValue = () => altFrom(feedRows());
+
+  // Energy actions a day: what the bar regenerates in 24 hours, set by the
+  // Energy skill; a full bar when the rate isn't known.
+  function dailyActions() {
+    const regen = team?.energyBar?.regen;
+    if (regen > 0) return Math.max(1, Math.floor(regen * 24 / 10));
+    return team?.energy ? Math.max(1, Math.floor(team.energy / 10)) : null;
+  }
+
+  // What 10 energy earns elsewhere on each day from today, for the
+  // trainings Second Wind adds (EmployeeCore context energyValue). Each day
+  // a day's energy (dailyActions) funds the best trainings left: every
+  // employee trains up to trainingsPerDay times until their potential runs
+  // out, each training worth their next one today, less the working life
+  // gone by then. That value leaves Second Wind out (depth 0), which would
+  // price itself. With more trainings than energy, the price is the last one
+  // funded; otherwise energy is spare and goes to your own work. Your own
+  // work is the floor throughout (0 when unknown). Once per team, prices and day.
+  let energyMemo = null;
+  function energyCurve() {
+    if (!team || !market?.ppValue) return [];
+    const key = [team, market, todayUtc()];
+    if (energyMemo?.key.every((k, i) => k === key[i])) return energyMemo.curve || [];
+    // Contexts built while this is worked out leave energy out.
+    energyMemo = { key, curve: null };
+    const learners = team.companies.filter(entry => !entry.rosterMissing).flatMap(entry => entry.employees
+      .filter(emp => (emp.potentialMax || 0) - (emp.potential || 0) > 0).map(emp => {
+        const inp = inputsFor(emp, entry, { models: false });
+        const e = employeeOf(inp);
+        return { value: EC.trainingOutlook({ ...e, potentialMax: emp.potentialMax }, contextOf(inp), { depth: 0 }).value,
+          rate: emp.trainingsPerDay || 1, left: emp.potentialMax - (emp.potential || 0), days: EC.workingDays(e) };
+      }));
+    const budget = dailyActions() ?? Infinity;
+    const floor = Math.max(0, selfWorkValue()?.value ?? 0);
+    const curve = [];
+    for (let d = 0; ; d++) {
+      const units = learners.flatMap(l => Array(Math.max(0, Math.min(l.rate, l.left - l.rate * d)))
+        .fill(l.days > d ? l.value * (l.days - d) / l.days : 0)).sort((a, b) => b - a);
+      curve.push(Math.max(floor, units.length > budget ? units[budget - 1] : floor));
+      if (!units.length) break;
+    }
+    energyMemo.curve = curve;
+    return curve;
+  }
+  function energyText() {
+    const curve = energyCurve();
+    if (!curve.length) return '';
+    const later = curve.at(-1) !== curve[0] ? `, ${signedPP(curve.at(-1))} PP once your team's training potential runs out` : '';
+    return `Second Wind's extra trainings count only what they add over what their energy would earn that day: ${signedPP(curve[0])} PP per 10 energy now${later}.`;
+  }
   // A typical employee's next training depends only on management, and
   // every render asks for it while no training is ready.
   const typicalOutlooks = new Map();
@@ -1451,9 +1530,9 @@ const EmployeeTrainingTool = (() => {
     let best;
     if (!trains.length) best = { value: typicalOutlook(team?.management ?? 0), from: 'a typical employee\'s next training' };
     else {
-      const bar = team.energy ? Math.max(1, Math.floor(team.energy / 10)) : trains.length;
+      const bar = dailyActions() ?? trains.length;
       const r = trains[Math.min(bar, trains.length) - 1];
-      best = { value: r.value, from: `training ${r.emp.name}, ${bar < trains.length ? 'the last training a full energy bar pays for' : 'your least valuable training'}` };
+      best = { value: r.value, from: `training ${r.emp.name}, ${bar < trains.length ? 'the last training a day\'s energy pays for' : 'your least valuable training'}` };
     }
     return self && self.value > best.value ? self : best;
   }
@@ -2219,7 +2298,9 @@ const EmployeeTrainingTool = (() => {
       await marketLoad;
       team = loaded;
       nextActionsExpanded = false;
+      for (const t of taken.values()) clearTimeout(t.timer);
       taken.clear();
+      confirmed = null;
       // The plan first: card values wait for the tools it hands out, so
       // asking for them before it starts would price them twice.
       assignments?.refresh();
@@ -2336,7 +2417,9 @@ const EmployeeTrainingTool = (() => {
     const c = slotCard(input.hand.slots[slot]);
     if (!c) return;
     const emp = found.emp;
-    taken.set(emp._id, { text: c.card === 'wildCard' ? 'Wild card' : `${cardTitle(c)}: ${effectText(c)}`, rolled: [] });
+    // The last pick the game had recorded, to tell this one from it.
+    const lastPick = (emp.trainingHistory || []).reduce((a, h) => h.pickedAt > a ? h.pickedAt : a, '');
+    taken.set(emp._id, { text: c.card === 'wildCard' ? 'Wild card' : `${cardTitle(c)}: ${effectText(c)}`, rolled: [], lastPick });
     cardPricer?.dispose();
     cardPricer = null;
     cardRevision = null;
@@ -2350,6 +2433,69 @@ const EmployeeTrainingTool = (() => {
     const parts = ['picker', 'assignments', 'team', 'fire', 'recruitForm'];
     const first = { overview: 'team', employees: 'team', keep: 'fire', hire: 'recruitForm', train: 'picker' }[view.tab];
     requestAnimationFrame(() => renderAfter([first, ...parts.filter(x => x !== first)].filter(Boolean)));
+    confirmTaken(emp._id);
+  }
+
+  // A recorded choice confirmed from the game: the company's roster is read
+  // again until the employee's hand is gone and their training history holds
+  // a newer pick. The fresh roster replaces the company's (a card can change
+  // coworkers too) and advice resumes once no choice is left unconfirmed.
+  const CONFIRM_TRIES = 12, CONFIRM_EVERY_MS = 15000;
+  let confirmed = null;   // { emp, text }: the last pick the game confirmed
+  async function confirmTaken(empId, tries = CONFIRM_TRIES) {
+    const t = taken.get(empId), found = findEmployee(empId);
+    if (!t || !found || t.checking) return;
+    clearTimeout(t.timer);
+    t.checking = true; t.gaveUp = false;
+    let pick = null, roster = null, estimate;
+    const { entry } = found;
+    try {
+      [roster, estimate] = await Promise.all([
+        trpc('employee.getCompanyEmployees', { companyId: entry.company._id }, { retry: true, fresh: true }),
+        trpc('employee.getCompanyEstimate', { companyId: entry.company._id }, { fresh: true }).catch(() => entry.estimate),
+      ]);
+      const fresh = Array.isArray(roster) ? roster.find(x => x._id === empId) : null;
+      pick = fresh && !fresh.pendingTraining?.offers?.length ? newestPick(fresh, t.lastPick ?? '') : null;
+    } catch (err) { console.warn('[training] pick check failed', err); }
+    t.checking = false;
+    if (taken.get(empId) !== t || !findEmployee(empId)) return;   // reloaded meanwhile
+    if (!pick) {
+      if (tries > 1) t.timer = setTimeout(() => confirmTaken(empId, tries - 1), CONFIRM_EVERY_MS);
+      else t.gaveUp = true;
+      if (input.pick === empId) renderResult();
+      return;
+    }
+    team = { ...team, companies: team.companies.map(x => x !== entry ? x : { ...x, estimate: estimate || null,
+      employees: roster.filter(e => !e.leftAt).map(e => ({ ...e, traits: EC.currentTraits(e.traits) })) }) };
+    taken.delete(empId);
+    confirmed = { emp: empId, text: pickText(pick) };
+    if (taken.size) { renderAfter(['picker', 'team']); return; }
+    assignments?.refresh();
+    assignments?.run({ auto: true });
+    useEmployee(input.pick);
+    renderTeam();
+    renderRecruitForm();
+    renderFire();
+    showTab(view.tab);
+  }
+  // The newest training history entry after `after`, or null.
+  function newestPick(emp, after) {
+    return (emp.trainingHistory || []).filter(h => h.pickedAt > after)
+      .sort((a, b) => b.pickedAt.localeCompare(a.pickedAt))[0] || null;
+  }
+  // A training history entry as the game resolved it: the card, then what it did.
+  function pickText(h) {
+    const o = h.outcome || {};
+    const c = h.card === 'habit' && h.traitTo2 ? { card: 'habitPair' } : h.card === 'negotiation' ? { card: 'negotiation', drop: h.delta }
+      : h.card === 'secondWind' ? { card: 'secondWind', gain: h.delta } : { card: h.card, stat: h.stat, delta: h.delta };
+    const did = [
+      ...EC.currentTraits(o.gained || []).map(g => `gained ${traitName(g.code)}`),
+      ...EC.currentTraits((o.lost || []).map(code => ({ code: typeof code === 'string' ? code : code?.code }))).map(g => `lost ${traitName(g.code)}`),
+      o.stat && o.statGain ? `+${o.statGain} ${STAT[o.stat] || o.stat}` : null,
+      o.potentialMax != null ? `potential now ${o.potentialMax}` : null,
+      o.wageExpectation != null ? `wage expectation now ${Math.round(o.wageExpectation * 100)}%` : null,
+    ].filter(Boolean);
+    return `${h.card === 'wildCard' ? 'Wild card' : cardTitle(c) || h.card}${did.length ? `: ${did.join(', ')}` : ''}`;
   }
 
   /* ── Tabs and the selected employee ──────────────────────── */
@@ -2530,6 +2676,7 @@ const EmployeeTrainingTool = (() => {
       else if (b.dataset.sideEmp) selectFromSide(b.dataset.sideEmp);
       else if (b.dataset.took !== undefined) takeSlot(+b.dataset.took);
       else if (b.dataset.reload !== undefined && team) runLoad(team.username);
+      else if (b.dataset.confirm !== undefined) confirmTaken(input.pick);
       else if (b.classList.contains('tr-use') && b.dataset.id) selectEmployee(b.dataset.id, 'train');
       else if (b.dataset.step) {
         const list = allEmployees();

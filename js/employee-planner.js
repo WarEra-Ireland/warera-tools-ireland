@@ -383,7 +383,7 @@ const EmployeePlanner = (() => {
     if (!s.toolboxValue) notes.push('Toolbox income is excluded: set a toolbox value to include Luck, Scavenger and Salvager loot benefits.');
     if (!s.trainingQuota) notes.push('Trainer and coworker Luck training benefits are excluded: set a daily training budget.');
     else notes.push('Trainer and coworker Luck use a bounded numeric-card estimate, fixed current training values and an equal share of the daily energy budget.');
-    if (s.toolboxValue || s.trainingQuota) notes.push("Unchanged rosters keep the game's reported Luck and training allowance. A changed roster gets Lucky Charm, Jinx and Trainer effects at once, although the game applies them after a delay that is not yet known.");
+    if (s.toolboxValue || s.trainingQuota) notes.push("Unchanged rosters keep the game's reported Luck and training allowance. A changed roster gets Lucky Charm, Jinx and Trainer effects at once. A Trainer gained from a card works at once in the game; how soon moves and the Luck traits take effect is not yet known.");
     if (s.employees.some(e => has(e, 'recruiter')) && s.companies.some(c => !c.recruitmentValues && s.employees.some(e => e.company === c.id && has(e, 'recruiter')))) notes.push('Recruiter is not valued in companies without a planned candidate set.');
     if (s.employees.some(e => has(e, 'anchor'))) notes.push("Anchor's output penalty is included; protection against quitting is not priced.");
     return notes;
@@ -876,7 +876,7 @@ const EmployeePlanner = (() => {
             // possible future trait pair under the live hand's finite budget.
             const value = EC.secondWindValue(forecastEmployee, c, ctx, 1);
             q = { value, stay: value, outcomes: [], plan: explain(state.plans[0]), forecast: true,
-              note: 'Future training uses a bounded current-company estimate.' };
+              note: 'Future training uses a bounded current-company estimate, net of what the energy earns elsewhere.' };
           } else if (pool && c.card === 'wildCard') {
             // A random trait and +1 to a random stat, in a forecast: the
             // trait's shift plus a +1 drill, apart. Pricing every pair cost

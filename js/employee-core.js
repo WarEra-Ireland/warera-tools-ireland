@@ -77,6 +77,7 @@ const EmployeeCore = (() => {
     sellRatio: 1,
     toolboxValue: 0,        // in points of production; unknown, so off by default
     management: 0,          // the owner's Management level, for training card rarity
+    energyValue: 0,         // PP 10 energy earns elsewhere, or a list by day from today; Second Wind's trainings are net of it
   };
 
   const workingDays = e => Math.max(0, CFG.retireAge - e.age);
@@ -210,6 +211,9 @@ const EmployeeCore = (() => {
   // made that many days later, when less working life remains.
   // potentialLeft counts sessions after this draw.
   // Each is priced like any training: the whole card pool, trait cards too.
+  // Each also spends 10 energy that would earn ctx.energyValue elsewhere
+  // on the day it happens, so it counts only what it adds over that, and 0
+  // if it adds nothing.
   function secondWindValue(e, c, ctx, depth, price = null, memo = {}) {
     if (depth <= 0) return 0;
     const days = workingDays(e);
@@ -224,9 +228,17 @@ const EmployeeCore = (() => {
     let total = 0;
     for (let j = 1; j <= c.gain; j++) {
       const daysUntil = (e.potentialLeft + j) / e.trainingsPerDay;
-      total += perTraining * Math.max(0, days - daysUntil) / days;
+      total += Math.max(0, perTraining * Math.max(0, days - daysUntil) / days - energyOn(ctx, daysUntil));
     }
     return total;
+  }
+
+  // What 10 energy earns elsewhere `day` days from now: ctx.energyValue,
+  // a number or a list by day (the last entry holds after it).
+  function energyOn(ctx, day) {
+    const v = ctx.energyValue;
+    if (!Array.isArray(v)) return v || 0;
+    return v.length ? v[Math.min(v.length - 1, Math.max(0, Math.floor(day)))] || 0 : 0;
   }
 
   function rarityOdds(luck, management) {
@@ -787,6 +799,20 @@ const EmployeeCore = (() => {
     return undefined;
   }
 
+  // A Wild Card's outcomes, the trait and the stat priced apart (as its
+  // value is): [{ p, value, arg, unpriced }]. Unpriced traits count as 0.
+  function wildCardOutcomes(e, ctx = {}) {
+    e = { ...DEFAULT_EMPLOYEE, ...e };
+    ctx = { ...DEFAULT_CONTEXT, ...ctx };
+    const s = { ...DEFAULT_SITUATION, ...ctx.situation };
+    const pool = eligibleTraits((e.traits || []).map(h => h.code), s.gender, ['positive', 'mixed', 'negative']);
+    const stats = STAT_ARGS.map(st => cardValue(e, drill(st, 1), ctx));
+    return pool.flatMap(t => {
+      const v = traitValue(t.code, e, ctx).value;
+      return stats.map(x => ({ p: 1 / (3 * pool.length), value: (v ?? 0) + x, arg: t.code, unpriced: v === null }));
+    });
+  }
+
   // Resolved transitions, shared by projected hands and outlooks. Each roll
   // applies all changes together before its placement is valued.
   function cardOutcomes(e, c, ctx = {}) {
@@ -1223,7 +1249,7 @@ const EmployeeCore = (() => {
   return {
     toolboxRate, CFG, RARITIES, NUMERIC_CARDS, PROD_TRAIT_CARDS, TRAIT_CARDS, DEFAULT_EMPLOYEE, DEFAULT_CONTEXT, LADDER_FLAGS,
     TRAITS, TRAIT, DEFAULT_SITUATION, HABIT_POLARITY, EXCLUSIVE, currentTraits,
-    cardPool, cardOutcomes, secondWindValue, expectedMax, trainingOutlook, rolledTraitValue, futureLuckValue,
+    cardPool, cardOutcomes, wildCardOutcomes, secondWindValue, energyOn, expectedMax, trainingOutlook, rolledTraitValue, futureLuckValue,
     potentialValue, candidateValue, freshSetValue, freshSetWarm,
     comparisonProduction, productionStanding, peerProduction, nationalitySituation, locationSituation, eligibleTraits, wildCardRisk, canNegotiate, traitValue, traitChart, traitUnit,
     drill, neg, wind, cardValue, rankTier, rankHand, rarityOdds, ladder,
