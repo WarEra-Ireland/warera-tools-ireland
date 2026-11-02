@@ -510,6 +510,11 @@ const EmployeeTrainingTool = (() => {
   // The batch keys match selectedPricing's, which then reuses them.
   let prefetched = null, prefetchKeys = [];
   function prefetchHands() {
+    // Hands queued for an older plan would be priced without its tools.
+    if (plan?.running && cardPricer) {
+      for (const key of prefetchKeys) if (key !== selectedKey) cardPricer.cancel(key);
+      prefetchKeys = []; prefetched = null;
+    }
     if (!team || taken.size || plan?.running) return;
     const pricer = prepareCardPricing();
     const revision = JSON.stringify([cardRevision, pricer.generation, plannedTools(), [...taken.keys()]]);
@@ -954,7 +959,7 @@ const EmployeeTrainingTool = (() => {
         incomeTax: -(contributions.find(c => c.reason === 'incomeTax')?.delta || 0),
         tenureDays: Number.isFinite(since) ? Math.max(0, Math.floor((Date.now() - since) / 864e5)) : 0,
         employedDays: Number.isFinite(hired) ? Math.max(0, Math.floor((Date.now() - hired) / 864e5)) : 0,
-        hasTool: (emp.productionBonus?.contributions || []).some(c => /tool/i.test(c.source || '')),
+        hasTool: !!emp.toolItem && emp.toolItem.state > 0,
         // A company without the upgrade has storage level 0 (as in the game client).
         smallStorage: (company.activeUpgradeLevels?.storage ?? 0) <= 2,
         storageFull: !!company.isFull,
@@ -1246,6 +1251,7 @@ const EmployeeTrainingTool = (() => {
     else if (plan?.gain > 1e-7) groups.check.push({ icon: '🧭', go: { tab: 'assignments' },
       what: `Rearrange: ${plan.gain >= 0 ? '+' : '−'}${Math.abs(plan.gain).toFixed(2)} ${plan.horizon === 'career' ? 'over their careers' : `over ${plural(plan.days, 'day')}`}`,
       sub: `${plural(plan.changes, 'move or tool change', 'moves or tool changes')}${plan.cancelled ? ', search cut short' : ''} · in game money after wages` });
+    if (plan?.coverage?.length) groups.check.push({ icon: 'ⓘ', go: { tab: 'assignments' }, what: 'Review valuation assumptions', sub: `Earnings assume employees stay. ${plan.excluded?.length || 0} companies excluded; toolbox, training and recruiting assumptions are in Assignments.` });
     for (const { emp, entry } of all) {
       const m = mismatchOf(emp, entry.company);
       if (!m || moved.has(emp._id)) continue;
@@ -1380,10 +1386,14 @@ const EmployeeTrainingTool = (() => {
   function feedRows() {
     if (!team || !market?.ppValue || taken.size) return [];
     const pricer = prepareCardPricing();
-    const revision = JSON.stringify([cardRevision, todayUtc(), plan && !plan.running ? plan.tools : null]);
+    // While the plan searches, the tools it hands out are unknown, so a feed
+    // priced then would be thrown away when it lands, and would hold the
+    // valuation workers when the real one is asked for.
+    const planning = !!plan?.running;
+    const revision = JSON.stringify([cardRevision, todayUtc(), planning ? 'planning' : plan ? plan.tools : null]);
     if (feedMemo.revision !== revision) {
       const rows = energyFeed();
-      const trains = rows.filter(r => r.kind === 'train');
+      const trains = planning ? [] : rows.filter(r => r.kind === 'train');
       const jobs = trains.map(r => {
         const job = pricingJob(r.emp, r.entry, [], true);
         job.cards = Object.values(EC.cardPool(job.options.employee, job.options.context, { price: c =>
@@ -1394,7 +1404,7 @@ const EmployeeTrainingTool = (() => {
       // A feed for an older plan would only delay this one.
       if (feedMemo.key) pricer.cancel(feedMemo.key);
       const key = jobs.length ? JSON.stringify(['feed', jobs]) : null;
-      const batch = key ? pricer.request(key, jobs, pricingRank('feed')) : { status: 'fallback', reason: 'No trainings available.' };
+      const batch = planning ? { status: 'pending' } : key ? pricer.request(key, jobs, pricingRank('feed')) : { status: 'fallback', reason: 'No trainings available.' };
       feedMemo = { revision, batch, rows, jobs, key, published: false };
     }
     const { batch, jobs } = feedMemo;
@@ -1498,16 +1508,28 @@ const EmployeeTrainingTool = (() => {
     if (!impact) memo.set(key, impact = coworkerImpactUncached(entry, newcomer));
     return impact;
   }
+  // A newcomer's wage reaches the coworkers only through who is better
+  // paid, which only these read; the other traits' values hold for any wage.
+  const WAGE_TRAITS = new Set(['primaDonna', 'envious']);
+  const traitsAfter = new WeakMap();
   function coworkerImpactUncached(entry, { nationality, gender, production, wage }) {
     let value = 0;
     const notes = [];
     const joined = { ...entry, employees: [...entry.employees, { _id: 'newcomer', age: 20,
       nationality, gender, base: { production }, wage, traits: [] }] };
-    for (const { emp, inp, e, was: wasAll } of coworkerBase(entry)) {
-      const after = contextOf(inputsFor(emp, joined, { models: false }));
+    const bases = coworkerBase(entry);
+    let known = traitsAfter.get(bases);
+    if (!known) traitsAfter.set(bases, known = new Map());
+    for (const [k, { emp, inp, e, was: wasAll }] of bases.entries()) {
+      let after = null;
       inp.traits.forEach((t, i) => {
         const was = wasAll[i];
-        const now = EC.traitValue(t.code, e, after, { held: true, arg: t.arg }).value;
+        const key = [k, i, nationality, gender, production, WAGE_TRAITS.has(t.code) ? wage : ''].join('|');
+        let now = known.get(key);
+        if (now === undefined) {
+          after ??= contextOf(inputsFor(emp, joined, { models: false }));
+          known.set(key, now = EC.traitValue(t.code, e, after, { held: true, arg: t.arg }).value);
+        }
         if (was == null || now == null || Math.abs(now - was) < 0.5) return;
         value += now - was;
         notes.push(`${emp.name}'s ${traitName(t.code)}`);
@@ -1714,7 +1736,7 @@ const EmployeeTrainingTool = (() => {
     const { e, ctx } = modelOf(emp, entry);
     const left = Math.max(0, (emp.potentialMax || 0) - (emp.potential || 0));
     const potential = EC.potentialValue({ ...e, potentialMax: emp.potentialMax }, ctx, left, alt, trainingValue);
-    const keep = { value: projection.own + potential, output: projection.own, traits: 0, potential, unpriced: projection.unpriced };
+    const keep = { value: projection.own + potential, output: projection.own, traits: 0, potential, unpriced: projection.unpriced, warnings: projection.warnings || [], coverage: projection.coverage || [] };
     const rest = without(entry, emp);
     const leaving = { value: -projection.coworkers, notes: ['changes to the remaining roster'] };
     const slots = slotsIn(rest);
@@ -1873,6 +1895,8 @@ const EmployeeTrainingTool = (() => {
       : `A new hire beats keeping ${name} only ${odds(r.chance)} of the time.`;
     const notes = [
       ...(emp.happinessBreakdown?.quitChance > 0 ? ['<span class="tr-warn">Unhappy enough to quit.</span>'] : []),
+      ...r.keep.warnings.map(note => `<span class="tr-warn">${escapeHtml(note)}</span>`),
+      ...r.keep.coverage.map(note => escapeHtml(note)),
       ...(r.keep.unpriced.length ? [`${escapeHtml(r.keep.unpriced.map(traitName).join(', '))} not priced.`] : []),
     ];
     const steps = v === 'keep' ? '' : `<ol class="tr-keep-steps">
@@ -2196,6 +2220,10 @@ const EmployeeTrainingTool = (() => {
       team = loaded;
       nextActionsExpanded = false;
       taken.clear();
+      // The plan first: card values wait for the tools it hands out, so
+      // asking for them before it starts would price them twice.
+      assignments?.refresh();
+      assignments?.run({ auto: true });
       // Refresh the selected employee from the game (trainings, traits and
       // wage change between visits), or select the next one to train.
       const want = [view.emp, input.pick].find(id => findEmployee(id));
@@ -2216,8 +2244,6 @@ const EmployeeTrainingTool = (() => {
       renderTeam();
       renderRecruitForm();
       renderFire();
-      assignments?.refresh();
-      assignments?.run({ auto: true });
       $hint.classList.add('hidden');
       $shell.classList.remove('hidden');
       showTab(view.tab);
@@ -2562,7 +2588,7 @@ const EmployeeTrainingTool = (() => {
         .finally(renderRecruitForm);
     }
 
-    refreshMarket().finally(() => { renderResult(); renderTeam(); renderRecruitForm(); renderFire(); renderPicker(); assignments.refresh(); assignments.run({ auto: true }); });
+    refreshMarket().finally(() => { assignments.refresh(); assignments.run({ auto: true }); renderResult(); renderTeam(); renderRecruitForm(); renderFire(); renderPicker(); });
     setInterval(() => {
       if (syncDay()) {
         renderRecruitForm();

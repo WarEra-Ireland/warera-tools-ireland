@@ -19,7 +19,7 @@ const EmployeeAssignments = (() => {
   // seenEquipped: by game item ID, each tool's capacity when last seen
   // equipped, which it keeps once unequipped. gone: spares marked as no longer
   // owned, for losses the transaction log does not show.
-  const defaults = () => ({ horizon: 'career', equippedHours: {}, pinned: [], seenEquipped: {}, gone: [] });
+  const defaults = () => ({ horizon: 'career', equippedHours: {}, pinned: [], seenEquipped: {}, gone: [], toolboxValue: 0, dailyTrainings: null, recruiting: [] });
 
   /* Saved settings are untrusted: rebuild them field by field and say what
    * was dropped, rather than failing later on a malformed value. */
@@ -34,6 +34,10 @@ const EmployeeAssignments = (() => {
     }
     // Spare tools were typed in before they came from the transaction log.
     if (Array.isArray(raw.inventory) && raw.inventory.length) notices.push('Spare tools now come from your toolbox history, so the tools entered by hand were removed.');
+    for (const key of ['toolboxValue', 'dailyTrainings']) {
+      if (raw[key] != null && raw[key] !== '' && Number.isFinite(Number(raw[key])) && Number(raw[key]) >= 0 && Number(raw[key]) <= 100000) settings[key] = Number(raw[key]);
+    }
+    if (Array.isArray(raw.recruiting)) settings.recruiting = [...new Set(raw.recruiting.filter(id => typeof id === 'string' && ITEM_ID.test(id)))];
     const object = v => v && typeof v === 'object' && !Array.isArray(v);
     if (object(raw.equippedHours)) {
       for (const [id, v] of Object.entries(raw.equippedHours)) {
@@ -167,7 +171,8 @@ const EmployeeAssignments = (() => {
       if (!e.specializations) reasons.push(`${e.name}'s saved specializations did not load`);
       if (reasons.length) excluded.set(company._id, [...(excluded.get(company._id) || []), ...reasons]);
       return { id: e._id, name: e.name, company: company._id, age: e.age, locked: pinned.has(e._id),
-        production: e.base?.production, responsibility: e.base?.responsibility, wage: e.wage, negotiationExpectation: e.wageExpectation,
+        production: e.base?.production, responsibility: e.base?.responsibility, luck: e.base?.luck ?? 0, trainingBaseLuck: e.base?.luck ?? 0, trainingLuck: e.breakdown?.luck?.total ?? 0,
+        potentialLeft: Math.max(0, (e.potentialMax || 0) - (e.potential || 0)), wage: e.wage, negotiationExpectation: e.wageExpectation,
         climberRaise: e.traits?.some(t => t.code === 'climber') ? e.base?.production / 4 * market.ppValue * 0.02
           * (e.traits.some(t => t.code === 'greedy') ? 1.2 : e.traits.some(t => t.code === 'modest') ? 0.85 : 1) : 0,
         gender: e.gender, nationality: e.nationality, traits: e.traits || [], specializations: { ...e.specializations, [company.itemCode]: currentSpec },
@@ -176,15 +181,34 @@ const EmployeeAssignments = (() => {
         productionEvents: (e.productionBonus?.contributions || []).filter(x => x.source === 'event')
           .map(x => ({ delta: x.percent, hours: hoursUntil(x.until, now) })),
         happiness: external.map(h => ({ delta: h.delta, hours: hoursUntil(h.until, now), reason: h.reason })),
-        observed: { production: e.breakdown?.production?.total, responsibility: e.breakdown?.responsibility?.total,
+        observed: { luck: e.breakdown?.luck?.total, trainingsPerDay: e.trainingsPerDay, production: e.breakdown?.production?.total, responsibility: e.breakdown?.responsibility?.total,
           happiness: e.happinessBreakdown?.value, bonus: e.productionBonus?.total, output: e.estimate?.production }, equipped };
     }));
     for (const c of companies) if (excluded.has(c.id)) c.excluded = `Not planned: ${excluded.get(c.id).join('; ')}.`;
     const tools = employees.flatMap(e => e.equipped ? [e.equipped] : []);
     for (const t of sparesFor(team, settings)) tools.push({ id: `spare:${t.id}`, name: `${cap(t.type)} (+${t.bonus}%)`, type: t.type, bonus: t.bonus, hours: t.hours });
     if (tools.length > MAX_TOOLS) errors.push(`Plan at most ${MAX_TOOLS} tools at a time, counting equipped and spare tools.`);
+    const learners = employees.filter(e => e.potentialLeft > 0);
+    const dailyTrainings = settings.dailyTrainings ?? Math.floor((team.energy || 0) / 10);
+    const trainingQuota = learners.length ? dailyTrainings / learners.length : 0;
+    for (const e of learners) {
+      const c = companies.find(c => c.id === e.company);
+      const model = { ...EC.DEFAULT_EMPLOYEE, ...e, extraProduction: e.observed.production - e.production,
+        bonus: e.observed.bonus / 100, happiness: e.observed.happiness, specialization: 20,
+        wageExpectation: e.production ? e.wage / (e.production / 4 * market.ppValue) : 1 };
+      const context = { sellRatio: c.margin / market.ppValue, toolboxValue: (settings.toolboxValue || 0) / market.ppValue, futureTraining: false };
+      e.trainingValues = EC.RARITIES.map(r => Math.max(0, ...EC.NUMERIC_CARDS[r].map(card => EC.cardValue(model, card, context, 0) ?? 0)))
+        .map(value => value * market.ppValue);
+    }
+    for (const c of companies) if ((settings.recruiting || []).includes(c.id) && !c.excluded) {
+      const groups = [{ bonus: c.bonus / 100, happinessLoss: c.tax,
+        ctx: { sellRatio: c.margin / market.ppValue, management: team.management || 0, futureTraining: false,
+          situation: { itemType: c.type, product: c.product, incomeTax: c.tax } } }];
+      const first = EC.freshSetValue(groups, { slots: 3, rate: 'slot' });
+      c.recruitmentValues = [first.best, ...[4, 5, 6].map(slots => EC.freshSetValue(groups, { slots, rate: first.rate }).best)].map(value => value * market.ppValue);
+    }
     const days = settings.horizon === 'career' ? careerDays(employees.filter(e => !excluded.has(e.company)).map(e => e.age)) : Number(settings.horizon);
-    return { errors, snapshot: { companies, employees, tools, days } };
+    return { errors, snapshot: { companies, employees, tools, days, toolboxValue: settings.toolboxValue || 0, trainingQuota, management: team.management || 0 } };
   }
 
   /* ── Rendering ─────────────────────────────────────────────── */
@@ -364,6 +388,13 @@ const EmployeeAssignments = (() => {
             <span class="tr-plan-actions"><button type="button" class="btn-primary" data-plan-run>Compare again</button><button type="button" data-plan-cancel hidden>Cancel</button></span>
           </div>
         </div>
+        <details class="tr-more"><summary>Valuation assumptions</summary>
+          <label>Value per toolbox, in money <input type="number" min="0" max="100000" step="any" data-plan-value="toolboxValue" value="${settings.toolboxValue}"></label>
+          <label>Trainings budget per day <input type="number" min="0" max="100000" step="any" data-plan-value="dailyTrainings" value="${settings.dailyTrainings ?? Math.floor((team.energy || 0) / 10)}"></label>
+          <p class="tr-muted">Zero toolbox value excludes loot income. The training budget defaults to one full energy bar a day, shared equally among employees with potential. Training benefits use a bounded numeric-card estimate; they do not simulate future trait choices.</p>
+          <p>Value Recruiter for one planned candidate set in:</p>${team.companies.map(({ company: c }) => `<label><input type="checkbox" data-plan-recruit="${esc(c._id)}" ${settings.recruiting.includes(c._id) ? 'checked' : ''}>${esc(companyName(c._id) || c.name || c.itemCode)}</label>`).join('')}
+          <p class="tr-muted">Recruiter estimates compare extra candidates in one set at the current product margin. They exclude future rerolls and coworker effects of the eventual hire.</p>
+        </details>
         <div data-plan-status role="status" aria-live="polite"></div>
         <div data-plan-hero></div>
         <div class="tr-asg-grid">
@@ -375,7 +406,7 @@ const EmployeeAssignments = (() => {
             <section class="tr-asg-box" aria-labelledby="plan-pins-heading"><h4 id="plan-pins-heading">Keep in place</h4>
               <p class="tr-muted">Selected employees stay in their company. They can still get a tool.</p>
               <div class="tr-asg-pins">${people.map(({ e, company }) => `<button type="button" class="tr-asg-pin" data-plan-pin="${esc(e._id)}" aria-pressed="${settings.pinned.includes(e._id)}" title="${esc(companyName(company._id) || company.name || '')}">${productIcon(company.itemCode)}${esc(e.name)}</button>`).join('')}</div></section>
-            <details class="tr-more"><summary>What the comparison includes</summary><p class="tr-calc-sub">The planner scores whole company rosters: Craftsman on manufactured goods and weapons, Laborer on raw resources, Handy and Improviser, coworker traits, company bonuses and taxes, happiness, saved specialization, tenure and retirement. Moving an employee between your companies costs no happiness, but Creature of Habit loses 30 bonus points for three days. Company tenure restarts; the same product keeps its specialization, and another product restores that product's saved progress. Tools stop when their capacity runs out and are not replaced.</p><p class="tr-calc-sub">Careers value every change until the last planned employee retires at ${EC.CFG.retireAge}, one year older each day. A retired employee's place stays empty: hiring a replacement is not valued. A shorter window ignores everything after it, so it favours quick wins over moves that pay back later.</p><p class="tr-calc-sub">This is a bounded search for a better arrangement, not a guarantee of the best one. Each employee moves at most once. A company with a hidden or unknown trait, or whose current numbers the planner cannot reproduce, is left exactly as it is and is not part of the totals. Future training, recruiting, toolboxes, quitting and price changes are not valued. Equipped tools can be reassigned to any compatible employee. Nothing is changed in the game.</p></details>
+            <details class="tr-more"><summary>What the comparison includes</summary><p class="tr-calc-sub">The planner scores whole company rosters: Craftsman on manufactured goods and weapons, Laborer on raw resources, Handy and Improviser, coworker traits, company bonuses and taxes, happiness, saved specialization, tenure and retirement. Moving an employee between your companies costs no happiness, but Creature of Habit loses 30 bonus points for three days. Company tenure restarts; the same product keeps its specialization, and another product restores that product's saved progress. Tools stop when their capacity runs out and are not replaced.</p><p class="tr-calc-sub">Careers value every change until the last planned employee retires at ${EC.CFG.retireAge}, one year older each day. A retired employee's place stays empty: hiring a replacement is not valued. A shorter window ignores everything after it, so it favours quick wins over moves that pay back later.</p><p class="tr-calc-sub">This is a bounded search for a better arrangement, not a guarantee of the best one. Each employee moves at most once. A company with a hidden or unknown trait, or whose current numbers the planner cannot reproduce, is left exactly as it is and is not part of the totals. Toolboxes use your entered value. Trainer and coworker Luck use a bounded training estimate and your daily budget. Recruiter is valued only for a planned candidate set. Earnings assume employees stay; quitting probabilities and future price changes are not modeled. Equipped tools can be reassigned to any compatible employee. Nothing is changed in the game.</p></details>
           </div>
         </div>`;
       if (focus) root.querySelector(focus)?.focus();
@@ -479,7 +510,7 @@ const EmployeeAssignments = (() => {
       const changed = result.arrangement.filter(a => a.company !== emp(a.employee).company || a.tool !== (emp(a.employee).equipped?.id || null));
       const changedIds = new Set(changed.map(a => a.employee));
       const moved = changed.filter(a => a.company !== emp(a.employee).company);
-      onResult({ gain: result.gain, days, horizon: settings.horizon, changes: changed.length, cancelled,
+      onResult({ coverage: result.coverage, warnings: result.warnings, excluded: result.excluded, gain: result.gain, days, horizon: settings.horizon, changes: changed.length, cancelled,
         moves: moved.map(a => ({ employee: a.employee, to: a.company })),
         tools: result.arrangement.map(a => ({ employee: a.employee, tool: a.tool ? tool(a.tool) : null })) });
       const delta = id => row(proposed, id).value - row(baseline, id).value;
@@ -555,7 +586,7 @@ const EmployeeAssignments = (() => {
       const drawn = days > 1 ? chart(baseline, proposed, days, events) : null;
       chartData = drawn?.data || null;
       const head = cancelled ? '<p class="tr-warn">Search cancelled. This is the best arrangement found before cancelling: every step is valid, but a finished search may find more.</p>' : '';
-      out.innerHTML = `${head}${drawn ? `<section class="tr-asg-box">${drawn.html}</section>` : ''}
+      out.innerHTML = `${head}<details class="tr-more"><summary>Valuation coverage and assumptions</summary><ul>${(result.coverage || []).map(note => `<li>${esc(note)}</li>`).join('')}</ul></details>${drawn ? `<section class="tr-asg-box">${drawn.html}</section>` : ''}
         <section class="tr-asg-box" aria-labelledby="plan-steps-heading"><h4 id="plan-steps-heading">${items.length ? 'Recommended moves and tool assignments <span class="tr-muted">· then reload employees</span>' : 'No changes'}</h4>
           ${items.length ? `<ol class="tr-asg-steps">${items.map(stepHtml).join('')}</ol>` : `<p class="tr-muted">No profitable change found ${over(days)}. Tools can remain unused.</p>`}
           ${coworkers.length ? `<details class="tr-more"><summary>${plural(coworkers.length, 'coworker')} ${coworkers.length === 1 ? 'is' : 'are'} affected <em>· ${signed(coworkers.reduce((v, { r, b }) => v + r.value - b.value, 0))}, included above</em></summary>
@@ -657,6 +688,17 @@ const EmployeeAssignments = (() => {
       $('[data-plan-run]').focus();
     }
 
+    root.addEventListener('change', ev => {
+      const el = ev.target;
+      if (el.dataset.planValue) {
+        if (!el.checkValidity() || el.value === '') { el.reportValidity(); return; }
+        settings[el.dataset.planValue] = Number(el.value);
+      } else if (el.dataset.planRecruit) {
+        const id = el.dataset.planRecruit;
+        settings.recruiting = el.checked ? [...new Set([...settings.recruiting, id])] : settings.recruiting.filter(x => x !== id);
+      } else return;
+      save(); stale();
+    });
     root.addEventListener('click', ev => {
       const b = ev.target.closest('button'); if (!b || b.disabled) return;
       if (b.dataset.spare) openSpare(b.dataset.spare);
@@ -686,13 +728,17 @@ const EmployeeAssignments = (() => {
       },
     };
   }
-  // A separate worker owns all expensive projections. Revision changes discard
-  // every quote, including replies already queued by a terminated worker.
-  // Settled batches are kept for reuse, least recently asked for first, up
-  // to this many; pending ones stay until answered or cancelled.
+  // Card valuations run on a few workers, each with its own session of the
+  // same snapshot. A batch is split by employee, and each idle worker takes
+  // the most urgent employee left, preferring ones it has priced before
+  // (its caches hold them). Revision changes discard every quote, including
+  // replies already queued by a terminated worker. Settled batches are kept
+  // for reuse, least recently asked for first, up to this many; pending ones
+  // stay until answered or cancelled.
   const SETTLED_KEPT = 200;
-  function createCardPricer({ workerFactory, onUpdate = () => {} }) {
-    let worker = null, revision = null, generation = 0, serial = 0, failure = null;
+  const cardWorkers = () => Math.max(1, Math.min(4, (globalThis.navigator?.hardwareConcurrency || 2) - 1));
+  function createCardPricer({ workerFactory, onUpdate = () => {}, workers: size = cardWorkers() }) {
+    let pool = [], queue = [], revision = null, generation = 0, serial = 0, order = 0, failure = null;
     const batches = new Map();
     function prune() {
       let settled = 0;
@@ -702,47 +748,73 @@ const EmployeeAssignments = (() => {
         if (b.status !== 'pending') { batches.delete(key); settled--; }
       }
     }
+    const stopAll = () => { for (const w of pool) w.worker.terminate(); pool = []; queue = []; };
     const fail = reason => {
-      worker?.terminate(); worker = null;
+      stopAll();
       failure = reason;
       for (const batch of batches.values()) if (batch.status === 'pending') Object.assign(batch, { status: 'fallback', reason });
       onUpdate();
     };
+    function settle(batch) {
+      const [only] = batch.groups;
+      Object.assign(batch, batch.jobs.length === 1 && only.valid === false
+        ? { status: 'fallback', reason: only.reason || 'Projection could not finish.' }
+        : { status: 'done', result: { valid: true, groups: batch.groups } });
+      batch.jobs = null;
+      prune();
+      onUpdate();
+    }
+    function pump() {
+      for (const slot of pool) {
+        if (slot.task || !queue.length) continue;
+        const fresh = t => slot.seen.has(t.job.subjectId) ? 0 : 1;
+        const before = (x, y) => x.batch.priority - y.batch.priority || fresh(x) - fresh(y) || x.order - y.order;
+        let at = 0;
+        for (let i = 1; i < queue.length; i++) if (before(queue[i], queue[at]) < 0) at = i;
+        const [task] = queue.splice(at, 1);
+        slot.task = task; slot.seen.add(task.job.subjectId);
+        try { slot.worker.postMessage({ kind: 'cards', generation, id: task.batch.id, index: task.index, job: task.job }); }
+        catch { slot.task = null; task.batch.groups[task.index] = { valid: false, reason: 'The worker could not receive this batch.' }; if (!--task.batch.left) settle(task.batch); }
+      }
+    }
+    function spawn(gen, snapshot) {
+      const slot = { worker: workerFactory(), task: null, seen: new Set() };
+      slot.worker.onmessage = ({ data }) => {
+        if (gen !== generation || data.generation !== gen) return;
+        const task = slot.task;
+        slot.task = null;
+        if (task && task.batch.id === data.id && task.index === data.index && task.batch.status === 'pending' && !task.batch.cancelled) {
+          task.batch.groups[task.index] = data.result;
+          if (!--task.batch.left) settle(task.batch);
+        }
+        pump();
+      };
+      slot.worker.onerror = () => { if (gen === generation) fail('The valuation worker failed.'); };
+      slot.worker.onmessageerror = () => { if (gen === generation) fail('The valuation worker returned an unreadable batch.'); };
+      slot.worker.postMessage({ kind: 'cards:begin', generation: gen, snapshot });
+      return slot;
+    }
     function reset(key, snapshot) {
       if (revision === key) return;
-      revision = key; generation++; worker?.terminate(); worker = null; batches.clear(); failure = null;
+      revision = key; generation++; stopAll(); batches.clear(); failure = null;
       if (!snapshot) { failure = 'No verified workforce is loaded.'; return; }
-      const gen = generation;
-      try {
-        worker = workerFactory();
-        worker.onmessage = ({ data }) => {
-          if (gen !== generation || data.generation !== gen) return;
-          const batch = [...batches.values()].find(b => b.id === data.id);
-          if (!batch || batch.status !== 'pending') return;
-          Object.assign(batch, data.result.valid ? { status: 'done', result: data.result }
-            : { status: 'fallback', reason: data.result.reason || 'Projection could not finish.' });
-          prune();
-          onUpdate();
-        };
-        worker.onerror = () => { if (gen === generation) { worker?.terminate(); fail('The valuation worker failed.'); } };
-        worker.onmessageerror = () => { if (gen === generation) fail('The valuation worker returned an unreadable batch.'); };
-        worker.postMessage({ kind: 'cards:begin', generation: gen, snapshot });
-      } catch { worker?.terminate(); worker = null; failure = 'A valuation worker is unavailable in this browser.'; }
+      try { for (let i = 0; i < size; i++) pool.push(spawn(generation, snapshot)); }
+      catch { if (!pool.length) failure = 'A valuation worker is unavailable in this browser.'; }
     }
     // Move a queued batch: up when a prefetched hand comes on screen, back when superseded.
     function reprioritize(key, priority) {
       const batch = batches.get(key);
-      if (batch?.status !== 'pending' || batch.priority === priority) return;
-      batch.priority = priority;
-      try { worker.postMessage({ kind: 'cards:priority', generation, id: batch.id, priority }); } catch { /* keeps its place */ }
+      if (batch?.status === 'pending') batch.priority = priority;
     }
-    // Drop a queued batch nothing shows any more; asking again re-queues it.
+    // Drop a batch nothing shows any more; asking again re-queues it.
+    // Employees already being priced finish unseen.
     function cancel(key) {
       const batch = batches.get(key);
       if (!batch) return;
       batches.delete(key);
       if (batch.status !== 'pending') return;
-      try { worker.postMessage({ kind: 'cards:cancel', generation, id: batch.id }); } catch { /* it finishes unseen */ }
+      batch.cancelled = true;
+      queue = queue.filter(t => t.batch !== batch);
     }
     function request(key, jobs, priority = 2) {
       const known = batches.get(key);
@@ -754,14 +826,16 @@ const EmployeeAssignments = (() => {
       const batch = { id: ++serial, status: failure ? 'fallback' : 'pending', reason: failure, priority };
       batches.set(key, batch);
       if (!failure) {
-        try { worker.postMessage({ kind: 'cards', generation, id: batch.id, jobs, priority }); }
-        catch { Object.assign(batch, { status: 'fallback', reason: 'The worker could not receive this batch.' }); }
+        Object.assign(batch, { jobs, groups: new Array(jobs.length), left: jobs.length });
+        for (const [index, job] of jobs.entries()) queue.push({ batch, index, job, order: ++order });
+        if (!jobs.length) settle(batch);
+        pump();
       }
       prune();
       return batch;
     }
     return { reset, request, reprioritize, cancel, get generation() { return generation; },
-      dispose() { generation++; worker?.terminate(); worker = null; batches.clear(); } };
+      dispose() { generation++; stopAll(); batches.clear(); } };
   }
   return { mount, sanitize, fieldErrors, snapshotOf, careerDays, createCardPricer, toolLogOf, sparesOf, observeEquipped };
 })();

@@ -151,7 +151,7 @@ const EmployeeCore = (() => {
     e = { ...DEFAULT_EMPLOYEE, ...e };
     ctx = { ...DEFAULT_CONTEXT, ...ctx };
     if (c.card === 'secondWind') return secondWindValue(e, c, ctx, depth, null, memo);
-    let v = traitCardValue(e, c, ctx);
+    let v = traitCardValue(e, c, ctx, memo);
     if (v === undefined) {
       const h = hourlyGain(e, c, ctx);
       v = h === null ? null : h * hoursLeft(e);
@@ -214,7 +214,13 @@ const EmployeeCore = (() => {
     if (depth <= 0) return 0;
     const days = workingDays(e);
     if (!days) return 0;
-    const perTraining = trainingOutlook(e, ctx, { price, depth: depth - 1, memo }).value;   // value if trained today
+    // Value if trained today: the same for every Second Wind in a pool.
+    const outlooks = price ? null : memo.secondWind ??= new Map();
+    let perTraining = outlooks?.get(depth);
+    if (perTraining === undefined) {
+      perTraining = trainingOutlook(e, ctx, { price, depth: depth - 1, memo }).value;
+      outlooks?.set(depth, perTraining);
+    }
     let total = 0;
     for (let j = 1; j <= c.gain; j++) {
       const daysUntil = (e.potentialLeft + j) / e.trainingsPerDay;
@@ -242,7 +248,8 @@ const EmployeeCore = (() => {
     if (ctx.futureTraining === false || !delta) return 0;
     const days = workingDays(e), count = Math.max(0, e.potentialLeft || 0);
     if (days <= 0 || !count) return 0;
-    const outlook = memo.luckOutlook ??= trainingOutlook(e, { ...ctx, futureTraining: false }, { depth: 0 });
+    // Trait values don't depend on futureTraining, so the pool's carry over.
+    const outlook = memo.luckOutlook ??= trainingOutlook(e, { ...ctx, futureTraining: false }, { depth: 0, memo: { traits: traitsOf(memo) } });
     const mean = luck => {
       const odds = rarityOdds(luck, ctx.management || 0);
       const norm = outlook.rarities.reduce((n, r) => n + odds[r.rarity], 0);
@@ -446,14 +453,14 @@ const EmployeeCore = (() => {
     ['climber', 'Climber', 'negative', 10, 'wage expectation +0.02 per week employed', x => x.raise(Math.floor(x.employed / 7) - Math.floor(x.s.employedDays / 7))],
     ['loyal', 'Loyal', 'positive', 5, 'halves happiness losses', x => -x.happy(-x.loss / 2)],
     ['flightRisk', 'Flight Risk', 'negative', 10, 'quits below 50 happiness, not 30', null, { unpriced: 'raises the chance of losing the employee' }],
-    ['anchor', 'Anchor', 'mixed', 5, 'never quits; −50% output while unhappy', null, { unpriced: 'only matters while unhappy' }],
+    ['anchor', 'Anchor', 'mixed', 5, 'never quits; −50% output while unhappy', null, { partial: 'protection against quitting is not priced' }],
     ['scavenger', 'Scavenger', 'mixed', 2, '2× toolbox chance, −25% output', x => x.pct(-25) + x.boxes(toolboxRate(x.e.luck))],
     ['salvager', 'Salvager', 'positive', 5, 'loots with storage full', x => x.s.storageFull ? x.boxes(toolboxRate(x.e.luck)) : 0],
     ['gambler', 'Gambler', 'mixed', 10, '+3 Luck, −15% output', x => x.luck(3) + x.pct(-15)],
     ['luckyCharm', 'Lucky Charm', 'positive', 5, 'coworkers +3 Luck', x => x.s.coworkers * x.luck(3)],
     ['jinx', 'Jinx', 'negative', 10, 'coworkers −2 Luck', x => x.s.coworkers * x.luck(-2)],
     ['recruiter', 'Recruiter', 'positive', 2, '+1 candidate slot', null, { unpriced: 'more candidates to hire from' }],
-    ['trainer', 'Trainer', 'positive', 5, 'coworkers +1 training a day', null, { unpriced: 'coworkers train twice as fast' }],
+    ['trainer', 'Trainer', 'positive', 5, 'coworkers +2 trainings a day', null, { unpriced: 'additional coworker training requires a roster and energy budget' }],
   ].map(([code, name, polarity, weight, when, hourly, extra]) => ({ code, name, polarity, weight, when, hourly, ...extra }));
   const TRAIT = Object.fromEntries(TRAITS.map(t => [t.code, t]));
   // Retired codes and what the game turned them into.
@@ -520,6 +527,10 @@ const EmployeeCore = (() => {
   function traitValue(code, e, ctx = {}, { arg = null, held = false } = {}) {
     const t = TRAIT[code];
     if (!t || t.unpriced) return { value: null, outcomes: [], note: t?.unpriced };
+    if (code === 'anchor') {
+      const loss = (e.happiness ?? 50) < 30 ? -0.5 * pph({ ...DEFAULT_EMPLOYEE, ...e }) * (ctx.sellRatio ?? 1) * hoursLeft(e) : 0;
+      return { value: loss, outcomes: [], note: t.partial };
+    }
     e = { ...DEFAULT_EMPLOYEE, ...e };
     ctx = { ...DEFAULT_CONTEXT, ...ctx };
     const s = { ...DEFAULT_SITUATION, ...ctx.situation };
@@ -561,7 +572,11 @@ const EmployeeCore = (() => {
     const days = workingDays(e);
     const steps = peerSteps(e, s, days);
     const others = e.traits ? { ...e, traits: e.traits.filter(t => t.code !== code) } : e;
-    const prefix = `${code}|${JSON.stringify([e.production, e.age, e.nationality, e.traits])}|${
+    // A day's state depends on the trait only when the employee holds it
+    // (it is left out of their ordinary Production) or for the three that
+    // patch it below; other traits share one set of stretches.
+    const own = code === 'comic' || code === 'rival' || code === 'mentor' || (e.traits || []).some(t => t.code === code);
+    const prefix = `${own ? code : '*'}|${JSON.stringify([e.production, e.age, e.nationality, e.traits])}|${
       JSON.stringify(s, (k, v) => k === 'coworkerModels' ? undefined : v)}|`;
     let stretches = DAY_STATES.get(prefix);
     if (!stretches) {
@@ -571,7 +586,7 @@ const EmployeeCore = (() => {
     const dayState = d => {
       let st = stretches.get(steps[d]);
       if (st) return st;
-      st = { productionBase: ordinaryProduction(others, s, d), happyRecipients: null, patch: null, peerTotal: null };
+      st = { productionBase: ordinaryProduction(others, s, d), happyRecipients: null, patch: null, peerProduction: null };
       if (s.peers) {
         const own = comparisonProduction(e, s, d);
         const activePeers = s.peers.filter(p => !p.model || p.model.age + d < CFG.retireAge);
@@ -598,8 +613,9 @@ const EmployeeCore = (() => {
           const coworkers = activePeers.map(p => row(p.model, p.situation, p.production));
           const without = peerProduction([{ ...subject, [code]: false }, ...coworkers]);
           const withTrait = peerProduction([{ ...subject, [code]: true }, ...coworkers]);
-          st.peerTotal = withTrait.reduce((v, production, i) => v + production - without[i], 0)
-            / CFG.outputDivisor * (1 + B) * sr * 24;
+          // Production only: the stretch is shared by employees and markets
+          // that differ in career bonus and sell ratio, applied on use.
+          st.peerProduction = withTrait.reduce((v, production, i) => v + production - without[i], 0);
           Object.assign(s, saved);
         }
       }
@@ -608,15 +624,19 @@ const EmployeeCore = (() => {
     };
     const outcomes = traitArgs(t, arg, s, held).map(({ arg: a, p }) => {
       let total = 0;
+      // The trait rules only read what they are handed: one record, its
+      // day fields set afresh.
+      const x = { ...base, arg: a, age: 0, tenure: 0, employed: 0 };
       for (let d = 0; d < days; d++) {
         const st = dayState(d);
         productionBase = st.productionBase;
         if (st.patch) {
           happyRecipients = st.happyRecipients;
           Object.assign(s, st.patch);
-          if (st.peerTotal != null) { total += st.peerTotal; continue; }
+          if (st.peerProduction != null) { total += st.peerProduction / CFG.outputDivisor * (1 + B) * sr * 24; continue; }
         }
-        total += t.hourly({ ...base, arg: a, age: e.age + d, tenure: s.tenureDays + d, employed: s.employedDays + d }) * 24;
+        x.age = e.age + d; x.tenure = s.tenureDays + d; x.employed = s.employedDays + d;
+        total += t.hourly(x) * 24;
       }
       return { arg: a, p, value: total };
     });
@@ -706,21 +726,34 @@ const EmployeeCore = (() => {
   function peerProduction(rows) {
     const basis = rows.map(r => Math.max(1, r.production));
     return rows.map((row, i) => {
-      const others = rows.flatMap((r, j) => j === i ? [] : [{ ...r, basis: basis[j] }]);
-      const standing = productionStanding(basis[i], others.map(r => r.basis));
-      const rival = row.rival && others.length ? standing.strongerCoworker ? 3 : -1 : 0;
-      const mentor = row.mentor && standing.weakerCoworker ? -1 : 0;
-      const incoming = 2 * others.filter(r => r.mentor && r.basis > basis[i]).length;
-      return Math.max(1, row.production + rival + mentor + incoming);
+      let stronger = false, weaker = false, mentors = 0;
+      for (let j = 0; j < rows.length; j++) {
+        if (j === i) continue;
+        if (basis[j] > basis[i]) { stronger = true; if (rows[j].mentor) mentors++; }
+        else if (basis[j] < basis[i]) weaker = true;
+      }
+      const rival = row.rival && rows.length > 1 ? stronger ? 3 : -1 : 0;
+      const mentor = row.mentor && weaker ? -1 : 0;
+      return Math.max(1, row.production + rival + mentor + 2 * mentors);
     });
   }
 
   // Values for the trait cards. e.traits is what the employee holds:
   // [{ code, arg }]. removeTrait is the chart's hypothetical removal, not a dealt card.
-  function traitCardValue(e, c, ctx) {
+  // A pool's cards share the employee and context: each gained trait's
+  // value is worked out once (memo.traits).
+  const traitsOf = memo => memo.traits ??= new Map();
+  const gainedTrait = (code, e, ctx, memo) => {
+    const known = memo && traitsOf(memo);
+    if (known?.has(code)) return known.get(code);
+    const value = traitValue(code, e, ctx).value;
+    known?.set(code, value);
+    return value;
+  };
+  function traitCardValue(e, c, ctx, memo = null) {
     const held = e.traits || [];
     const s = { ...DEFAULT_SITUATION, ...ctx?.situation };
-    const v = (code, opts) => traitValue(code, e, ctx, opts).value;
+    const v = (code, opts) => opts ? traitValue(code, e, ctx, opts).value : gainedTrait(code, e, ctx, memo);
     if (c.card === 'habit') return c.code ? v(c.code) : null;
     if (c.card === 'rehab' || c.card === 'removeTrait') {
       if (!c.code || c.card === 'rehab' && TRAIT[c.code]?.polarity !== 'negative') return null;
@@ -831,7 +864,7 @@ const EmployeeCore = (() => {
     const codes = held.map(h => h.code);
     const value = c => (price ? price(c) : cardValue(e, c, ctx, depth, memo)) ?? 0;
     const traitV = {};
-    const tv = code => (traitV[code] ??= (price ? price({ card: 'habit', code }) : traitValue(code, e, ctx).value) ?? 0);
+    const tv = code => (traitV[code] ??= (price ? price({ card: 'habit', code }) : gainedTrait(code, e, ctx, memo)) ?? 0);
     const pool = Object.fromEntries(RARITIES.map(r => [r, []]));
     for (const r of RARITIES) {
       for (const c of NUMERIC_CARDS[r]) {
@@ -1188,7 +1221,7 @@ const EmployeeCore = (() => {
   }
 
   return {
-    CFG, RARITIES, NUMERIC_CARDS, PROD_TRAIT_CARDS, TRAIT_CARDS, DEFAULT_EMPLOYEE, DEFAULT_CONTEXT, LADDER_FLAGS,
+    toolboxRate, CFG, RARITIES, NUMERIC_CARDS, PROD_TRAIT_CARDS, TRAIT_CARDS, DEFAULT_EMPLOYEE, DEFAULT_CONTEXT, LADDER_FLAGS,
     TRAITS, TRAIT, DEFAULT_SITUATION, HABIT_POLARITY, EXCLUSIVE, currentTraits,
     cardPool, cardOutcomes, secondWindValue, expectedMax, trainingOutlook, rolledTraitValue, futureLuckValue,
     potentialValue, candidateValue, freshSetValue, freshSetWarm,
