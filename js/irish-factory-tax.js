@@ -91,11 +91,11 @@ const IrishFactoryTaxTool = (function () {
 .tax-tbl tbody tr:hover { background: var(--panel-2); }
 .tax-tbl tr.home { background: rgba(74,222,128,.07); }
 .tax-tbl tr.home td { border-color: rgba(74,222,128,.2); }
-.tax-home-tag { font-size: 10px; font-weight: 600; color: var(--accent); border: 1px solid rgba(74,222,128,.4); border-radius: 999px; padding: 1px 6px; margin-left: 4px; }
-.tax-note { font-size: 11.5px; color: var(--muted); margin-top: 12px; line-height: 1.5; }
+.tax-home-tag { font-size: 12px; font-weight: 600; color: var(--accent); border: 1px solid rgba(74,222,128,.4); border-radius: 999px; padding: 1px 6px; margin-left: 4px; }
+.tax-note { font-size: 12px; color: var(--muted); margin-top: 12px; line-height: 1.5; }
 
 .tax-row { cursor: pointer; }
-.tax-caret { display: inline-block; width: 12px; color: var(--muted); font-size: 10px; transition: transform .12s; }
+.tax-caret { display: inline-block; width: 12px; color: var(--muted); font-size: 12px; transition: transform .12s; }
 .tax-row.open .tax-caret { transform: rotate(90deg); }
 .tax-detail { display: none; }
 .tax-detail.open { display: table-row; }
@@ -104,14 +104,14 @@ const IrishFactoryTaxTool = (function () {
 .tax-fac { border-left: 2px solid var(--border); padding-left: 10px; }
 .tax-fac-h { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
 .tax-fac-name { font-weight: 600; font-size: 13px; text-decoration: none; color: var(--link); }
-.tax-fac-meta { font-size: 11.5px; color: var(--muted); }
+.tax-fac-meta { font-size: 12px; color: var(--muted); }
 .tax-fac-meta a { color: var(--link); text-decoration: none; }
 .tax-fac-workers { font-size: 12px; margin-top: 3px; line-height: 1.7; }
 .tax-fac-workers a { color: var(--text); text-decoration: none; border-bottom: 1px dotted var(--border); }
 .tax-fac-workers a:hover { color: var(--link); border-color: var(--link); }
 .tax-sep { color: var(--border); margin: 0 6px; }
 .tax-dim { color: var(--muted); }
-.tax-worker-flag { font-size: 11px; margin-left: 1px; cursor: help; }
+.tax-worker-flag { font-size: 12px; margin-left: 1px; cursor: help; }
 
 .tax-table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; margin: 0 -2px; }
 
@@ -146,12 +146,12 @@ const IrishFactoryTaxTool = (function () {
   .tax-cards { gap: 8px; margin-bottom: 16px; }
   .tax-card { padding: 11px 13px; border-radius: 10px; }
   .tax-card-v { font-size: 19px; }
-  .tax-card-l { font-size: 11px; }
+  .tax-card-l { font-size: 12px; }
   .tax-tbl { font-size: 12.5px; }
   .tax-tbl th, .tax-tbl td { padding: 8px 9px; }
-  .tax-tbl th { font-size: 11px; }
+  .tax-tbl th { font-size: 12px; }
   .tax-fac-workers { font-size: 12px; line-height: 1.9; }
-  .tax-note { font-size: 11px; }
+  .tax-note { font-size: 12px; }
   .tax-audit { width: calc(100vw - 40px); box-sizing: border-box; }
 }
 `;

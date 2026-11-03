@@ -48,7 +48,7 @@
 .tool-card.external .tool-link { color: var(--link); }
 
 .tool-card .ext-icon {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--muted);
   vertical-align: super;
   margin-left: 3px;
