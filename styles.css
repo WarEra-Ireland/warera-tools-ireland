@@ -3552,3 +3552,42 @@ html[data-theme="light"] {
 .bf-roster tr.bf-you td { background: var(--accent-dim); }
 .bf-sort { width: 100%; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; text-transform: inherit; text-align: inherit; cursor: pointer; }
 .bf-sort:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 2px; }
+
+/* Team footer and contributor snapshot. */
+#site-footer { --footer-former-1: #bac3cf; --footer-former-2: #657184; }
+html[data-theme="light"] #site-footer { --footer-former-1: #8995a5; --footer-former-2: #475569; }
+#site-footer strong { color: var(--text); font-weight: 550; }
+.footer-api { margin-top: 6px; font-size: 11px; }
+.footer-acknowledgements { margin-top: 10px; }
+.footer-acknowledgements > summary { cursor: pointer; display: list-item; list-style: none; width: fit-content; margin: auto; font-size: 11px; text-decoration: underline; text-underline-offset: 3px; }
+.footer-acknowledgements > summary::-webkit-details-marker { display: none; }
+.footer-acknowledgements > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 5px; border-radius: 2px; }
+.footer-stats { max-width: 580px; margin: 16px auto 0; padding-top: 16px; border-top: 1px solid var(--border); text-align: left; }
+.footer-stats-heading { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; font-size: 12px; }
+.footer-stats-heading > span { font-size: 10px; }
+.footer-commit-total { margin-top: 12px; color: var(--text); font-size: 26px; line-height: 1.2; font-variant-numeric: tabular-nums; }
+.footer-commit-total small { font-size: 11px; color: var(--muted); }
+.footer-commit-strip { display: flex; height: 14px; gap: 3px; overflow: hidden; border-radius: 5px; margin: 14px 0; }
+.footer-commit-strip > span { flex-basis: 0; min-width: 0; }
+.footer-contributor-list { display: grid; gap: 10px; }
+.footer-contributor { display: grid; grid-template-columns: 7px minmax(0, 1fr) auto; align-items: baseline; gap: 8px; font-size: 12px; }
+.footer-contributor-dot { width: 7px; height: 7px; border-radius: 2px; }
+.footer-contributor a, .footer-org a { color: var(--text); text-decoration: none; font-weight: 550; }
+.footer-contributor a:hover, .footer-org a:hover { text-decoration: underline; }
+.footer-contributor-count { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.footer-contributor-former { border-top: 1px solid var(--border); padding-top: 10px; }
+.footer-contributor-role { font-size: 10px; margin-top: 2px; }
+.footer-org { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border); font-size: 11px; }
+.footer-org-members { display: flex; flex-wrap: wrap; gap: 8px 16px; margin-top: 8px; }
+.footer-stats-source { margin-top: 14px; font-size: 10px; line-height: 1.5; }
+.footer-last-commit { display: block; color: var(--muted); font-size: 10px; margin-top: 3px; }
+.footer-commit-recent { color: var(--accent); }
+.footer-stats-period { display: flex; flex-shrink: 0; gap: 3px; }
+.footer-stats-period button { padding: 3px 7px; border: 1px solid transparent; border-radius: 5px; background: transparent; color: var(--muted); font: inherit; font-size: 10px; cursor: pointer; }
+.footer-stats-period button[aria-pressed="true"] { background: var(--panel-2); border-color: var(--border); color: var(--text); }
+.footer-stats-period button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.footer-commit-strip:has(.footer-no-commits) { height: auto; min-height: 14px; }
+.footer-no-commits { font-size: 11px; color: var(--muted); }
+@media (max-width: 400px) {
+  .footer-stats-heading { flex-wrap: wrap; gap: 8px; }
+}

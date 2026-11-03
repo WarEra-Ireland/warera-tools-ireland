@@ -1,0 +1,39 @@
+{
+  "repository": "WarEra-Ireland/warera-tools-ireland",
+  "people": [
+    {
+      "github": "FCOS",
+      "name": "PintmanPaddyLosty",
+      "userId": "69f0d2bb66f18fb7dceb6042",
+      "orgMember": true
+    },
+    {
+      "github": "hawtre",
+      "name": "TheCraicen",
+      "userId": "6a14c6bf1d256ca50ea750bc",
+      "orgMember": true
+    },
+    {
+      "github": "Locearbhaill",
+      "name": "Shmoke_n_Shniff",
+      "userId": "698d05589789b5cb628f88b8",
+      "orgMember": true
+    },
+    {
+      "github": "R00ted-82",
+      "name": "R00ted",
+      "userId": "69acb59bf95d5d683b75b9ea",
+      "role": "Former team member"
+    },
+    {
+      "github": "swithinpais",
+      "orgMember": true
+    },
+    {
+      "github": "to-ie",
+      "name": "toie",
+      "userId": "69de159fa03070cad5b1cc09",
+      "role": "Original creator \u00b7 former team member"
+    }
+  ]
+}
