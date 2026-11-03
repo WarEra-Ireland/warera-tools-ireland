@@ -2,9 +2,10 @@
  *  MY DASHBOARD  (powers the standalone #dashboard view)
  *
  *  A single-glance overview of the tools an Irish player uses most,
- *  styled after the personal warera-toie dashboard: one centred column
- *  of detailed cards, each with per-row breakdowns, status pills and a
- *  link out to the full tool.
+ *  styled after the personal warera-toie dashboard: columns of
+ *  detailed cards (drag a card's handle to move it; the layout is saved),
+ *  each with per-row breakdowns, status pills and a link out to the full
+ *  tool.
  *
  *    🏭 Migration  — every company with its current region/bonus/tax and
  *                    a verdict ("✓ Best placed" or "→ Country · +X%")
@@ -58,6 +59,7 @@ const DashboardTool = (() => {
   const $status   = document.getElementById('dash-status');
   const $grid     = document.getElementById('dash-grid');
   const $recent   = document.getElementById('dash-recent');
+  const $resetOrder = document.getElementById('dash-reset-order');
 
   let running = false;
   let mounted = false;
@@ -130,11 +132,196 @@ const DashboardTool = (() => {
     { key: 'mu',        icon: '🔫', title: 'Military Unit', href: '#mu'      },
   ];
 
+  /* ── Card layout (localStorage) ──
+   *  Cards sit in explicit columns, so a card only moves when it's dragged:
+   *  dropping one never reshuffles the others between columns. A layout is
+   *  saved per column count (a wide screen fits 3, a phone 1); a count with
+   *  no saved layout deals the cards out round-robin, in the reading order
+   *  of another saved layout or else the default order. Hidden (paused)
+   *  cards keep their saved slot, and new cards join the shortest column. */
+  const LAYOUT_KEY = 'dash:card-layout';
+  const COL_MIN = 400, COL_GAP = 16;   // COL_GAP matches .dash-grid.cols' gap
+  const readLayouts = () => { try { const o = JSON.parse(localStorage.getItem(LAYOUT_KEY) || 'null'); return o && typeof o === 'object' && !Array.isArray(o) ? o : {}; } catch { return {}; } };
+  const writeLayouts = (o) => { try { localStorage.setItem(LAYOUT_KEY, JSON.stringify(o)); } catch { /* storage off */ } };
+  const isLayout = (cols) => Array.isArray(cols) && cols.every(Array.isArray);
+  // Reading order of a layout: row by row across the columns.
+  const flatten = (cols) => {
+    const out = [];
+    for (let i = 0; cols.some(c => i < c.length); i++) cols.forEach(c => { if (i < c.length) out.push(c[i]); });
+    return out;
+  };
+  function layoutFor(n, shown) {
+    const layouts = readLayouts();
+    let cols = isLayout(layouts[n]) && layouts[n].length === n ? layouts[n].map(c => c.filter(k => shown.includes(k))) : null;
+    if (!cols) {
+      const other = Object.values(layouts).find(isLayout);
+      const order = other ? flatten(other) : CARDS.map(c => c.key);
+      cols = Array.from({ length: n }, () => []);
+      order.filter(k => shown.includes(k)).forEach((k, i) => cols[i % n].push(k));
+    }
+    const seen = new Set();
+    cols = cols.map(c => c.filter(k => !seen.has(k) && seen.add(k)));
+    shown.filter(k => !seen.has(k)).forEach(k => cols.reduce((a, b) => b.length < a.length ? b : a).push(k));
+    return cols;
+  }
+  const colsOf  = () => [...$grid.children].filter(el => el.classList.contains('dash-col'));
+  const cardsIn = (col) => [...col.children].filter(el => el.classList.contains('dash-card'));
+  const currentLayout = () => colsOf().map(col => cardsIn(col).map(el => el.dataset.card));
+  const colCount = () => Math.max(1, Math.floor(($grid.clientWidth + COL_GAP) / (COL_MIN + COL_GAP)));
+  function saveLayout() {
+    const cols = currentLayout(), n = cols.length;
+    const prev = readLayouts()[n];
+    if (isLayout(prev)) {   // put hidden cards back where they were
+      const shown = new Set(cols.flat());
+      prev.forEach((c, ci) => c.forEach((k, i) => {
+        if (cols[ci] && !shown.has(k) && CARDS.some(x => x.key === k)) cols[ci].splice(Math.min(i, cols[ci].length), 0, k);
+      }));
+    }
+    writeLayouts({ ...readLayouts(), [n]: cols });
+    syncResetOrder();
+  }
+  function syncResetOrder() { $resetOrder?.classList.toggle('hidden', !Object.keys(readLayouts()).length || !cardEls.size); }
+
+  let cardEls = new Map();   // key → card element, for the loaded account
+  function arrange(n) {
+    $grid.replaceChildren(...layoutFor(n, [...cardEls.keys()]).map(keys => {
+      const col = document.createElement('div');
+      col.className = 'dash-col';
+      col.append(...keys.map(k => cardEls.get(k)));
+      return col;
+    }));
+  }
+  // Re-deal the columns when the width fits a different number of them.
+  new ResizeObserver(() => {
+    if (drag || !cardEls.size) return;
+    const n = colCount();
+    if (n !== colsOf().length) arrange(n);
+  }).observe($grid);
+
+  /* ── Smooth moves (FLIP) ──
+   *  Measure every card, change the DOM, then animate each card from where
+   *  it was to where it now is. Running animations are cancelled first so a
+   *  card already sliding picks up from wherever it visually is. */
+  const reduceMotion = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const movers = () => [...$grid.querySelectorAll('.dash-card, .dash-ph')].filter(el => el !== drag?.card);
+  function withFlip(mutate) {
+    const els = movers();
+    const first = new Map(els.map(el => [el, el.getBoundingClientRect()]));
+    els.forEach(el => el.getAnimations().forEach(a => a.cancel()));
+    mutate();
+    if (reduceMotion()) return;
+    movers().forEach(el => {
+      const f = first.get(el); if (!f) return;
+      const l = el.getBoundingClientRect();
+      const dx = f.left - l.left, dy = f.top - l.top;
+      if (Math.abs(dx) < 1 && Math.abs(dy) < 1) return;
+      el.animate([{ transform: `translate(${dx}px, ${dy}px)` }, { transform: 'none' }],
+        { duration: 220, easing: 'cubic-bezier(.2, .7, .3, 1)' });
+    });
+  }
+
+  /* ── Drag to reorder ──
+   *  The dragged card lifts out and follows the pointer while a placeholder
+   *  holds its landing spot. The spot is the column under the pointer, above
+   *  the first card whose midpoint is below it. Midpoints come from layout
+   *  (offsetTop), not the animated positions, and moving the placeholder
+   *  pushes the next card further from the pointer, so the spot can't flip
+   *  back and forth. Arrow keys on a focused handle move a card one place
+   *  (up/down within its column, left/right across columns). */
+  let drag = null;
+  const LIFT = 'scale(1.02)';
+  function placeDragged() { drag.card.style.transform = `translate(${drag.x - drag.dx}px, ${drag.y - drag.dy}px) ${LIFT}`; }
+  function retarget() {
+    const { x, y, ph } = drag;
+    let col = null, best = Infinity;
+    for (const c of colsOf()) {
+      const r = c.getBoundingClientRect();
+      const d = x < r.left ? r.left - x : x > r.right ? x - r.right : 0;
+      if (d < best) { best = d; col = c; }
+    }
+    if (!col) return;
+    const top = col.getBoundingClientRect().top;
+    const before = cardsIn(col).find(el => y < top + el.offsetTop + el.offsetHeight / 2) || null;
+    const unchanged = ph.parentElement === col && (before ? ph.nextElementSibling === before : !ph.nextElementSibling);
+    if (!unchanged) withFlip(() => before ? before.before(ph) : col.append(ph));
+  }
+  function dragFrame() {
+    const edge = 70, y = drag.y;
+    if (y < edge) window.scrollBy(0, -Math.ceil((edge - y) / 5));
+    else if (y > innerHeight - edge) window.scrollBy(0, Math.ceil((y - innerHeight + edge) / 5));
+    placeDragged();
+    retarget();
+    drag.raf = requestAnimationFrame(dragFrame);
+  }
+  function endDrag() {
+    if (!drag) return;
+    const { card, ph, raf, start } = drag;
+    cancelAnimationFrame(raf);
+    drag = null;
+    const from = card.getBoundingClientRect();
+    ph.replaceWith(card);
+    card.style.cssText = '';
+    card.classList.remove('dragging');
+    $grid.classList.remove('is-dragging');
+    const to = card.getBoundingClientRect();
+    if (!reduceMotion()) card.animate(
+      [{ transform: `translate(${from.left - to.left}px, ${from.top - to.top}px) ${LIFT}` }, { transform: 'none' }],
+      { duration: 200, easing: 'cubic-bezier(.2, .7, .3, 1)' });
+    if (JSON.stringify(currentLayout()) !== start) saveLayout();
+  }
+  $grid.addEventListener('pointerdown', e => {
+    const handle = e.target.closest('.dash-drag');
+    if (!handle || e.button !== 0 || drag) return;
+    e.preventDefault();
+    const card = handle.closest('.dash-card');
+    card.getAnimations().forEach(a => a.cancel());
+    const r = card.getBoundingClientRect();
+    const start = JSON.stringify(currentLayout());
+    const ph = document.createElement('div');
+    ph.className = 'dash-ph';
+    ph.style.height = `${r.height}px`;
+    card.before(ph);
+    handle.setPointerCapture(e.pointerId);
+    drag = { card, ph, start, dx: e.clientX - r.left, dy: e.clientY - r.top, x: e.clientX, y: e.clientY };
+    Object.assign(card.style, { position: 'fixed', left: '0', top: '0', width: `${r.width}px`, zIndex: '50', pointerEvents: 'none' });
+    card.classList.add('dragging');
+    $grid.classList.add('is-dragging');
+    $grid.append(card);   // out of its column; fixed, so it takes no space
+    placeDragged();
+    drag.raf = requestAnimationFrame(dragFrame);
+  });
+  $grid.addEventListener('pointermove', e => { if (drag) { drag.x = e.clientX; drag.y = e.clientY; } });
+  $grid.addEventListener('pointerup', endDrag);
+  $grid.addEventListener('pointercancel', endDrag);
+  $grid.addEventListener('lostpointercapture', endDrag);
+  $grid.addEventListener('keydown', e => {
+    const handle = e.target.closest('.dash-drag');
+    if (!handle || drag || !['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) return;
+    e.preventDefault();
+    const card = handle.closest('.dash-card'), col = card.parentElement, cols = colsOf(), ci = cols.indexOf(col);
+    let mutate = null;
+    if (e.key === 'ArrowUp' && card.previousElementSibling) mutate = () => card.previousElementSibling.before(card);
+    else if (e.key === 'ArrowDown' && card.nextElementSibling) mutate = () => card.nextElementSibling.after(card);
+    else {
+      const target = cols[ci + (e.key === 'ArrowLeft' ? -1 : e.key === 'ArrowRight' ? 1 : NaN)];
+      if (target) {
+        const idx = cardsIn(col).indexOf(card);
+        mutate = () => { const ref = cardsIn(target)[idx]; ref ? ref.before(card) : target.append(card); };
+      }
+    }
+    if (!mutate) return;
+    withFlip(mutate);
+    handle.focus();
+    saveLayout();
+  });
+
   function renderScaffold(username) {
     const u = encodeURIComponent(username);
-    $grid.innerHTML = CARDS.filter(c => !isPaused(c.href.slice(1))).map(c => `
-      <section class="dash-card" id="dash-card-${c.key}">
+    const tpl = document.createElement('template');
+    tpl.innerHTML = CARDS.filter(c => !isPaused(c.href.slice(1))).map(c => `
+      <section class="dash-card" id="dash-card-${c.key}" data-card="${c.key}">
         <header class="dash-card-head">
+          <button type="button" class="dash-drag" title="Drag to move this card (or focus and use the arrow keys)" aria-label="Move the ${escapeHtml(c.title)} card">⠿</button>
           <span class="dash-card-icon">${c.icon}</span>
           <h3>${escapeHtml(c.title)}</h3>
           <span class="dash-card-note" id="dash-note-${c.key}"></span>
@@ -144,6 +331,10 @@ const DashboardTool = (() => {
           <div class="dash-skel"><span class="dash-spinner"></span> Loading…</div>
         </div>
       </section>`).join('');
+    cardEls = new Map([...tpl.content.children].map(el => [el.dataset.card, el]));
+    $grid.classList.add('cols');
+    arrange(colCount());
+    syncResetOrder();
   }
   const body = (key) => document.getElementById(`dash-body-${key}`);
   function setBody(key, html) { const el = body(key); if (el) el.innerHTML = html; }
@@ -749,7 +940,10 @@ const DashboardTool = (() => {
     setStatus('');
     setRateLimitHandler(reportRateLimit);
     setTrpcCache(true, CACHE_OWNER);   // dedupe the country/profile fetches shared across cards
+    cardEls = new Map();
+    $grid.classList.remove('cols');
     $grid.innerHTML = `<div class="dash-loading"><span class="dash-spinner"></span> Looking up “${escapeHtml(raw)}”…</div>`;
+    syncResetOrder();
 
     try {
       const lite = await resolveUsername(raw);
@@ -796,6 +990,11 @@ const DashboardTool = (() => {
   /* ── Wire-up ─────────────────────────────────────────────────────── */
   $load.addEventListener('click', run);
   $username.addEventListener('keydown', e => { if (e.key === 'Enter') run(); });
+  if ($resetOrder) $resetOrder.addEventListener('click', () => {
+    try { localStorage.removeItem(LAYOUT_KEY); } catch { /* storage off */ }
+    withFlip(() => arrange(colsOf().length));
+    syncResetOrder();
+  });
   if ($recent) $recent.addEventListener('click', e => {
     const del = e.target.closest('[data-dash-recent-del]');
     if (del) { forgetUsername(del.dataset.dashRecentDel); return; }
