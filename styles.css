@@ -2837,11 +2837,11 @@ table.rs-table {
 /* One row of ranked cards per rarity; the rarity colour tops each card. */
 :root {
   --tr-common: #9aacb5; --tr-uncommon: #4ade80; --tr-rare: #60a5fa; --tr-epic: #c084fc; --tr-legendary: #fbbf24; --tr-mythic: #f87171;
-  --tr-prod: #e0a458; --tr-resp: #c4a1f0; --tr-luck: #6fd39b;
+  --tr-prod: #e0a458; --tr-resp: #f2c94c; --tr-luck: #6fd39b; --tr-good: #4ade80; --tr-grey: #a3adb8;
 }
 html[data-theme="light"] {
   --tr-common: #526072; --tr-uncommon: #166534; --tr-rare: #1d4ed8; --tr-epic: #7e22ce; --tr-legendary: #92400e; --tr-mythic: #b91c1c;
-  --tr-prod: #92400e; --tr-resp: #6d28d9; --tr-luck: #166534;
+  --tr-prod: #92400e; --tr-resp: #854d0e; --tr-luck: #166534; --tr-good: #15803d; --tr-grey: #525c66;
 }
 .tr-stat-production { color: var(--tr-prod); }
 .tr-stat-responsibility { color: var(--tr-resp); }
@@ -3040,43 +3040,54 @@ html[data-theme="light"] {
 .tr-verdict small { display: block; color: var(--muted); font-size: 12px; margin-top: 2px; }
 .tr-hand-view { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; max-width: 560px; margin: 0 0 14px; }
 .tr-gc {
-  position: relative; text-align: center; padding: 10px 8px; border-radius: 8px;
+  position: relative; text-align: center; border-radius: 8px; overflow: visible;
   border: 1px solid color-mix(in srgb, var(--tier) 16%, var(--border));
   background: linear-gradient(to top, color-mix(in srgb, var(--tier) 18%, var(--panel)), var(--panel) 90%);
-  display: flex; flex-direction: column; align-items: center;
+  display: flex; flex-direction: column; align-items: stretch;
 }
-.tr-gc > .tr-gc-value { margin-top: auto; align-self: stretch; }
+.tr-gc > .tr-gc-value { margin-top: auto; padding-left: 8px; padding-right: 8px; padding-bottom: 8px; }
+.tr-gc > .tr-took { width: auto; margin: 0 8px 8px; }
 .tr-gc.best { opacity: 1; box-shadow: 0 0 0 2px var(--accent); }
 .tr-take {
-  position: absolute; top: -9px; left: 50%; transform: translateX(-50%);
+  position: absolute; top: -9px; left: 50%; transform: translateX(-50%); z-index: 1;
   padding: 1px 8px; border-radius: 999px; background: var(--accent); color: var(--bg);
   font-size: 12px; font-weight: 800; letter-spacing: .06em;
 }
-.tr-gc-rarity {
-  display: inline-block; padding: 1px 6px; border-radius: 4px; font-size: 12px; font-weight: 700;
-  color: var(--tier); background: color-mix(in srgb, var(--tier) 22%, transparent);
-}
 /* Icons from the game, drawn with its 1px drop shadow. */
 .tr-gi { width: 1.2em; height: 1.2em; vertical-align: -0.25em; filter: drop-shadow(1px 1px 0 rgba(0,0,0,.6)); }
-.tr-gc-icon { margin-top: 8px; font-size: 18px; color: var(--tier); }
-.tr-gc-title { align-self: stretch; margin: 4px 0 0; padding-bottom: 8px; font-size: 14px; font-weight: 700; position: relative; }
-.tr-gc-title::after {
-  content: ''; position: absolute; left: 35%; right: 35%; bottom: 0; height: 1px;
-  background: color-mix(in srgb, var(--text) 20%, transparent);
+/* The game's card: icon and title on a ruled header, a big hero icon with the
+   gain, a diamond rule, then a caption and the before → after line. */
+.tr-gc-head {
+  display: flex; align-items: center; gap: 6px; padding: 6px 8px; text-align: left;
+  border-bottom: 1px solid color-mix(in srgb, var(--tier) 35%, var(--border));
 }
-.tr-gc-face { flex-grow: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; min-height: 64px; padding: 6px 0; }
-.tr-gc-gain { font-size: 16px; font-weight: 700; }
-.tr-gc-gain .tr-gi { margin-right: 4px; }
-.tr-gc-change { display: flex; align-items: center; gap: 3px; font-size: 12px; color: var(--muted); }
-.tr-gc-change .tr-gi { margin-right: 2px; }
+.tr-gc-icon { flex-shrink: 0; font-size: 13px; color: var(--tier); filter: none; }
+.tr-gc-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-weight: 700; color: color-mix(in srgb, var(--tier) 55%, var(--text)); }
+.tr-gc-face { flex-grow: 1; display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 0 8px 6px; }
+.tr-gc-hero { display: flex; align-items: center; justify-content: center; gap: 6px; height: 72px; font-size: 30px; }
+.tr-gc-hero-icon { display: inline-flex; line-height: 1; }
+.tr-gc-hero-icon .tr-gi { vertical-align: 0; }
+.tr-tier { color: var(--tier); }
+.tr-gc-good { color: var(--tr-good); }
+.tr-gc-grey { color: var(--tr-grey); }
+.tr-gc-crossed { position: relative; display: inline-flex; }
+.tr-trait-badge { flex-shrink: 0; overflow: visible; }
+.tr-gc-from { display: inline-flex; opacity: .5; }
+.tr-gc-crossed::after {
+  content: ''; position: absolute; left: -3px; right: -3px; top: 50%; height: 2px; transform: rotate(-35deg);
+  background: var(--danger); box-shadow: 0 0 0 1px rgba(0,0,0,.5);
+}
+.tr-gc-gain { font-size: 22px; font-weight: 800; line-height: 1; }
+.tr-gc-divider { align-self: stretch; display: flex; align-items: center; gap: 6px; height: 7px; margin: 0 -8px 4px; }
+.tr-gc-divider::before, .tr-gc-divider::after { content: ''; flex-grow: 1; height: 1px; background: color-mix(in srgb, var(--tier) 35%, var(--border)); }
+.tr-gc-divider i { width: 7px; height: 7px; transform: rotate(45deg); background: var(--tier); }
+.tr-gc-caption { font-size: 12px; font-weight: 700; color: color-mix(in srgb, var(--tier) 55%, var(--text)); }
+.tr-gc-detail { font-size: 12px; color: color-mix(in srgb, var(--tier) 40%, var(--muted)); }
+.tr-gc-change { display: flex; align-items: center; justify-content: center; gap: 2px; font-size: 12px; color: var(--muted); }
+.tr-gc-change .tr-gi { margin-right: 1px; }
 .tr-gc-arrow { margin: 0 2px; filter: none; }
-.tr-gc-mark {
-  display: grid; place-items: center; width: 26px; height: 26px; border-radius: 50%; font-size: 14px;
-  background: linear-gradient(45deg, color-mix(in srgb, var(--text) 12%, var(--panel)), color-mix(in srgb, var(--text) 28%, var(--panel)));
-  box-shadow: 0 2px 0 rgba(0,0,0,.5);
-}
-.tr-gc-effect { font-size: 12px; font-weight: 600; color: var(--text); }
-.tr-gc-value { margin-top: 8px; padding-top: 8px; border-top: 1px solid color-mix(in srgb, var(--tier) 35%, var(--border)); }
+.tr-gc-wage, .tr-gc-pot { color: var(--muted); }
+.tr-gc-value { margin-top: 6px; padding-top: 8px; border-top: 1px solid color-mix(in srgb, var(--tier) 35%, var(--border)); }
 .tr-gc-pp { font-size: 14px; font-weight: 700; }
 .tr-gc-num { white-space: nowrap; }
 .tr-gc-pp em { font-style: normal; font-size: 12px; font-weight: 400; color: var(--muted); }
@@ -3093,8 +3104,9 @@ html[data-theme="light"] {
 .tr-arg-match { background: var(--accent); }
 .tr-arg-other { background: var(--border); }
 @media (max-width: 480px) {
-  .tr-gc { padding: 10px 4px 8px; }
-  .tr-gc-title { font-size: 13px; }
+  .tr-gc-hero { height: 60px; font-size: 24px; }
+  .tr-gc-gain { font-size: 18px; }
+  .tr-gc-title { font-size: 12px; }
 }
 .tr-more { margin: 10px 0 0; }
 .tr-more > summary { cursor: pointer; font-size: 13px; color: var(--text); margin-bottom: 10px; }

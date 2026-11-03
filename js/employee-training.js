@@ -259,7 +259,8 @@ const EmployeeTrainingTool = (() => {
   const GAME_ICON = {
     reroll: 'M19,8L15,12H18A6,6 0 0,1 12,18C11,18 10.03,17.75 9.2,17.3L7.74,18.76C8.97,19.54 10.43,20 12,20A8,8 0 0,0 20,12H23M6,12A6,6 0 0,1 12,6C13,6 13.97,6.25 14.8,6.7L16.26,5.24C15.03,4.46 13.57,4 12,4A8,8 0 0,0 4,12H1L5,16L9,12',
     production: 'M14.79,10.62L3.5,21.9L2.1,20.5L13.38,9.21L14.79,10.62M19.27,7.73L19.86,7.14L19.07,6.35L19.71,5.71L18.29,4.29L17.65,4.93L16.86,4.14L16.27,4.73C14.53,3.31 12.57,2.17 10.47,1.37L9.64,3.16C11.39,4.08 13,5.19 14.5,6.5L14,7L17,10L17.5,9.5C18.81,11 19.92,12.61 20.84,14.36L22.63,13.53C21.83,11.43 20.69,9.47 19.27,7.73Z',
-    responsibility: 'M6,2L10,6L7,17L12,22L17,17L14,6L18,2Z',
+    // Responsibility is drawn as the happiness it gives (a happy face).
+    responsibility: 'M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2M7,9.5C7,8.7 7.7,8 8.5,8C9.3,8 10,8.7 10,9.5C10,10.3 9.3,11 8.5,11C7.7,11 7,10.3 7,9.5M12,17.23C10.25,17.23 8.71,16.5 7.81,15.42L9.23,14C9.68,14.72 10.75,15.23 12,15.23C13.25,15.23 14.32,14.72 14.77,14L16.19,15.42C15.29,16.5 13.75,17.23 12,17.23M15.5,11C14.7,11 14,10.3 14,9.5C14,8.7 14.7,8 15.5,8C16.3,8 17,8.7 17,9.5C17,10.3 16.3,11 15.5,11Z',
     luck: 'M12,11.18C15.3,8.18 17,6.64 17,4.69C17,3.19 15.75,2 14.25,2C13.39,2 12.57,2.36 12,3C11.43,2.36 10.61,2 9.69,2C8.19,2 7,3.25 7,4.75C7,6.64 8.7,8.18 12,11.18M11.18,12C8.18,8.7 6.64,7 4.69,7C3.19,7 2,8.25 2,9.75C2,10.61 2.36,11.43 3,12C2.36,12.57 2,13.39 2,14.31C2,15.81 3.25,17 4.75,17C6.64,17 8.18,15.3 11.18,12M12.83,12C15.82,15.3 17.36,17 19.31,17C20.81,17 22,15.75 22,14.25C22,13.39 21.64,12.57 21,12C21.64,11.43 22,10.61 22,9.69C22,8.19 20.75,7 19.25,7C17.36,7 15.82,8.7 12.83,12M12,12.82C8.7,15.82 7,17.36 7,19.31C7,20.81 8.25,22 9.75,22C10.61,22 11.43,21.64 12,21C12.57,21.64 13.39,22 14.31,22C15.81,22 17,20.75 17,19.25C17,17.36 15.3,15.82 12,12.82Z',
     drill: 'M20.57,14.86L22,13.43L20.57,12L17,15.57L8.43,7L12,3.43L10.57,2L9.14,3.43L7.71,2L5.57,4.14L4.14,2.71L2.71,4.14L4.14,5.57L2,7.71L3.43,9.14L2,10.57L3.43,12L7,8.43L15.57,17L12,20.57L13.43,22L14.86,20.57L16.29,22L18.43,19.86L19.86,21.29L21.29,19.86L19.86,18.43L22,16.29L20.57,14.86Z',
     wildCard: 'M19.78,3H11.22C10.55,3 10,3.55 10,4.22V8H16V14H19.78C20.45,14 21,13.45 21,12.78V4.22C21,3.55 20.45,3 19.78,3M12.44,6.67C11.76,6.67 11.21,6.12 11.21,5.44C11.21,4.76 11.76,4.21 12.44,4.21A1.23,1.23 0 0,1 13.67,5.44C13.67,6.12 13.12,6.67 12.44,6.67M18.56,12.78C17.88,12.79 17.33,12.24 17.32,11.56C17.31,10.88 17.86,10.33 18.54,10.32C19.22,10.31 19.77,10.86 19.78,11.56C19.77,12.23 19.23,12.77 18.56,12.78M18.56,6.67C17.88,6.68 17.33,6.13 17.32,5.45C17.31,4.77 17.86,4.22 18.54,4.21C19.22,4.2 19.77,4.75 19.78,5.44C19.78,6.12 19.24,6.66 18.56,6.67M4.22,10H12.78A1.22,1.22 0 0,1 14,11.22V19.78C14,20.45 13.45,21 12.78,21H4.22C3.55,21 3,20.45 3,19.78V11.22C3,10.55 3.55,10 4.22,10M8.5,14.28C7.83,14.28 7.28,14.83 7.28,15.5C7.28,16.17 7.83,16.72 8.5,16.72C9.17,16.72 9.72,16.17 9.72,15.5A1.22,1.22 0 0,0 8.5,14.28M5.44,11.22C4.77,11.22 4.22,11.77 4.22,12.44A1.22,1.22 0 0,0 5.44,13.66C6.11,13.66 6.66,13.11 6.66,12.44V12.44C6.66,11.77 6.11,11.22 5.44,11.22M11.55,17.33C10.88,17.33 10.33,17.88 10.33,18.55C10.33,19.22 10.88,19.77 11.55,19.77A1.22,1.22 0 0,0 12.77,18.55H12.77C12.77,17.88 12.23,17.34 11.56,17.33H11.55Z',
@@ -271,13 +272,42 @@ const EmployeeTrainingTool = (() => {
     rehabAll: 'M19.36,2.72L20.78,4.14L15.06,9.85C16.13,11.39 16.28,13.24 15.38,14.44L9.06,8.12C10.26,7.22 12.11,7.37 13.65,8.44L19.36,2.72M5.93,17.57C3.92,15.56 2.69,13.16 2.35,10.92L7.23,8.83L14.67,16.27L12.58,21.15C10.34,20.81 7.94,19.58 5.93,17.57Z',
     question: 'M10,19H13V22H10V19M12,2C17.35,2.22 19.68,7.62 16.5,11.67C15.67,12.67 14.33,13.33 13.67,14.17C13,15 13,16 13,17H10C10,15.33 10,13.92 10.67,12.92C11.33,11.92 12.67,11.33 13.5,10.67C15.92,8.43 15.32,5.26 12,5A3,3 0 0,0 9,8H6A6,6 0 0,1 12,2Z',
     arrow: 'M14 16.94V12.94H5.08L5.05 10.93H14V6.94L19 11.94Z',
+    // Card faces: wage (Negotiation) and training potential (Second wind).
+    wage: 'M12 5C7.031 5 2 6.546 2 9.5S7.031 14 12 14c4.97 0 10-1.546 10-4.5S16.97 5 12 5zm-5 9.938v3c1.237.299 2.605.482 4 .541v-3a21.166 21.166 0 0 1-4-.541zm6 .54v3a20.994 20.994 0 0 0 4-.541v-3a20.994 20.994 0 0 1-4 .541zm6-1.181v3c1.801-.755 3-1.857 3-3.297v-3c0 1.44-1.199 2.542-3 3.297zm-14 3v-3C3.2 13.542 2 12.439 2 11v3c0 1.439 1.2 2.542 3 3.297z',
+    potential: 'M21.33,12.91C21.42,14.46 20.71,15.95 19.44,16.86L20.21,18.35C20.44,18.8 20.47,19.33 20.27,19.8C20.08,20.27 19.69,20.64 19.21,20.8L18.42,21.05C18.25,21.11 18.06,21.14 17.88,21.14C17.37,21.14 16.89,20.91 16.56,20.5L14.44,18C13.55,17.85 12.71,17.47 12,16.9C11.5,17.05 11,17.13 10.5,17.13C9.62,17.13 8.74,16.86 8,16.34C7.47,16.5 6.93,16.57 6.38,16.56C5.59,16.57 4.81,16.41 4.08,16.11C2.65,15.47 1.7,14.07 1.65,12.5C1.57,11.78 1.69,11.05 2,10.39C1.71,9.64 1.68,8.82 1.93,8.06C2.3,7.11 3,6.32 3.87,5.82C4.45,4.13 6.08,3 7.87,3.12C9.47,1.62 11.92,1.46 13.7,2.75C14.12,2.64 14.56,2.58 15,2.58C16.36,2.55 17.65,3.15 18.5,4.22C20.54,4.75 22,6.57 22.08,8.69C22.13,9.8 21.83,10.89 21.22,11.82C21.29,12.18 21.33,12.54 21.33,12.91M16.33,11.5C16.9,11.57 17.35,12 17.35,12.57A1,1 0 0,1 16.35,13.57H15.72C15.4,14.47 14.84,15.26 14.1,15.86C14.35,15.95 14.61,16 14.87,16.07C20,16 19.4,12.87 19.4,12.82C19.34,11.39 18.14,10.27 16.71,10.33A1,1 0 0,1 15.71,9.33A1,1 0 0,1 16.71,8.33C17.94,8.36 19.12,8.82 20.04,9.63C20.09,9.34 20.12,9.04 20.12,8.74C20.06,7.5 19.5,6.42 17.25,6.21C16,3.25 12.85,4.89 12.85,5.81V5.81C12.82,6.04 13.06,6.53 13.1,6.56A1,1 0 0,1 14.1,7.56C14.1,8.11 13.65,8.56 13.1,8.56V8.56C12.57,8.54 12.07,8.34 11.67,8C11.19,8.31 10.64,8.5 10.07,8.56V8.56C9.5,8.61 9.03,8.21 9,7.66C8.92,7.1 9.33,6.61 9.88,6.56C10.04,6.54 10.82,6.42 10.82,5.79V5.79C10.82,5.13 11.07,4.5 11.5,4C10.58,3.75 9.59,4.08 8.59,5.29C6.75,5 6,5.25 5.45,7.2C4.5,7.67 4,8 3.78,9C4.86,8.78 5.97,8.87 7,9.25C7.5,9.44 7.78,10 7.59,10.54C7.4,11.06 6.82,11.32 6.3,11.13C5.57,10.81 4.75,10.79 4,11.07C3.68,11.34 3.68,11.9 3.68,12.34C3.68,13.08 4.05,13.77 4.68,14.17C5.21,14.44 5.8,14.58 6.39,14.57C6.24,14.31 6.11,14.04 6,13.76C5.81,13.22 6.1,12.63 6.64,12.44C7.18,12.25 7.77,12.54 7.96,13.08C8.36,14.22 9.38,15 10.58,15.13C11.95,15.06 13.17,14.25 13.77,13C14,11.62 15.11,11.5 16.33,11.5M18.33,18.97L17.71,17.67L17,17.83L18,19.08L18.33,18.97M13.68,10.36C13.7,9.83 13.3,9.38 12.77,9.33C12.06,9.29 11.37,9.53 10.84,10C10.27,10.58 9.97,11.38 10,12.19A1,1 0 0,0 11,13.19C11.57,13.19 12,12.74 12,12.19C12,11.92 12.07,11.65 12.23,11.43C12.35,11.33 12.5,11.28 12.66,11.28C13.21,11.31 13.68,10.9 13.68,10.36Z',
   };
   GAME_ICON.habitPair = GAME_ICON.habit;
   const gameIcon = (name, cls = '') => GAME_ICON[name]
     ? `<svg class="tr-gi${cls ? ` ${cls}` : ''}" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="${GAME_ICON[name]}"/></svg>` : '';
 
+  // A trait as the game's badge: its icon on a shape that its colour picks,
+  // shaded from the colour into dark grey over a dark outline and drop.
+  // Unknown or unchosen traits get the grey "?" circle.
+  const BADGE_SHAPE = {
+    circle: 'M50,1A49,49 0 1,1 49.99,1Z',
+    triangle: 'M58.58 11.73L96.22 80.44Q104.8 96.11 86.93 96.11L13.07 96.11Q-4.8 96.11 3.78 80.44L41.42 11.73Q50 -3.95 58.58 11.73Z',
+    hexagon: 'M57.22 3.09L87.02 20.29Q94.25 24.46 94.25 32.8L94.25 67.2Q94.25 75.54 87.02 79.71L57.22 96.91Q50 101.09 42.78 96.91L12.98 79.71Q5.75 75.54 5.75 67.2L5.75 32.8Q5.75 24.46 12.98 20.29L42.78 3.09Q50 -1.09 57.22 3.09Z',
+    losange: 'M64.63 8.32L91.68 35.37Q106.32 50 91.68 64.63L64.63 91.68Q50 106.32 35.37 91.68L8.32 64.63Q-6.32 50 8.32 35.37L35.37 8.32Q50 -6.32 64.63 8.32Z',
+  };
+  // Per colour: shape, body colour (shaded to dark grey) and icon colour.
+  const BADGE_COLOUR = {
+    emerald: ['circle', '#0A3D28', '#66BA91'], amber: ['triangle', '#403111', '#BFA269'],
+    blue: ['hexagon', '#173065', '#76A4FF'], red: ['losange', '#581B1D', '#F37E7D'], gray: ['circle', '#23373B', '#89AEB5'],
+  };
+  function traitBadge(code, size = 30) {
+    const [colour, icon] = EMPLOYEE_TRAIT_ICONS[code] || ['gray', GAME_ICON.question];
+    const [shape, body, ink] = BADGE_COLOUR[colour];
+    const d = BADGE_SHAPE[shape], edge = 200 / size, grad = `tr-badge-${colour}`, iconBox = 100 * (size > 24 ? 16 : 12) / size;
+    const name = code ? escapeHtml(traitName(code)) : 'Random trait';
+    return `<svg class="tr-trait-badge" width="${size}" height="${size}" viewBox="0 0 100 100" role="img" aria-label="${name}"><title>${name}</title>
+      <linearGradient id="${grad}" gradientUnits="userSpaceOnUse" x1="0" y1="100" x2="100" y2="0"><stop offset="0" stop-color="${body}"/><stop offset="1" stop-color="#121C1E"/></linearGradient>
+      <path d="${d}" fill="#090E0F" stroke="#090E0F" stroke-width="${edge}" transform="translate(0 ${100 / size})"/><path d="${d}" fill="#090E0F" stroke="#090E0F" stroke-width="${edge}"/><path d="${d}" fill="url(#${grad})"/>
+      <svg x="${50 - iconBox / 2}" y="${50 - iconBox / 2}" width="${iconBox}" height="${iconBox}" viewBox="0 0 24 24"><path d="${icon}" fill="${ink}"/></svg></svg>`;
+  }
+
   // Game card titles (the training hand's own names).
   function cardTitle(c) {
+    if (c.card === 'drill' && c.stat === 'responsibility') return c.delta > 1 ? 'Big morale boost' : 'Morale boost';
     if (c.card === 'drill') return c.delta > 1 ? 'Intensive drill' : 'Drill';
     return { reroll: 'Reroll', negotiation: 'Negotiation', secondWind: 'Second wind', habit: 'New habit', habitPair: 'Two new habits',
       rehab: 'Rehab', rehabAll: 'Clean slate', wildCard: 'Wild card', mentoring: 'Mentoring' }[c.card];
@@ -616,28 +646,58 @@ const EmployeeTrainingTool = (() => {
     return { best, html: notes.map(n => `<p class="tr-calc-sub tr-verdict-note">${n}</p>`).join('') };
   }
 
-  // A card's effect as the game draws it: a drill shows the gain and the
-  // stat before and after.
+  // A card's face as the game draws it: a big hero icon with the gain beside
+  // it, then a caption and the before → after line.
+  const heroIcon = (name, cls) => `<span class="tr-gc-hero-icon ${cls}">${gameIcon(name)}</span>`;
+  const crossed = html => `<span class="tr-gc-crossed">${html}</span>`;
+  const beforeAfter = (a, b) => `<div class="tr-gc-change">${a}${gameIcon('arrow', 'tr-gc-arrow')}${b}</div>`;
+  const finite = v => v !== '' && v != null && Number.isFinite(+v);
   function cardFace(c, value) {
-    if (c.card === 'reroll') return `<div class="tr-gc-effect">Reroll: new hand, worth ~${signedPP(value)} PP</div><div class="tr-gc-note">Rarity rolled again. No energy or potential.</div>`;
+    const face = (hero, caption, { gain = '', detail = '' } = {}) => `<div class="tr-gc-hero">${hero}${gain ? `<span class="tr-gc-gain">${gain}</span>` : ''}</div>
+      <div class="tr-gc-divider"><i></i></div>
+      <div class="tr-gc-caption">${caption}</div>${detail ? `<div class="tr-gc-detail">${detail}</div>` : ''}`;
+    if (c.card === 'reroll') return face(heroIcon('reroll', 'tr-tier'), 'New hand', { detail: `Rarity rolled again, worth ~${signedPP(value)} PP. No energy or potential.` });
     if (c.card === 'drill') {
+      const stat = v => `<span class="tr-stat-${c.stat}">${gameIcon(c.stat)}${v}</span>`;
+      const gain = n => `<span class="tr-stat-${c.stat}">+${n}</span>`;
+      if (c.stat === 'responsibility') {
+        // The game shows the employee's happiness now and after, capped at 100.
+        const now = finite(input.happiness) ? Math.round(+input.happiness) : null;
+        return face(heroIcon('responsibility', 'tr-stat-responsibility'), 'Happiness', { gain: gain(respHappiness(c.delta)),
+          detail: now == null ? '' : beforeAfter(stat(now), stat(Math.min(100, now + respHappiness(c.delta)))) });
+      }
       const now = c.stat === 'production' ? input.production + (input.traitProduction || 0) + input.extraProduction : input[c.stat];
-      const stat = (v, cls = '') => `<span class="tr-stat-${c.stat}${cls}">${gameIcon(c.stat)}</span>${v}`;
-      const shown = n => statShown(c.stat, n);
-      const unit = c.stat === 'responsibility' ? ' happiness' : '';
-      return `<div class="tr-gc-gain">${stat(`+${shown(c.delta)}${unit}`)}</div>
-        <div class="tr-gc-change">${stat(shown(now))}${gameIcon('arrow', 'tr-gc-arrow')}${stat(shown(now + c.delta))}</div>`;
+      return face(heroIcon(c.stat, `tr-stat-${c.stat}`), STAT[c.stat], { gain: gain(c.delta),
+        detail: Number.isFinite(now) ? beforeAfter(stat(now), stat(now + c.delta)) : '' });
     }
-    if (c.card === 'mentoring' && c.code && c.to) return `<div class="tr-gc-effect">${escapeHtml(traitName(c.code))}${gameIcon('arrow', 'tr-gc-arrow')}${escapeHtml(traitName(c.to))}</div>`;
+    if (c.card === 'negotiation') {
+      const emp = findEmployee(input.pick)?.emp;
+      const after = Number.isFinite(emp?.wage) ? EC.cardOutcomes({ ...employee(), wage: emp.wage }, c)[0]?.employee.wage : null;
+      const wage = n => `<span class="tr-gc-wage">${gameIcon('wage')}${n.toFixed(4)}</span>`;
+      return face(heroIcon('wage', 'tr-gc-good'), 'Expected wage', { gain: `<span class="tr-gc-good">−${Math.round(c.drop * 100)}%</span>`,
+        detail: Number.isFinite(after) ? beforeAfter(wage(emp.wage), wage(after)) : '' });
+    }
+    if (c.card === 'secondWind') {
+      const emp = findEmployee(input.pick)?.emp;
+      const pot = max => `<span class="tr-gc-pot">${gameIcon('potential')}${emp.potential || 0}/${max}</span>`;
+      return face(heroIcon('potential', 'tr-gc-grey'), 'Training potential', { gain: `<span class="tr-gc-grey">+${c.gain}</span>`,
+        detail: Number.isFinite(emp?.potentialMax) ? beforeAfter(pot(emp.potentialMax), pot(emp.potentialMax + c.gain)) : '' });
+    }
+    if (c.card === 'mentoring') return c.code && c.to
+      ? face(`<span class="tr-gc-from">${traitBadge(c.code, 20)}</span>${gameIcon('arrow', 'tr-gc-arrow')}${traitBadge(c.to)}`, escapeHtml(traitName(c.to)))
+      : face(heroIcon('mentoring', 'tr-tier'), 'Moves a trait one step up its ladder');
     if (c.card === 'wildCard') {
       const risk = EC.wildCardRisk(input.traits.map(t => t.code), input.sit.gender);
-      return `<span class="tr-gc-mark">${gameIcon('question')}</span><div class="tr-gc-effect">Random trait, +${EC.CFG.wildCardStatGain} random stat</div>${risk == null ? '' : `<div class="tr-gc-note">${Math.round(100 * risk)}% chance of a bad trait</div>`}`;
+      return face(traitBadge(null), `Random trait, +${EC.CFG.wildCardStatGain} to a random stat`, { detail: risk == null ? '' : `${Math.round(100 * risk)}% chance of a bad trait` });
     }
-    return `<div class="tr-gc-effect">${escapeHtml(effectText(c))}</div>`;
+    if (c.card === 'rehab') return face(crossed(traitBadge(c.code)), c.code ? `Remove ${escapeHtml(traitName(c.code))}` : 'Remove a bad trait');
+    if (c.card === 'rehabAll') return face(crossed(traitBadge(null)), 'Remove every bad trait');
+    if (c.card === 'habitPair') return face((c.codes || []).length ? c.codes.map(code => traitBadge(code)).join('') : traitBadge(null) + traitBadge(null), (c.codes || []).length ? c.codes.map(code => escapeHtml(traitName(code))).join(' and ') : 'Two new traits');
+    return face(traitBadge(c.code), c.code ? escapeHtml(traitName(c.code)) : 'A new trait');
   }
 
   function cardWage(c) {
-    if (c.card !== 'negotiation' && !(c.card === 'drill' && c.stat === 'production')) return '';
+    if (!(c.card === 'drill' && c.stat === 'production')) return '';
     const emp = findEmployee(input.pick)?.emp;
     if (!Number.isFinite(emp?.wage)) return '';
     const e = { ...employee(), wage: emp.wage };
@@ -684,9 +744,7 @@ const EmployeeTrainingTool = (() => {
       const bar = `<div class="tr-gc-bar"><i style="width:${pctOf(x.value)}%"></i></div>`;
       return `<div class="tr-gc${isBest ? ' best' : ''}"${x.when ? ` title="${escapeHtml(x.when)}"` : ''}>
         ${isBest ? '<span class="tr-take">TAKE</span>' : ''}
-        <span class="tr-gc-rarity">${RARITY_NAME[input.hand.rarity]}</span>
-        ${gameIcon(x.c.card, 'tr-gc-icon')}
-        <div class="tr-gc-title">${escapeHtml(cardTitle(x.c))}</div>
+        <div class="tr-gc-head" title="${RARITY_NAME[input.hand.rarity]}">${gameIcon(x.c.card, 'tr-gc-icon')}<span class="tr-gc-title">${escapeHtml(cardTitle(x.c))}</span></div>
         <div class="tr-gc-face">${cardFace(x.c, x.value)}${cardWage(x.c)}
         ${x.c.card === 'mentoring' ? (x.c.to ? traitHelp(x.c.to, 'Trait effect') : '') : x.c.code ? traitHelp(x.c.code, 'Trait effect') : (x.c.codes || []).map(code => traitHelp(code)).join('')}</div>
         <div class="tr-gc-value">
