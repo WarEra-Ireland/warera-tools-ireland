@@ -347,6 +347,7 @@ function enforceIrishOnly(country, username) {
  *  inside a window that has ~18s left to run.
  */
 function isTransientError(err) {
+  if (err?.network || err?.timeout) return true;
   if (err && (err.status === 429 || (err.status >= 500 && err.status < 600))) return true;
   const msg = String(err?.message || '').toLowerCase();
   return /http (429|50[234])|no available server|timed? ?out|fetch failed|network ?error/.test(msg);
@@ -676,6 +677,55 @@ function trpc(endpoint, inputOrInputs = {}, {
   return p;
 }
 
+/*
+ *  What a failed data request means, in words a player can act on. Every
+ *  tool shows err.message from trpc(), so this is the one place the wording
+ *  lives. The procedure and status follow in brackets for bug reports.
+ *
+ *  `body` is the parsed error response, if any: the proxy answers
+ *  { error: 'text' } or { error: { message } }, and the game's tRPC errors
+ *  carry { error: { message } } or { error: { json: { message } } }.
+ */
+function _apiErrorText(body) {
+  const item = Array.isArray(body) ? body[0] : body;
+  const e = item?.error;
+  const text = typeof e === 'string' ? e : e?.message ?? e?.json?.message ?? e?.data?.message;
+  return typeof text === 'string' && text.trim() ? text.trim().slice(0, 200) : null;
+}
+
+function apiErrorMessage({ label = 'request', status = null, body = null, network = false, timeout = false, retryAfterSecs = null } = {}) {
+  const where = status ? `${label}, HTTP ${status}` : `${label}, no response`;
+  const text = _apiErrorText(body);
+  let say;
+  if (network) {
+    say = "Couldn't reach the data server. Check your internet connection and try again. If it keeps happening, the server may be down.";
+  } else if (timeout) {
+    say = 'The game took too long to answer. Try again in a moment.';
+  } else if (status === 403 && text === 'origin not allowed') {
+    const here = typeof location !== 'undefined' ? ` (${location.origin})` : '';
+    say = `The data server doesn't accept requests from this address${here}. Use the main site, or, for a development copy, add this address to the proxy's ALLOWED_ORIGINS.`;
+  } else if (status === 403) {
+    say = text && text !== 'Forbidden' ? `The game refused this request: ${text}`
+      : 'The game refused this request. It may need a Premium account, or be closed to API tokens.';
+  } else if (status === 401) {
+    say = "The game didn't accept the data server's API key, so nothing can be loaded right now.";
+  } else if (status === 404) {
+    say = "The game doesn't recognise this request. It may have changed in a game update; please report it.";
+  } else if (status === 413 || status === 414 || status === 431) {
+    say = 'This request was too large for the data server. Try fewer items at once.';
+  } else if (status === 429) {
+    const wait = Number.isFinite(retryAfterSecs) && retryAfterSecs > 0 ? ` Try again in about ${Math.ceil(retryAfterSecs)}s.` : ' Try again shortly.';
+    say = `The game's request limit is reached: rate limited, all API keys are busy.${wait}`;
+  } else if (status === 503 && text === 'game API token not configured') {
+    say = 'The data server has no game API key set up, so nothing can be loaded.';
+  } else if (status >= 500) {
+    say = "The game's servers had a problem. Try again in a minute.";
+  } else {
+    say = text ? `The request failed: ${text}` : 'The request failed.';
+  }
+  return `${say} (${where})`;
+}
+
 function _trpcResponseError(item, label) {
   if (!item?.error) return null;
   const msg = item.error.message || item.error.data?.message || 'unknown error';
@@ -746,21 +796,25 @@ async function _trpcExec(endpoint, inputOrInputs = {}, {
   const ctrl = timeoutMs ? new AbortController() : null;
   const t = timeoutMs ? setTimeout(() => ctrl.abort(), timeoutMs) : null;
   try {
-    const res = await fetch(url, ctrl ? { signal: ctrl.signal } : undefined);
+    let res;
+    try {
+      res = await fetch(url, ctrl ? { signal: ctrl.signal } : undefined);
+    } catch (e) {
+      if (e.name === 'AbortError') throw e;
+      // No response at all: offline, DNS, CORS or the server is down.
+      const err = new Error(apiErrorMessage({ label, network: true }));
+      err.network = true;
+      throw err;
+    }
     if (!res.ok) {
       // A 429 here means every key in the proxy's pool is rate-limited, not
-      // just one - the proxy already retries a limited key on another. Name
-      // that plainly, and carry the seconds left in the window on the error
-      // so isTransientError()/_retryDelayMs() can wait out the window rather
+      // just one - the proxy already retries a limited key on another. The
+      // seconds left in the window ride on the error so
+      // isTransientError()/_retryDelayMs() can wait out the window rather
       // than burning attempts on the ~400ms backoff.
-      let err;
-      if (res.status === 429) {
-        const secs = Number(res.headers.get('Retry-After'));
-        const wait = Number.isFinite(secs) && secs > 0 ? ` Try again in ~${secs}s.` : '';
-        err = new Error(`${label} → rate limited. All API keys are busy.${wait}`);
-      } else {
-        err = new Error(`${label} → HTTP ${res.status}`);
-      }
+      const body = await res.json().catch(() => null);
+      const err = new Error(apiErrorMessage({ label, status: res.status, body,
+        retryAfterSecs: Number(res.headers.get('Retry-After')) }));
       err.status = res.status;
       const retryAfterMs = _retryAfterMs(res.headers);
       if (retryAfterMs != null) err.retryAfterMs = retryAfterMs;
@@ -789,7 +843,7 @@ async function _trpcExec(endpoint, inputOrInputs = {}, {
     if (responseError) throw responseError;
     return _trpcResponseValue(item);
   } catch (e) {
-    if (e.name === 'AbortError') e = new Error(`${label} → timed out`);
+    if (e.name === 'AbortError') { e = new Error(apiErrorMessage({ label, timeout: true })); e.timeout = true; }
     if (attempt < MAX_ATTEMPTS && isTransientError(e)) {
       const delay = _retryDelayMs(e, attempt);
       if (delay != null) {
