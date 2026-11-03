@@ -24,7 +24,7 @@
 })();
 </script>
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 3 2'%3E%3Crect width='1' height='2' fill='%23009A49'/%3E%3Crect x='1' width='1' height='2' fill='white'/%3E%3Crect x='2' width='1' height='2' fill='%23FF7900'/%3E%3C/svg%3E" />
-<link rel="stylesheet" href="styles.css?v=20261103e" />
+<link rel="stylesheet" href="styles.css?v=20261103f" />
 <link rel="stylesheet" href="community.css?v=20260906c" />
 </head>
 <body>
@@ -481,10 +481,14 @@
         <h2><span>🤝</span> Buddy Finder</h2>
         <p>See your open buddy slots and which Irish players can fill them.</p>
       </div>
-      <div class="controls">
-        <input type="text" id="bf-match-username" aria-label="In-game username" placeholder="Your in-game username" autocomplete="off" spellcheck="false" />
+    </div>
+
+    <div class="stg-idbar">
+      <div class="stg-idbar-row">
+        <input type="text" id="bf-match-username" aria-label="Your War Era username" placeholder="Your War Era username" autocomplete="off" spellcheck="false" />
         <button id="bf-match-submit" class="btn-primary">Load</button>
       </div>
+      <div class="stg-recent hidden" id="bf-recent"></div>
     </div>
 
     <div class="bf-intro section-help-card">
@@ -530,10 +534,14 @@
         <h2><span>🏭</span> Company Migration Advisor</h2>
         <p>Find companies outside Ireland and see what bringing them home is worth.</p>
       </div>
-      <div class="controls">
+    </div>
+
+    <div class="stg-idbar">
+      <div class="stg-idbar-row">
         <input id="adv-username" type="text" placeholder="Your War Era username" autocomplete="off" spellcheck="false" />
-        <button id="adv-go">Analyse</button>
+        <button id="adv-go" class="btn-primary">Load</button>
       </div>
+      <div class="stg-recent hidden" id="adv-recent"></div>
     </div>
 
     <div id="adv-steps" class="steps hidden">
@@ -588,10 +596,14 @@
         <h2><span>🎯</span> Top products</h2>
         <p>Compare product margins at current market prices. Rankings change over time, and switching products affects employee specialisation and trait bonuses. Treat these figures as a snapshot, not a recommendation to switch your workforce.</p>
       </div>
-      <div class="controls">
+    </div>
+
+    <div class="stg-idbar">
+      <div class="stg-idbar-row">
         <input id="pp-username" type="text" placeholder="Your War Era username" autocomplete="off" spellcheck="false" />
-        <button id="pp-go">Analyse</button>
+        <button id="pp-go" class="btn-primary">Load</button>
       </div>
+      <div class="stg-recent hidden" id="pp-recent"></div>
     </div>
 
     <div id="pp-steps" class="steps hidden">
@@ -646,12 +658,15 @@
       <div class="title-block">
         <h2><span>🎓</span> Employee Training</h2>
       </div>
-      <div class="controls">
-        <input id="tr-username" type="text" placeholder="In-game username" aria-label="In-game username" autocomplete="off" spellcheck="false" />
+    </div>
+
+    <div class="stg-idbar">
+      <div class="stg-idbar-row">
+        <input id="tr-username" type="text" placeholder="Your War Era username" aria-label="Your War Era username" autocomplete="off" spellcheck="false" />
         <button id="tr-load" class="btn-primary">Load</button>
       </div>
+      <div class="stg-recent hidden" id="tr-recent"></div>
     </div>
-    <div class="stg-recent hidden" id="tr-recent"></div>
     <div id="tr-steps" class="steps hidden" role="status" aria-live="polite">
       <div class="step" data-state="pending" data-step="1">
         <div class="step-icon"></div>
@@ -730,16 +745,20 @@
         <h2><span>🛡️</span> Gear Softcap Advisor</h2>
         <p>Stop overpaying for armor and dodge. Find the cheapest gear that gives the same effective percentage.</p>
       </div>
-      <div class="controls">
+    </div>
+
+    <div class="stg-idbar">
+      <div class="stg-idbar-row">
         <input id="sc-username" type="text" placeholder="Your War Era username" autocomplete="off" spellcheck="false" />
-        <button id="sc-go">Analyse</button>
+        <button id="sc-go" class="btn-primary">Load</button>
       </div>
+      <div class="stg-recent hidden" id="sc-recent"></div>
     </div>
 
     <details class="howto sc-howto">
       <summary>How to use</summary>
       <div class="howto-body">
-        <p>Enter your War Era username and click <strong>Analyse</strong>. The tool loads your armor and dodge,
+        <p>Enter your War Era username and click <strong>Load</strong>. The tool loads your armor and dodge,
           shows which extra points leave the displayed percentage unchanged, and suggests gear for your target.</p>
         <ul>
           <li>Check each card's effective percentage and <strong>wasted points</strong>. Points within the same band
@@ -898,10 +917,14 @@
         <h2><span>⏱</span> Manager Check-In Monitor</h2>
         <p>Check your company managers, their activity, last login and hourly pay.</p>
       </div>
-      <div class="controls">
+    </div>
+
+    <div class="stg-idbar">
+      <div class="stg-idbar-row">
         <input id="clockin-username" type="text" placeholder="Your War Era username" autocomplete="off" spellcheck="false" />
-        <button id="clockin-go">Track</button>
+        <button id="clockin-go" class="btn-primary">Load</button>
       </div>
+      <div class="stg-recent hidden" id="clockin-recent"></div>
     </div>
 
     <div id="clockin-steps" class="steps hidden">
@@ -991,8 +1014,8 @@
     <!-- Look up a player — same input bar + recent chips as the rest of the tools -->
     <div class="stg-idbar">
       <div class="stg-idbar-row">
-        <input type="text" id="wm-username" placeholder="In-game username" autocomplete="off" spellcheck="false" />
-        <button id="wm-submit" class="btn-primary">Look up</button>
+        <input type="text" id="wm-username" placeholder="Your War Era username" autocomplete="off" spellcheck="false" />
+        <button id="wm-submit" class="btn-primary">Load</button>
       </div>
       <div class="stg-recent hidden" id="wm-recent"></div>
     </div>
@@ -1105,7 +1128,7 @@
 
     <div class="stg-idbar">
       <div class="stg-idbar-row">
-        <input type="text" id="dp-username" placeholder="In-game username" autocomplete="off" spellcheck="false" />
+        <input type="text" id="dp-username" placeholder="Your War Era username" autocomplete="off" spellcheck="false" />
         <button id="dp-submit" class="btn-primary">Load</button>
       </div>
       <div class="stg-recent hidden" id="dp-recent"></div>
@@ -1237,7 +1260,7 @@
 
     <div class="stg-idbar">
       <div class="stg-idbar-row">
-        <input type="text" id="dpd-username" placeholder="In-game username" autocomplete="off" spellcheck="false" />
+        <input type="text" id="dpd-username" placeholder="Your War Era username" autocomplete="off" spellcheck="false" />
         <button id="dpd-submit" class="btn-primary">Load</button>
       </div>
       <div class="stg-recent hidden" id="dpd-recent"></div>
@@ -1308,11 +1331,13 @@
           <p>Your War Era at a glance — wealth &amp; military unit. Each card links to the full tool.</p>
         </div>
       </div>
-      <div class="dash-idbar">
-        <input id="dash-username" type="text" placeholder="Your War Era username" autocomplete="off" spellcheck="false" />
-        <button id="dash-load" class="btn-primary">Load</button>
+      <div class="stg-idbar">
+        <div class="stg-idbar-row">
+          <input id="dash-username" type="text" placeholder="Your War Era username" autocomplete="off" spellcheck="false" />
+          <button id="dash-load" class="btn-primary">Load</button>
+        </div>
+        <div class="stg-recent hidden" id="dash-recent"></div>
       </div>
-      <div class="stg-recent hidden" id="dash-recent"></div>
       <div id="dash-status" class="status hidden"></div>
       <div id="dash-grid" class="dash-grid"></div>
       <button type="button" id="dash-reset-order" class="dash-reset-order hidden">Reset card order</button>
@@ -1460,11 +1485,11 @@
 <script src="js/profit-core.js?v=20260906c"></script>
 <script src="js/mu.js?v=20261030"></script>
 <script src="js/manager-core.js?v=20261031d"></script>
-<script src="js/buddy-finder.js?v=20261031g"></script>
-<script src="js/advisor.js?v=20261030"></script>
-<script src="js/clockin.js?v=20261030"></script>
+<script src="js/buddy-finder.js?v=20261103"></script>
+<script src="js/advisor.js?v=20261103"></script>
+<script src="js/clockin.js?v=20261103"></script>
 <script src="js/wealth.js?v=20261103g"></script>
-<script src="js/product-picker.js?v=20261103b"></script>
+<script src="js/product-picker.js?v=20261103c"></script>
 <script src="js/employee-core.js?v=20261103c"></script>
 <script src="js/employee-planner.js?v=20261103b"></script>
 <script src="js/employee-assignments.js?v=20261103b"></script>
@@ -1482,8 +1507,8 @@
 <script src="js/no-resets-table.js?v=20260906c"></script>
 <script src="js/sp-advisor-core.js?v=20260906c"></script>
 <script src="js/sp-advisor.js?v=20261030"></script>
-<script src="js/softcap.js?v=20261026"></script>
-<script src="js/toolkit.js?v=20261103g"></script>
+<script src="js/softcap.js?v=20261103"></script>
+<script src="js/toolkit.js?v=20261103h"></script>
 <script src="js/router.js?v=20261103"></script>
 </body>
 </html>

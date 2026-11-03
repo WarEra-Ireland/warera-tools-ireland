@@ -1969,10 +1969,6 @@ table.dp-table th.dp-sortable .dp-sort-arrow { margin-left: 3px; opacity: .7; }
  * ═══════════════════════════════════════════════════════════════════ */
 .dash { margin: 0 auto; padding: 10px 0 40px; }
 .dash .tool-header { margin-bottom: 22px; }
-.dash-idbar { display: flex; gap: 8px; flex-wrap: wrap; margin: 6px 0 14px; max-width: 620px; }
-/* Recent chips sit between the input and the cards — give them clear space below. */
-#dash-recent { margin: 0 0 20px; }
-.dash-idbar input[type="text"] { flex: 1 1 240px; min-width: 200px; }
 
 .dash-loading, .dash-skel { color: var(--muted); font-size: 13px; display: flex; align-items: center; gap: 8px; }
 .dash-loading { padding: 40px 0; justify-content: center; }

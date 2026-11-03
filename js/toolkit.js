@@ -89,18 +89,9 @@ const ToolkitShell = (() => {
     const t = [];
     // Every tool's own header is replaced by the shell's unified info box.
     t.push(v.el.querySelector('.tool-header'));
-    if (tool === 'wealth' || tool === 'profit') {
-      // Shell provides the username field, so also hide the tool's own
-      // lookup bar (input + recent chips). The shared name drives it.
-      t.push(v.el.querySelector('.stg-idbar'));
-    }
-    if (tool === 'buddy-finder') {
-      const inp  = v.el.querySelector('#bf-match-username');
-      const row  = inp && inp.closest('.bf-input-row');
-      const card = inp && inp.closest('.bf-card');
-      t.push(row);
-      if (card) t.push(card.querySelector('.bf-card-sub'));
-    }
+    // Shell provides the username field, so also hide the tool's own
+    // lookup bar (input + recent chips). The shared name drives it.
+    t.push(v.el.querySelector('.stg-idbar'));
     return t.filter(Boolean);
   }
   function setHidden(tool, on) {

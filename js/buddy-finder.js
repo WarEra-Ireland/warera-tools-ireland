@@ -216,6 +216,7 @@ const BuddyFinderTool = (() => {
       rosterStore = { roster, me, mine };
       renderRoster();
       rememberLoadedAccount(me.username);
+      RecentPlayers.remember(me.username);
     } catch (e) {
       if (version !== loadVersion) return;
       steps.markActiveAsError(e.message);
@@ -226,6 +227,7 @@ const BuddyFinderTool = (() => {
   /* ── Wire-up ────────────────────────────────────────────── */
   $mBtn.addEventListener('click', handleMatchSubmit);
   $mInput.addEventListener('keydown', e => { if (e.key === 'Enter') handleMatchSubmit(); });
+  RecentPlayers.mount(document.getElementById('bf-recent'), u => { $mInput.value = u; handleMatchSubmit(); });
   $mInput.addEventListener('input', () => {
     loadVersion++;
     steps.hide();

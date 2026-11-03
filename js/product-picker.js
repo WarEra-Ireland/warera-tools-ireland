@@ -773,6 +773,7 @@ const ProductPickerTool = (() => {
       sort = { key: 'totalWithoutSelf', dir: -1 };
       companySort = { key: 'company', dir: 1 };
       rememberLoadedAccount(model.username);
+      RecentPlayers.remember(model.username);
       steps.fadeOut(400);
       render();
     } catch (e) {
@@ -787,6 +788,7 @@ const ProductPickerTool = (() => {
 
   $go.addEventListener('click', run);
   $username.addEventListener('keydown', e => { if (e.key === 'Enter') run(); });
+  RecentPlayers.mount(document.getElementById('pp-recent'), u => { $username.value = u; run(); });
 
   return {
     ITEMS, tradePrices, margin, loadModel, productRows, companyPlan, incomeSummary, selfWorkProjection,

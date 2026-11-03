@@ -230,6 +230,7 @@ const ClockInTool = (() => {
     try {
       await analyse(u);
       rememberLoadedAccount(state?.ownerUsername);
+      RecentPlayers.remember(state?.ownerUsername);
       // If the resolved name differs in case, rewrite the hash with the
       // canonical form so refresh-by-URL stays stable. Same param-preserving
       // pattern as above.
@@ -252,6 +253,7 @@ const ClockInTool = (() => {
 
   $run.addEventListener('click', run);
   $username.addEventListener('keydown', e => { if (e.key === 'Enter') run(); });
+  RecentPlayers.mount(document.getElementById('clockin-recent'), u => { $username.value = u; run(); });
   $filterIdle.addEventListener('change', () => state && render());
   $sortRecent.addEventListener('change', () => state && render());
   $sortIdle.addEventListener('change',   () => state && render());

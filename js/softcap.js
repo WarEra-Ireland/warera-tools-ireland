@@ -731,6 +731,7 @@ const GearSoftcapTool = (() => {
     try {
       lastResult = await analyse(username);
       rememberLoadedAccount(lastResult.username);
+      RecentPlayers.remember(lastResult.username);
       steps.fadeOut(400);
       render();
     } catch (e) {
@@ -762,6 +763,7 @@ const GearSoftcapTool = (() => {
 
   $go.addEventListener('click', run);
   $username.addEventListener('keydown', e => { if (e.key === 'Enter') run(); });
+  RecentPlayers.mount(document.getElementById('sc-recent'), u => { $username.value = u; run(); });
 
   return {
     /**

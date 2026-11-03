@@ -430,6 +430,7 @@ const AdvisorTool = (() => {
     try {
       lastResult = await analyse(username);
       rememberLoadedAccount(lastResult.username);
+      RecentPlayers.remember(lastResult.username);
       steps.fadeOut(400);
       render();
     } catch (e) {
@@ -445,6 +446,7 @@ const AdvisorTool = (() => {
 
   $go.addEventListener('click', run);
   $username.addEventListener('keydown', e => { if (e.key === 'Enter') run(); });
+  RecentPlayers.mount(document.getElementById('adv-recent'), u => { $username.value = u; run(); });
 
   $grid.addEventListener('click', e => {
     if (e.target.closest('details, summary, button, a')) return;
