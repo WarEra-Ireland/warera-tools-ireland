@@ -155,10 +155,11 @@ const EmployeeTrainingTool = (() => {
 
   /* ── Market: product margins over the PP value ───────────── */
   async function loadMarket() {
-    const [ppValue, config, country] = await Promise.all([
+    const [ppValue, config, country, gameValues] = await Promise.all([
       trpc('gameStat.getPpMoneyValue', null, { retry: true, fresh: true }),
       trpc('gameConfig.getGameConfig', {}, { retry: true, fresh: true }),
       trpc('country.getCountryById', { countryId: IRELAND }, { retry: true, fresh: true }).catch(() => null),
+      trpc('gameStat.getPpMoneyValueByItem', null, { retry: true, fresh: true }).catch(() => null),
     ]);
     const items = config?.items || {};
     const codes = Object.keys(items).filter(c => items[c]?.productionPoints);
@@ -188,7 +189,9 @@ const EmployeeTrainingTool = (() => {
     }).sort((a, b) => b.ratio - a.ratio);
     const types = Object.fromEntries(codes.map(c => [c, items[c].type]));
     const rarity = Object.fromEntries(codes.map(c => [c, items[c].rarity]));
-    return { ppValue: ppValue > 0 ? ppValue : null, list, types, rarity, engineLevels: config?.upgradesConfig?.automatedEngine?.levels || {} };
+    // The game's own prices, only for the "Game:" line that repeats its card profit.
+    const gameMargin = gameValues && ppValue > 0 ? EC.gameMargins(items, gameValues, ppValue) : {};
+    return { ppValue: ppValue > 0 ? ppValue : null, list, types, rarity, gameMargin, engineLevels: config?.upgradesConfig?.automatedEngine?.levels || {} };
   }
   let marketPending = false;
   function refreshMarket() {
@@ -707,14 +710,13 @@ const EmployeeTrainingTool = (() => {
     return `<div class="tr-gc-note">Wage /h: ${wage(emp.wage)} → ${wage(after)}</div>`;
   }
 
-  // The card's daily profit as the game shows it (today, not career-averaged),
-  // or '' when the game shows none or prices haven't loaded.
+  // The card's daily profit as the game shows it (today, at the game's own
+  // prices), or '' when the game shows none or its prices haven't loaded.
   function gameDailyText(c) {
-    const ppMoney = market?.ppValue > 0 ? context().sellRatio * market.ppValue : null;
     const wage = findEmployee(input.pick)?.emp?.wage;
-    const v = EC.gameDailyProfit({ ...employee(), ...(Number.isFinite(wage) ? { wage } : {}) }, c, context(), ppMoney);
+    const v = EC.gameDailyProfit({ ...employee(), ...(Number.isFinite(wage) ? { wage } : {}) }, c, context(), market?.gameMargin?.[input.product], market?.ppValue);
     if (v == null) return '';
-    return `<div class="tr-gc-note" title="The daily profit the game shows on this card: today's extra output at the market price, minus the wage change, over 24 hours. It leaves out specialization growth, aging, coworkers and future trainings, which the value above includes.">Game: ${v < 0 ? '−' : '+'}₿${Math.abs(v).toLocaleString('en', { maximumFractionDigits: 3 })}/day today</div>`;
+    return `<div class="tr-gc-note" title="The daily profit the game shows on this card: today's extra output at the game's own price, with no market tax, minus the wage change, over 24 hours. The game's price is a slow average, so it can differ from the market price the value above uses. That value also counts specialization growth, aging, coworkers and future trainings.">Game: ${v < 0 ? '−' : '+'}₿${Math.abs(v).toLocaleString('en', { maximumFractionDigits: 3 })}/day today</div>`;
   }
 
   // A card value as average profit per day over the employee's working days, or

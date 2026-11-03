@@ -160,22 +160,45 @@ const EmployeeCore = (() => {
   }
 
   // The card's daily profit as the game shows it: today's change in output
-  // at the market price, minus today's change in wage, over 24 hours, in
+  // at the game's price, minus today's change in wage, over 24 hours, in
   // money. Not averaged over the career, so specialization growth, aging,
-  // coworkers and future trainings are left out. `ppMoney` is the money one
-  // PP of this product sells for; e.wage, when known, is the wage per hour in
-  // money. null for a card whose outcome is random or a trait, or a
-  // Negotiation the game would not offer.
-  function gameDailyProfit(e, c, ctx, ppMoney) {
+  // coworkers and future trainings are left out. `margin` is the game's money
+  // per PP of this product (gameMargins); e.wage, when known, is the wage per
+  // hour in money, otherwise it is worked out from `ppValue`. null for a card
+  // whose outcome is random or a trait, or a Negotiation the game would not offer.
+  function gameDailyProfit(e, c, ctx, margin, ppValue) {
     e = { ...DEFAULT_EMPLOYEE, ...e };
-    if (!(ppMoney > 0) || !['drill', 'negotiation', 'secondWind'].includes(c.card)) return null;
+    if (!(margin > 0) || !['drill', 'negotiation', 'secondWind'].includes(c.card)) return null;
+    if (!Number.isFinite(e.wage) && !(ppValue > 0)) return null;
     if (c.card === 'negotiation' && !canNegotiate(e, c)) return null;
     let output = 0;   // PP per hour
     if (c.card === 'drill' && c.stat === 'production') output = c.delta / CFG.outputDivisor * (1 + e.bonus);
     if (c.card === 'drill' && c.stat === 'responsibility') output = pph(e) * happyGain(CFG.respHappiness * c.delta, e.happiness) * 0.01;
     const next = cardOutcomes(e, c, ctx)[0]?.employee || e;
-    const wage = x => Number.isFinite(e.wage) ? x.wage : paidPph(x) * x.wageExpectation * ppMoney / (ctx?.sellRatio || 1);
-    return 24 * (output * ppMoney - (wage(next) - wage(e)));
+    const wage = x => Number.isFinite(e.wage) ? x.wage : paidPph(x) * x.wageExpectation * ppValue;
+    return 24 * (output * margin - (wage(next) - wage(e)));
+  }
+
+  // The game's own money per PP of each product, as its UI prices profit:
+  // `values` (gameStat.getPpMoneyValueByItem) is money per embodied PP, so a
+  // unit is worth value × (its PP plus its inputs' PP), less what its inputs
+  // are worth. No market tax. An item without a value takes `ppValue`
+  // (gameStat.getPpMoneyValue); a product with an input that has none counts
+  // no input cost. { code: money per PP }.
+  function gameMargins(items, values, ppValue) {
+    const valueOf = code => values?.[code] > 0 ? values[code] : ppValue;
+    const embodied = {};
+    const pp = code => embodied[code] ??= (items[code]?.productionPoints || 0)
+      + Object.entries(items[code]?.productionNeeds || {}).reduce((sum, [need, n]) => sum + n * pp(need), 0);
+    const out = {};
+    for (const [code, it] of Object.entries(items)) {
+      if (!(it?.productionPoints > 0)) continue;
+      const needs = Object.entries(it.productionNeeds || {});
+      if (needs.some(([need]) => !(values?.[need] > 0))) { out[code] = valueOf(code); continue; }
+      const inputs = needs.reduce((sum, [need, n]) => sum + n * valueOf(need) * pp(need), 0);
+      out[code] = (valueOf(code) * pp(code) - inputs) / it.productionPoints;
+    }
+    return out;
   }
 
   // Value of a card over the employee's remaining working life. `memo`
@@ -1411,7 +1434,7 @@ const EmployeeCore = (() => {
   return {
     toolboxRate, CFG, RARITIES, NUMERIC_CARDS, PROD_TRAIT_CARDS, TRAIT_CARDS, DEFAULT_EMPLOYEE, DEFAULT_CONTEXT, LADDER_FLAGS,
     TRAITS, TRAIT, DEFAULT_SITUATION, HABIT_POLARITY, EXCLUSIVE, currentTraits, ownTraitProduction, paidProduction,
-    cardPool, cardOutcomes, gameDailyProfit, wildCardOutcomes, secondWindValue, energyOn, expectedMax, trainingOutlook, rolledTraitValue, futureLuckValue,
+    cardPool, cardOutcomes, gameDailyProfit, gameMargins, wildCardOutcomes, secondWindValue, energyOn, expectedMax, trainingOutlook, rolledTraitValue, futureLuckValue,
     potentialValue, candidateValue, freshSetValue, freshSetWarm,
     comparisonProduction, productionStanding, peerProduction, nationalitySituation, locationSituation, eligibleTraits, wildCardRisk, canNegotiate, traitValue, traitChart, traitUnit,
     drill, neg, wind, cardValue, rankTier, rankHand, rarityOdds, ladder,
