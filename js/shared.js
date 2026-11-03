@@ -122,6 +122,76 @@ function escapeHtml(s) {
   return String(s ?? '').replace(/[&<>"']/g, c =>
     ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
+/*
+ *  Recently loaded players, shared by every tool with a username box.
+ *  One list in localStorage, most recent first, deduped case-insensitively.
+ *  Tools call remember() only with a verified, canonical username, so typos
+ *  never land here. Every mounted chip row re-renders when the list changes,
+ *  in this tab or another. Storage failures degrade to "no chips".
+ */
+const RecentPlayers = (() => {
+  const KEY = 'warera:recent-players';
+  const MAX = 8;
+  // Per-tool lists from before the list was shared; merged once, then dropped.
+  const LEGACY = ['stg', 'dash', 'wm', 'dp', 'dpd', 'tr'].map(p => `${p}:recent-usernames`);
+  const mounts = new Set();
+
+  const parse = raw => {
+    try { const a = JSON.parse(raw || '[]'); return Array.isArray(a) ? a.filter(x => typeof x === 'string' && x.trim()) : []; }
+    catch { return []; }
+  };
+  const dedupe = list => {
+    const seen = new Set();
+    return list.filter(u => { const k = u.toLowerCase(); if (seen.has(k)) return false; seen.add(k); return true; });
+  };
+  function write(list) {
+    try { localStorage.setItem(KEY, JSON.stringify(list.slice(0, MAX))); } catch { /* storage off */ }
+  }
+  function read() {
+    try {
+      const raw = localStorage.getItem(KEY);
+      if (raw != null) return parse(raw);
+      const merged = dedupe(LEGACY.flatMap(k => parse(localStorage.getItem(k)))).slice(0, MAX);
+      write(merged);
+      LEGACY.forEach(k => localStorage.removeItem(k));
+      return merged;
+    } catch { return []; }
+  }
+  function render(el) {
+    const list = read();
+    el.classList.toggle('hidden', !list.length);
+    el.innerHTML = list.length ? '<span class="stg-recent-label">Recent:</span>' + list.map(u => {
+      const s = escapeHtml(u);
+      return `<span class="stg-recent-chip"><button type="button" class="stg-recent-pick" data-recent-pick="${s}">${s}</button><button type="button" class="stg-recent-del" data-recent-del="${s}" aria-label="Remove ${s} from recent players" title="Remove">×</button></span>`;
+    }).join('') : '';
+  }
+  const refresh = () => mounts.forEach(render);
+  function remember(name) {
+    const u = (name || '').trim();
+    if (!u) return;
+    write([u, ...read().filter(x => x.toLowerCase() !== u.toLowerCase())]);
+    refresh();
+  }
+  function forget(name) {
+    write(read().filter(x => x.toLowerCase() !== name.toLowerCase()));
+    refresh();
+  }
+  /** Render the chips into el and keep them current; onPick(username) loads one. */
+  function mount(el, onPick) {
+    if (!el || mounts.has(el)) return;
+    mounts.add(el);
+    el.addEventListener('click', e => {
+      const del = e.target.closest('[data-recent-del]');
+      if (del) { forget(del.dataset.recentDel); return; }
+      const pick = e.target.closest('[data-recent-pick]');
+      if (pick) onPick(pick.dataset.recentPick);
+    });
+    render(el);
+  }
+  window.addEventListener('storage', e => { if (e.key === KEY || e.key === null) refresh(); });
+  return { remember, forget, mount, refresh };
+})();
+
 function fmtNum(v) {
   if (v == null) return null;
   if (typeof v === 'number') return v.toLocaleString(undefined, {maximumFractionDigits: 0});

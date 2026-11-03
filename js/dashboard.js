@@ -79,30 +79,6 @@ const DashboardTool = (() => {
     $status.classList.remove('hidden');
   }
 
-  /* ── Recent usernames (localStorage, last 5) ──
-   *  Saved only on a successful, verified resolution (canonical casing), so
-   *  typos never land in the list. Mirrors the other tools' recent chips. */
-  const RECENT_KEY = 'dash:recent-usernames';
-  const RECENT_MAX = 5;
-  const readRecent  = () => { try { const a = JSON.parse(localStorage.getItem(RECENT_KEY) || '[]'); return Array.isArray(a) ? a.filter(x => typeof x === 'string') : []; } catch { return []; } };
-  const writeRecent = (l) => { try { localStorage.setItem(RECENT_KEY, JSON.stringify(l.slice(0, RECENT_MAX))); } catch { /* storage off */ } };
-  function rememberUsername(u) {
-    u = (u || '').trim(); if (!u) return;
-    const l = readRecent().filter(x => x.toLowerCase() !== u.toLowerCase());
-    l.unshift(u); writeRecent(l); renderRecent();
-  }
-  function forgetUsername(n) { writeRecent(readRecent().filter(x => x.toLowerCase() !== n.toLowerCase())); renderRecent(); }
-  function renderRecent() {
-    if (!$recent) return;
-    const l = readRecent();
-    if (!l.length) { $recent.innerHTML = ''; $recent.classList.add('hidden'); return; }
-    $recent.classList.remove('hidden');
-    $recent.innerHTML = `<span class="stg-recent-label">Recent:</span>` + l.map(u => {
-      const s = escapeHtml(u);
-      return `<span class="stg-recent-chip"><button class="stg-recent-pick" data-dash-recent="${s}">${s}</button><button class="stg-recent-del" data-dash-recent-del="${s}" title="Remove">×</button></span>`;
-    }).join('');
-  }
-
   const fmtK = (v, dp = 1) => {
     if (v == null || !isFinite(v)) return '–';
     if (Math.abs(v) >= 1_000_000) return (v / 1_000_000).toFixed(dp) + 'M';
@@ -954,7 +930,7 @@ const DashboardTool = (() => {
       if (!full) throw new Error(`Couldn't load profile for ${lite.username}.`);
 
       try { writeHash('dashboard', new URLSearchParams({ u: full.username })); } catch {}
-      rememberUsername(full.username);   // verified canonical name → recent chips
+      RecentPlayers.remember(full.username);   // verified canonical name → recent chips
       renderScaffold(full.username);
       rememberLoadedAccount(full.username);
 
@@ -995,17 +971,11 @@ const DashboardTool = (() => {
     withFlip(() => arrange(colsOf().length));
     syncResetOrder();
   });
-  if ($recent) $recent.addEventListener('click', e => {
-    const del = e.target.closest('[data-dash-recent-del]');
-    if (del) { forgetUsername(del.dataset.dashRecentDel); return; }
-    const pick = e.target.closest('[data-dash-recent]');
-    if (pick) { $username.value = pick.dataset.dashRecent; run(); }
-  });
+  RecentPlayers.mount($recent, u => { $username.value = u; run(); });
 
   return {
     activate(params) {
       mounted = true;
-      renderRecent();
       const u = (params && params.get && params.get('u')) || new URLSearchParams(location.search).get('u');
       if (u && $username.value.toLowerCase() !== u.toLowerCase()) { $username.value = u; run(); }
       else if (!u && !$username.value) $username.focus();

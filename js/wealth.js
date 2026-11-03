@@ -32,8 +32,6 @@ const WealthMonitorTool = (() => {
   ];
   const TOTAL_COLOR = '#4ade80';
 
-  const RECENT_KEY = 'wm:recent-usernames';
-  const RECENT_MAX = 8;
 
   // DOM
   const $username  = document.getElementById('wm-username');
@@ -102,39 +100,6 @@ const WealthMonitorTool = (() => {
   }
 
 
-  // ── Recent usernames (localStorage) — mirrors the toolkit shell ─
-  function readRecent() {
-    try { const a = JSON.parse(localStorage.getItem(RECENT_KEY) || '[]'); return Array.isArray(a) ? a.filter(x => typeof x === 'string') : []; }
-    catch { return []; }
-  }
-  function writeRecent(list) {
-    try { localStorage.setItem(RECENT_KEY, JSON.stringify(list.slice(0, RECENT_MAX))); } catch { /* storage off */ }
-  }
-  function rememberUsername(u) {
-    const list = readRecent().filter(x => x.toLowerCase() !== u.toLowerCase());
-    list.unshift(u);
-    writeRecent(list);
-    renderRecent();
-  }
-  function forgetUsername(name) {
-    writeRecent(readRecent().filter(x => x.toLowerCase() !== name.toLowerCase()));
-    renderRecent();
-  }
-  function renderRecent() {
-    const list = readRecent();
-    if (!list.length) { $recent.innerHTML = ''; $recent.classList.add('hidden'); return; }
-    $recent.classList.remove('hidden');
-    $recent.innerHTML =
-      `<span class="stg-recent-label">Recent:</span>` +
-      list.map(u => {
-        const safe = escapeHtml(u);
-        return `<span class="stg-recent-chip">
-          <button class="stg-recent-pick" data-wm-recent="${safe}">${safe}</button>
-          <button class="stg-recent-del" data-wm-recent-del="${safe}" title="Remove">×</button>
-        </span>`;
-      }).join('');
-  }
-
   // ── Look-up flow ────────────────────────────────────────────────
   async function handleSubmit() {
     const raw = $username.value.trim();
@@ -170,7 +135,7 @@ const WealthMonitorTool = (() => {
       // The hash rewrite (same shape as the other tools) is what the home
       // shell's hash guard folds back into #home?u=…&tool=wealth.
       try { writeHash('wealth', new URLSearchParams({ u: user.username })); } catch {}
-      rememberUsername(user.username);
+      RecentPlayers.remember(user.username);
 
       steps.setStep(2, 'active', { sub: 'Fetching wealth & history' });
       const live = await fetchCurrentWealth(user._id);
@@ -600,12 +565,7 @@ const WealthMonitorTool = (() => {
   // ── Control wiring ──────────────────────────────────────────────
   $submit.addEventListener('click', handleSubmit);
   $username.addEventListener('keydown', e => { if (e.key === 'Enter') handleSubmit(); });
-  $recent.addEventListener('click', e => {
-    const del = e.target.closest('[data-wm-recent-del]');
-    if (del) { forgetUsername(del.dataset.wmRecentDel); return; }
-    const pick = e.target.closest('[data-wm-recent]');
-    if (pick) { $username.value = pick.dataset.wmRecent; handleSubmit(); }
-  });
+  RecentPlayers.mount($recent, u => { $username.value = u; handleSubmit(); });
   $metricSeg.addEventListener('click', e => {
     const b = e.target.closest('button'); if (!b) return;
     chart.metric = b.dataset.metric;
@@ -661,8 +621,6 @@ const WealthMonitorTool = (() => {
      * @param {URLSearchParams} [params]
      */
     activate(params) {
-      renderRecent();
-
       const u = (params && params.get && params.get('u'))
              || new URLSearchParams(location.search).get('u');
       if (u && $username.value.toLowerCase() !== u.toLowerCase()) { $username.value = u; handleSubmit(); }

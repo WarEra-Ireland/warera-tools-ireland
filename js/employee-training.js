@@ -37,8 +37,6 @@ const EmployeeTrainingTool = (() => {
   const statShown = (k, n) => k === 'responsibility' ? respHappiness(n) : n;
   const statGainText = (k, n) => k === 'responsibility' ? `+${respHappiness(n)} happiness` : `+${n} ${STAT[k] || k}`;
   const RARITY_NAME = { common: 'Common', uncommon: 'Uncommon', rare: 'Rare', epic: 'Epic', legendary: 'Legendary' };
-  const RECENT_KEY = 'tr:recent-usernames';
-  const RECENT_MAX = 8;
   const IRELAND = IRELAND_COUNTRY_ID;
   const PRICE_SAMPLE_TRADES = 100;
   const PRICE_MAX_AGE_MS = 24 * 3600 * 1000;
@@ -154,21 +152,6 @@ const EmployeeTrainingTool = (() => {
   // Cards marked as taken since the last load: employee id → { text, rolled }.
   // A recorded choice invalidates advice until the next server snapshot.
   const taken = new Map();
-
-  const readRecent = () => { try { const a = JSON.parse(localStorage.getItem(RECENT_KEY) || '[]'); return Array.isArray(a) ? a.filter(x => typeof x === 'string') : []; } catch { return []; } };
-  const writeRecent = list => { try { localStorage.setItem(RECENT_KEY, JSON.stringify(list.slice(0, RECENT_MAX))); } catch {} };
-  function rememberUsername(username) {
-    writeRecent([username, ...readRecent().filter(x => x.toLowerCase() !== username.toLowerCase())]);
-    renderRecent();
-  }
-  function renderRecent() {
-    const list = readRecent();
-    $recent.classList.toggle('hidden', !list.length);
-    $recent.innerHTML = list.length ? '<span class="stg-recent-label">Recent:</span>' + list.map(username => {
-      const s = escapeHtml(username);
-      return `<span class="stg-recent-chip"><button type="button" class="stg-recent-pick" data-tr-recent="${s}">${s}</button><button type="button" class="stg-recent-del" data-tr-recent-del="${s}" aria-label="Remove ${s} from recent users" title="Remove">×</button></span>`;
-    }).join('') : '';
-  }
 
   /* ── Market: product margins over the PP value ───────────── */
   async function loadMarket() {
@@ -2364,7 +2347,7 @@ const EmployeeTrainingTool = (() => {
       saveRecruit();
       setStatus('');
       $username.value = team.username;
-      rememberUsername(team.username);
+      RecentPlayers.remember(team.username);
       rememberLoadedAccount(team.username);
       renderTeam();
       renderRecruitForm();
@@ -2680,7 +2663,6 @@ const EmployeeTrainingTool = (() => {
 
   function mount() {
     wireHelp();
-    renderRecent();
     assignments = EmployeeAssignments.mount(document.getElementById('tr-assignments-body'), {
       getTeam: () => taken.size ? null : team, getMarket: () => market, productName, productIcon,
       companyName: id => { const x = team?.companies.find(c => c.company._id === id); return x ? companyName(x.company) : null; },
@@ -2689,16 +2671,7 @@ const EmployeeTrainingTool = (() => {
     });
     $load.addEventListener('click', () => runLoad($username.value));
     $username.addEventListener('keydown', ev => { if (ev.key === 'Enter') runLoad($username.value); });
-    $recent.addEventListener('click', ev => {
-      const del = ev.target.closest('[data-tr-recent-del]');
-      if (del) {
-        writeRecent(readRecent().filter(x => x.toLowerCase() !== del.dataset.trRecentDel.toLowerCase()));
-        renderRecent();
-        return;
-      }
-      const pick = ev.target.closest('[data-tr-recent]');
-      if (pick && !busy) { $username.value = pick.dataset.trRecent; runLoad(pick.dataset.trRecent); }
-    });
+    RecentPlayers.mount($recent, u => { if (!busy) { $username.value = u; runLoad(u); } });
     // Buttons anywhere in the tabs: Train opens an employee's Train tab,
     // a side roster row switches employee, and I took this applies a card.
     $shell.addEventListener('click', ev => {

@@ -10,8 +10,6 @@ const DailyProfitDevTool = (() => {
   // Works/day per energy point: 10%/hr recovery × 24h ÷ 10 energy-per-work = 0.24.
   // Verified against the sheet: Pintman 31×100×0.24×1.10(fid) = 818.4 PP/day.
   const WORK_FACTOR = 0.24;
-  const RECENT_KEY = 'dpd:recent-usernames';
-  const RECENT_MAX = 8;
   // "Profitable worker" column: total base PP a generic day-1 worker generates
   // (70 energy, 34 production skill → 16.8 shifts/day × 34 = 571.2 PP), per
   // R00ted's spec. Used to test whether hiring a fresh worker at the lowest
@@ -177,21 +175,6 @@ const DailyProfitDevTool = (() => {
     return { total, count };
   }
 
-  // ── Recent chips (mirrors the shell) ────────────────────────────
-  const readRecent = () => { try { const a = JSON.parse(localStorage.getItem(RECENT_KEY) || '[]'); return Array.isArray(a) ? a.filter(x => typeof x === 'string') : []; } catch { return []; } };
-  const writeRecent = (l) => { try { localStorage.setItem(RECENT_KEY, JSON.stringify(l.slice(0, RECENT_MAX))); } catch {} };
-  function rememberUsername(u) { const l = readRecent().filter(x => x.toLowerCase() !== u.toLowerCase()); l.unshift(u); writeRecent(l); renderRecent(); }
-  function forgetUsername(n) { writeRecent(readRecent().filter(x => x.toLowerCase() !== n.toLowerCase())); renderRecent(); }
-  function renderRecent() {
-    const l = readRecent();
-    if (!l.length) { $recent.innerHTML = ''; $recent.classList.add('hidden'); return; }
-    $recent.classList.remove('hidden');
-    $recent.innerHTML = `<span class="stg-recent-label">Recent:</span>` + l.map(u => {
-      const s = escapeHtml(u);
-      return `<span class="stg-recent-chip"><button class="stg-recent-pick" data-dp-recent="${s}">${s}</button><button class="stg-recent-del" data-dp-recent-del="${s}" title="Remove">×</button></span>`;
-    }).join('');
-  }
-
   // ── Load + compute ──────────────────────────────────────────────
   async function handleSubmit() {
     const raw = $username.value.trim();
@@ -215,7 +198,7 @@ const DailyProfitDevTool = (() => {
       enforceIrishOnly(user.country ?? user.countryId, user.username);
       steps.setStep(1, 'done', { count: `→ ${user.username}` });
       try { writeHash('profit-dev', new URLSearchParams({ u: user.username })); } catch {}
-      rememberUsername(user.username);
+      RecentPlayers.remember(user.username);
 
       // Step 2: companies + workers
       steps.setStep(2, 'active', { sub: 'Fetching companies' });
@@ -972,16 +955,10 @@ const DailyProfitDevTool = (() => {
   // ── Wiring ──────────────────────────────────────────────────────
   $submit.addEventListener('click', handleSubmit);
   $username.addEventListener('keydown', e => { if (e.key === 'Enter') handleSubmit(); });
-  $recent.addEventListener('click', e => {
-    const del = e.target.closest('[data-dp-recent-del]');
-    if (del) { forgetUsername(del.dataset.dpRecentDel); return; }
-    const pick = e.target.closest('[data-dp-recent]');
-    if (pick) { $username.value = pick.dataset.dpRecent; handleSubmit(); }
-  });
+  RecentPlayers.mount($recent, u => { $username.value = u; handleSubmit(); });
 
   return {
     activate(params) {
-      renderRecent();
       const u = (params && params.get && params.get('u')) || new URLSearchParams(location.search).get('u');
       if (u && $username.value.toLowerCase() !== u.toLowerCase()) { $username.value = u; handleSubmit(); }
       else if (!u && !$username.value) $username.focus();

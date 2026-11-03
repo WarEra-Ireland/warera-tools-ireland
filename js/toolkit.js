@@ -19,7 +19,7 @@
  *       bulk endpoint into the shared trpc cache, so by the time a name
  *       is typed the heavy data is already loaded.
  *    2. Gated display. Nothing is shown until a username is entered.
- *    3. Recent usernames. Last 3 are kept in localStorage as quick-pick
+ *    3. Recent usernames. Kept by RecentPlayers (shared.js) as quick-pick
  *       chips, handy for long names. Saved only on SUCCESSFUL resolution
  *       (see the hash guard), so failed searches never pollute the list.
  *    4. URL sync. The address bar tracks the loaded user + active tool as
@@ -169,7 +169,7 @@ const ToolkitShell = (() => {
           const u = new URLSearchParams(q).get('u');
           if (u) {
             state.username = u;            // adopt the canonical casing
-            rememberUsername(u);
+            RecentPlayers.remember(u);
           }
           const params = new URLSearchParams();
           if (u) params.set('u', u);
@@ -253,51 +253,6 @@ const ToolkitShell = (() => {
     // MU + Buddy Finder share the Irish citizen list; MU also needs the MU list.
     walkPaginated('mu.getManyPaginated', {});
     walkPaginated('user.getUsersByCountry', { countryId: IRELAND_COUNTRY_ID });
-  }
-
-  /* ── Recent usernames (localStorage, last 3) ─────────────
-   *  Stored most-recent-first, deduped case-insensitively. Committed only
-   *  on a tool's successful resolution (via the hash guard), so failed
-   *  searches never land here. Best-effort: a disabled/full localStorage
-   *  degrades to "no chips". */
-  const RECENT_KEY = 'stg:recent-usernames';
-  const RECENT_MAX = 3;
-
-  function readRecent() {
-    try {
-      const arr = JSON.parse(localStorage.getItem(RECENT_KEY) || '[]');
-      return Array.isArray(arr) ? arr.filter(s => typeof s === 'string') : [];
-    } catch { return []; }
-  }
-  function writeRecent(list) {
-    try { localStorage.setItem(RECENT_KEY, JSON.stringify(list.slice(0, RECENT_MAX))); }
-    catch { /* storage unavailable: chips just won't persist */ }
-  }
-  function rememberUsername(name) {
-    const u = (name || '').trim();
-    if (!u) return;
-    const list = readRecent().filter(x => x.toLowerCase() !== u.toLowerCase());
-    list.unshift(u);
-    writeRecent(list);
-    renderRecent();
-  }
-  function forgetUsername(name) {
-    writeRecent(readRecent().filter(x => x.toLowerCase() !== name.toLowerCase()));
-    renderRecent();
-  }
-  function renderRecent() {
-    const list = readRecent();
-    if (!list.length) { $recent.innerHTML = ''; $recent.classList.add('hidden'); return; }
-    $recent.classList.remove('hidden');
-    $recent.innerHTML =
-      `<span class="stg-recent-label">Recent:</span>` +
-      list.map(u => {
-        const safe = escapeHtml(u);
-        return `<span class="stg-recent-chip">
-          <button class="stg-recent-pick" data-stg-recent="${safe}">${safe}</button>
-          <button class="stg-recent-del" data-stg-recent-del="${safe}" title="Remove">×</button>
-        </span>`;
-      }).join('');
   }
 
   /* ── Gate ───────────────────────────────────────────────── */
@@ -437,12 +392,7 @@ const ToolkitShell = (() => {
   window.addEventListener('resize', updateNavFade);
   $load.addEventListener('click', loadUsername);
   $username.addEventListener('keydown', e => { if (e.key === 'Enter') loadUsername(); });
-  $recent.addEventListener('click', e => {
-    const del = e.target.closest('[data-stg-recent-del]');
-    if (del) { forgetUsername(del.dataset.stgRecentDel); return; }
-    const pick = e.target.closest('[data-stg-recent]');
-    if (pick) { $username.value = pick.dataset.stgRecent; loadUsername(); }
-  });
+  RecentPlayers.mount($recent, u => { $username.value = u; loadUsername(); });
   // Landing preview: clicking a tool pre-selects it, then prompts for a name.
   $preview.addEventListener('click', e => {
     const card = e.target.closest('[data-prev]');
@@ -484,7 +434,6 @@ const ToolkitShell = (() => {
       installHashGuard();
       setTrpcCache(true, CACHE_OWNER);
       prefetch();
-      renderRecent();
       renderPreview();
 
       const tool = (params && TOOLS.includes(params.get('tool'))) ? params.get('tool') : null;

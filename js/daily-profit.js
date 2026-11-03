@@ -10,8 +10,6 @@
  * ═══════════════════════════════════════════════════════════════════ */
 const DailyProfitTool = (() => {
   const { WAGE_RANK_FROM_TOP, META, ICON_FILE, resolveUsername } = ProfitCore;
-  const RECENT_KEY = 'dp:recent-usernames';
-  const RECENT_MAX = 8;
   const netWageRate = () => ProfitCore.netWageRate(model);
 
   // Production-bonus model lives in shared.js (computeProductionBonus).
@@ -48,21 +46,6 @@ const DailyProfitTool = (() => {
   function showStatus(level, html) { $status.className = `bf-inline-status ${level}`; $status.innerHTML = html; $status.classList.remove('hidden'); }
   function hideStatus() { $status.classList.add('hidden'); $status.innerHTML = ''; }
 
-  // ── Recent chips (mirrors the shell) ────────────────────────────
-  const readRecent = () => { try { const a = JSON.parse(localStorage.getItem(RECENT_KEY) || '[]'); return Array.isArray(a) ? a.filter(x => typeof x === 'string') : []; } catch { return []; } };
-  const writeRecent = (l) => { try { localStorage.setItem(RECENT_KEY, JSON.stringify(l.slice(0, RECENT_MAX))); } catch {} };
-  function rememberUsername(u) { const l = readRecent().filter(x => x.toLowerCase() !== u.toLowerCase()); l.unshift(u); writeRecent(l); renderRecent(); }
-  function forgetUsername(n) { writeRecent(readRecent().filter(x => x.toLowerCase() !== n.toLowerCase())); renderRecent(); }
-  function renderRecent() {
-    const l = readRecent();
-    if (!l.length) { $recent.innerHTML = ''; $recent.classList.add('hidden'); return; }
-    $recent.classList.remove('hidden');
-    $recent.innerHTML = `<span class="stg-recent-label">Recent:</span>` + l.map(u => {
-      const s = escapeHtml(u);
-      return `<span class="stg-recent-chip"><button class="stg-recent-pick" data-dp-recent="${s}">${s}</button><button class="stg-recent-del" data-dp-recent-del="${s}" title="Remove">×</button></span>`;
-    }).join('');
-  }
-
   // ── Load + compute ──────────────────────────────────────────────
   async function handleSubmit() {
     const raw = $username.value.trim();
@@ -86,7 +69,7 @@ const DailyProfitTool = (() => {
       enforceIrishOnly(user.country ?? user.countryId, user.username);
       steps.setStep(1, 'done', { count: `→ ${user.username}` });
       try { writeHash('profit', new URLSearchParams({ u: user.username })); } catch {}
-      rememberUsername(user.username);
+      RecentPlayers.remember(user.username);
 
       // Steps 2–3: companies, workers, market and bonuses
       model = await ProfitCore.loadModel(user, { step: (n, state, info) => steps.setStep(n, state, info) });
@@ -565,16 +548,10 @@ const DailyProfitTool = (() => {
   // ── Wiring ──────────────────────────────────────────────────────
   $submit.addEventListener('click', handleSubmit);
   $username.addEventListener('keydown', e => { if (e.key === 'Enter') handleSubmit(); });
-  $recent.addEventListener('click', e => {
-    const del = e.target.closest('[data-dp-recent-del]');
-    if (del) { forgetUsername(del.dataset.dpRecentDel); return; }
-    const pick = e.target.closest('[data-dp-recent]');
-    if (pick) { $username.value = pick.dataset.dpRecent; handleSubmit(); }
-  });
+  RecentPlayers.mount($recent, u => { $username.value = u; handleSubmit(); });
 
   return {
     activate(params) {
-      renderRecent();
       const u = (params && params.get && params.get('u')) || new URLSearchParams(location.search).get('u');
       if (u && $username.value.toLowerCase() !== u.toLowerCase()) { $username.value = u; handleSubmit(); }
       else if (!u && !$username.value) $username.focus();
