@@ -430,7 +430,7 @@ const EmployeeTrainingTool = (() => {
     const hand = input.hand, emp = findEmployee(input.pick).emp;
     const reload = label => `<button type="button" class="tr-link" data-reload>${label}</button>`;
     const text = hand ? hand.missing && `${plural(hand.missing, 'card')} couldn't be read. ${reload('Reload')} to try again.`
-      : !doneToday(emp) && (emp.potentialMax || 0) > (emp.potential || 0) && `No hand yet. Draw one in the game, then ${reload('reload')}.`;
+      : !doneToday(emp) && (emp.potentialMax || 0) > (emp.potential || 0) && `No hand yet. Draw one in the game; it shows here when you come back to this page.`;
     return text ? `<p class="tr-calc-sub tr-dealt">${text}</p>` : '';
   }
 
@@ -3116,6 +3116,7 @@ const EmployeeTrainingTool = (() => {
       for (const t of taken.values()) clearTimeout(t.timer);
       taken.clear();
       confirmed = null;
+      lastSync = Date.now();
       // The plan first: card values wait for the tools it hands out, so
       // asking for them before it starts would price them twice.
       assignments?.refresh();
@@ -3283,18 +3284,72 @@ const EmployeeTrainingTool = (() => {
       if (input.pick === empId) renderResult();
       return;
     }
-    team = { ...team, companies: team.companies.map(x => x !== entry ? x : { ...x, estimate: estimate || null,
-      employees: roster.filter(e => !e.leftAt).map(e => ({ ...e, traits: EC.currentTraits(e.traits) })) }) };
+    applyRoster(entry, roster, estimate);
     taken.delete(empId);
     confirmed = { emp: empId, text: pickText(pick) };
     if (taken.size) { renderAfter(['picker', 'team']); return; }
+    refreshAdvice();
+  }
+
+  // A company's fresh roster and estimate in place of the loaded ones.
+  function applyRoster(entry, roster, estimate) {
+    team = { ...team, companies: team.companies.map(x => x !== entry ? x : { ...x, estimate: estimate || null,
+      employees: roster.filter(e => !e.leftAt).map(e => ({ ...e, traits: EC.currentTraits(e.traits) })) }) };
+  }
+  // Every part redrawn from the current team, the plan first.
+  function refreshAdvice() {
     assignments?.refresh();
     assignments?.run({ auto: true });
-    useEmployee(input.pick);
+    useEmployee(findEmployee(input.pick) ? input.pick : defaultPick());
     renderTeam();
     renderRecruitForm();
     renderFire();
     showTab(view.tab);
+  }
+
+  // --- Live sync: picks made in the game show without a reload ---
+  // The selected employee's company is read again when this page comes back
+  // into view or focus (pick in the game, switch back), when another
+  // employee is selected, and every minute while it stays in view. Each read
+  // is one roster and one estimate request; none while the page is hidden.
+  // Only a new hand, a pick, or a hire or departure redraws the page: wages
+  // and happiness drift between reads and would replan for nothing.
+  const SYNC_EVERY_MS = 60000, SYNC_GAP_MS = 4000;
+  let lastSync = 0, syncing = false;
+  const lastPickAt = emp => (emp.trainingHistory || []).reduce((a, h) => h.pickedAt > a ? h.pickedAt : a, '');
+  // Reroll picks aren't written to trainingHistory, so a changed hand counts too.
+  const handState = emp => JSON.stringify([emp.pendingTraining ?? null, lastPickAt(emp), emp.potential, emp.potentialMax]);
+  const pageShown = () => !document.hidden && !!$shell.offsetParent;
+
+  async function syncSelected() {
+    if (!team || busy || syncing || !pageShown() || Date.now() - lastSync < SYNC_GAP_MS) return;
+    const found = findEmployee(input.pick);
+    if (!found) return;
+    lastSync = Date.now();
+    // A card marked with I took this has its own check, which pauses advice.
+    if (taken.has(found.emp._id)) { confirmTaken(found.emp._id); return; }
+    if (taken.size) return;
+    const { emp: old, entry } = found, before = new Map(entry.employees.map(e => [e._id, handState(e)]));
+    let roster, estimate;
+    syncing = true;
+    try {
+      [roster, estimate] = await Promise.all([
+        trpc('employee.getCompanyEmployees', { companyId: entry.company._id }, { fresh: true }),
+        trpc('employee.getCompanyEstimate', { companyId: entry.company._id }, { fresh: true }).catch(() => entry.estimate),
+      ]);
+    } catch (err) { console.warn('[training] sync failed', err); return; }
+    finally { syncing = false; }
+    if (!Array.isArray(roster) || busy || taken.size || !team.companies.includes(entry)) return;   // reloaded meanwhile
+    const live = roster.filter(e => !e.leftAt);
+    if (live.length === before.size && live.every(e => before.get(e._id) === handState(e))) return;
+    const fresh = live.find(e => e._id === old._id);
+    const pick = fresh && newestPick(fresh, lastPickAt(old));
+    if (pick) confirmed = { emp: old._id, text: pickText(pick) };
+    else if (fresh?.pendingTraining?.offers?.length && JSON.stringify(fresh.pendingTraining) !== JSON.stringify(old.pendingTraining ?? null)) {
+      confirmed = { emp: old._id, text: old.pendingTraining?.offers?.length ? 'a new hand (Reroll)' : 'a new hand' };
+    } else if (confirmed?.emp === old._id) confirmed = null;
+    applyRoster(entry, roster, estimate);
+    refreshAdvice();
   }
   // The newest training history entry after `after`, or null.
   function newestPick(emp, after) {
@@ -3363,7 +3418,7 @@ const EmployeeTrainingTool = (() => {
   // Select an employee, from the picker or a button elsewhere on the page.
   function selectEmployee(id, tab = view.tab) {
     if (!findEmployee(id)) return;
-    if (id !== input.pick) useEmployee(id);
+    if (id !== input.pick) { useEmployee(id); syncSelected(); }
     showTab(tab, { reveal: true });
   }
   // From the side list: scroll the page to the top of the work area, where
@@ -3373,7 +3428,7 @@ const EmployeeTrainingTool = (() => {
   function selectFromSide(id) {
     if (!findEmployee(id)) return;
     const was = $side.querySelector(`[data-side-emp="${CSS.escape(id)}"]`)?.getBoundingClientRect().top;
-    if (id !== input.pick) useEmployee(id);
+    if (id !== input.pick) { useEmployee(id); syncSelected(); }
     showTab(view.tab);
     const top = parseFloat(getComputedStyle($side).top) || 0;
     window.scrollBy({ top: $work.getBoundingClientRect().top - top });
@@ -3579,7 +3634,10 @@ const EmployeeTrainingTool = (() => {
         if (team) runLoad(team.username);
       }
       updateEnergyTile();
+      if (Date.now() - lastSync >= SYNC_EVERY_MS) syncSelected();
     }, 1000);
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) syncSelected(); });
+    window.addEventListener('focus', () => syncSelected());
     mounted = true;
   }
 
