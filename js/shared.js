@@ -124,17 +124,19 @@ function escapeHtml(s) {
 }
 /*
  *  Recently loaded players, shared by every tool with a username box.
- *  One list in localStorage, most recent first, deduped case-insensitively.
- *  Tools call remember() only with a verified, canonical username, so typos
- *  never land here. Every mounted chip row re-renders when the list changes,
- *  in this tab or another. Storage failures degrade to "no chips".
+ *  One unbounded list in localStorage, most recent first, deduped
+ *  case-insensitively. Tools call remember() only with a verified, canonical
+ *  username, so typos never land here. Each chip row shows the first SHOWN
+ *  names behind a "+N more" toggle; Clear all appears once the whole list is
+ *  showing and asks for a second click. Every mounted row re-renders when the
+ *  list changes, in this tab or another. Storage failures degrade to no chips.
  */
 const RecentPlayers = (() => {
   const KEY = 'warera:recent-players';
-  const MAX = 8;
+  const SHOWN = 5;
   // Per-tool lists from before the list was shared; merged once, then dropped.
   const LEGACY = ['stg', 'dash', 'wm', 'dp', 'dpd', 'tr'].map(p => `${p}:recent-usernames`);
-  const mounts = new Set();
+  const mounts = new Map();   // chip row element → { expanded }
 
   const parse = raw => {
     try { const a = JSON.parse(raw || '[]'); return Array.isArray(a) ? a.filter(x => typeof x === 'string' && x.trim()) : []; }
@@ -145,13 +147,13 @@ const RecentPlayers = (() => {
     return list.filter(u => { const k = u.toLowerCase(); if (seen.has(k)) return false; seen.add(k); return true; });
   };
   function write(list) {
-    try { localStorage.setItem(KEY, JSON.stringify(list.slice(0, MAX))); } catch { /* storage off */ }
+    try { localStorage.setItem(KEY, JSON.stringify(list)); } catch { /* storage off */ }
   }
   function read() {
     try {
       const raw = localStorage.getItem(KEY);
       if (raw != null) return parse(raw);
-      const merged = dedupe(LEGACY.flatMap(k => parse(localStorage.getItem(k)))).slice(0, MAX);
+      const merged = dedupe(LEGACY.flatMap(k => parse(localStorage.getItem(k))));
       write(merged);
       LEGACY.forEach(k => localStorage.removeItem(k));
       return merged;
@@ -159,13 +161,21 @@ const RecentPlayers = (() => {
   }
   function render(el) {
     const list = read();
+    const state = mounts.get(el);
     el.classList.toggle('hidden', !list.length);
-    el.innerHTML = list.length ? '<span class="stg-recent-label">Recent:</span>' + list.map(u => {
+    if (!list.length) { el.innerHTML = ''; return; }
+    const hidden = state.expanded ? 0 : Math.max(0, list.length - SHOWN);
+    const chips = list.slice(0, list.length - hidden).map(u => {
       const s = escapeHtml(u);
       return `<span class="stg-recent-chip"><button type="button" class="stg-recent-pick" data-recent-pick="${s}">${s}</button><button type="button" class="stg-recent-del" data-recent-del="${s}" aria-label="Remove ${s} from recent players" title="Remove">×</button></span>`;
-    }).join('') : '';
+    }).join('');
+    const toggle = list.length > SHOWN
+      ? `<button type="button" class="stg-recent-more" data-recent-toggle aria-expanded="${state.expanded}">${hidden ? `+${hidden} more` : 'Show less'}</button>`
+      : '';
+    const clear = hidden ? '' : '<button type="button" class="stg-recent-clear" data-recent-clear>Clear all</button>';
+    el.innerHTML = '<span class="stg-recent-label">Recent:</span>' + chips + toggle + clear;
   }
-  const refresh = () => mounts.forEach(render);
+  const refresh = () => mounts.forEach((_, el) => render(el));
   function remember(name) {
     const u = (name || '').trim();
     if (!u) return;
@@ -176,20 +186,42 @@ const RecentPlayers = (() => {
     write(read().filter(x => x.toLowerCase() !== name.toLowerCase()));
     refresh();
   }
+  function clear() {
+    write([]);
+    mounts.forEach(state => { state.expanded = false; });
+    refresh();
+  }
   /** Render the chips into el and keep them current; onPick(username) loads one. */
   function mount(el, onPick) {
     if (!el || mounts.has(el)) return;
-    mounts.add(el);
+    const state = { expanded: false };
+    mounts.set(el, state);
     el.addEventListener('click', e => {
       const del = e.target.closest('[data-recent-del]');
       if (del) { forget(del.dataset.recentDel); return; }
+      if (e.target.closest('[data-recent-toggle]')) { state.expanded = !state.expanded; render(el); return; }
+      const clr = e.target.closest('[data-recent-clear]');
+      if (clr) {
+        // First click arms it; the second clears.
+        if (clr.dataset.armed) { clear(); return; }
+        clr.dataset.armed = '1';
+        clr.textContent = 'Clear all?';
+        return;
+      }
       const pick = e.target.closest('[data-recent-pick]');
       if (pick) onPick(pick.dataset.recentPick);
     });
+    // Moving away disarms Clear all.
+    const disarm = e => {
+      const clr = e.target.closest?.('[data-recent-clear][data-armed]');
+      if (clr) { delete clr.dataset.armed; clr.textContent = 'Clear all'; }
+    };
+    el.addEventListener('mouseout', disarm);
+    el.addEventListener('focusout', disarm);
     render(el);
   }
   window.addEventListener('storage', e => { if (e.key === KEY || e.key === null) refresh(); });
-  return { remember, forget, mount, refresh };
+  return { remember, forget, clear, mount, refresh };
 })();
 
 function fmtNum(v) {

@@ -1559,6 +1559,13 @@ input[type="password"]:focus { outline: none; border-color: #3a4350; }
   padding: 4px 9px 4px 5px; cursor: pointer;
 }
 .stg-recent-del:hover { color: var(--danger); background: var(--panel-2); }
+.stg-recent-more, .stg-recent-clear {
+  background: none; border: 1px dashed var(--border); border-radius: 999px;
+  color: var(--muted); font-size: 12px; padding: 4px 11px; cursor: pointer;
+}
+.stg-recent-more:hover { color: var(--accent); border-color: var(--accent); }
+.stg-recent-clear { border-color: transparent; }
+.stg-recent-clear:hover, .stg-recent-clear[data-armed] { color: var(--danger); border-color: var(--danger); }
 
 /* Wrapper lets us paint an edge fade over the scrolling pills. */
 .stg-nav-wrap { position: relative; }
