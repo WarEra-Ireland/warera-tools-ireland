@@ -8,9 +8,6 @@ preview_urls = false
 [vars]
 ALLOWED_ORIGINS = "https://we.hawtre.net"
 
-# owner/repo that receives repository_dispatch events from /deal-config-submit.
-GITHUB_REPO = "hawtre/warera-tools-ireland"
-
 # Secrets
 #
 #   wrangler secret put WARERA_API_KEYS        # required: game API token(s),
@@ -23,6 +20,4 @@ GITHUB_REPO = "hawtre/warera-tools-ireland"
 #                                              #   procedures (work.getStats*)
 #                                              #   refuse other keys, and the
 #                                              #   pool routes them accordingly.
-#   wrangler secret put GITHUB_DISPATCH_TOKEN  # optional: fine-grained PAT,
-#                                              #   Contents:read + Actions:write
 #   wrangler secret put DISCORD_WEBHOOK_URL    # optional: Discord webhook

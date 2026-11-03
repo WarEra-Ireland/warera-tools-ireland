@@ -34,10 +34,10 @@
 (() => {
   const VALID = new Set([
     'home', 'community', 'gov', 'mu', 'buddy-finder', 'donation-draw',
-    'advisor', 'clockin', 'softcap', 'products', 'training', 'profit', 'profit-dev', 'wealth', 'buddy', 'battle-orders',  'beer',
-    'dashboard', 'roster', 'tax', 'tax-dev', 'tax-partner', 'factory-tax', 'tax-deals', 'partners', 'partner-guide',
+    'advisor', 'clockin', 'softcap', 'products', 'training', 'profit', 'profit-dev', 'wealth', 'buddy', 'battle-orders',
+    'dashboard', 'roster', 'tax', 'tax-dev', 'factory-tax',
   ]);
-  const LANDING = new Set(['dashboard', 'home', 'community', 'gov', 'beer', 'partners']);
+  const LANDING = new Set(['dashboard', 'home', 'community', 'gov']);
   const DEFAULT_VIEW = 'dashboard';
   const views = document.querySelectorAll('.view');
   const $backLink = document.querySelector('.back-link');
@@ -46,8 +46,6 @@
     home: ToolkitShell,
     community: null,
     gov: null,
-    partners: null,
-    'partner-guide': null,
     mu: MUTool,
     'buddy-finder': BuddyFinderTool,
     advisor: AdvisorTool,
@@ -61,14 +59,11 @@
     'donation-draw': IrelandDonationDrawTool,
     buddy: BuddySystemGate,
     'battle-orders': BattleOrdersGate,
-    beer: BeerGate,
     dashboard: DashboardTool,
     roster: RosterTool,
     tax: IrishTaxGate,
     'tax-dev': IrishTaxDevTool,
-    'tax-partner': IrishTaxPartnerTool,
     'factory-tax': IrishFactoryTaxTool,
-    'tax-deals': TaxDealDashboardTool,
   };
 
   function parseRoute(hash = location.hash) {
@@ -87,8 +82,7 @@
     const isLanding = LANDING.has(name);
     $backLink.hidden = isLanding;
     $backLink.setAttribute('href',
-      (name === 'buddy' || name === 'battle-orders' || name === 'donation-draw') ? '#gov' :
-      (name === 'tax-deals' || name === 'partner-guide') ? '#partners' : '#dashboard');
+      (name === 'buddy' || name === 'battle-orders' || name === 'donation-draw') ? '#gov' : '#dashboard');
     if ($tabs) {
       $tabs.hidden = !isLanding;
       $tabs.querySelectorAll('.tab').forEach(t =>

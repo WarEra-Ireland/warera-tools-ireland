@@ -7,7 +7,6 @@
  *  not send. Routes:
  *
  *    /trpc/*             -> https://api2.warera.io/trpc/*   (+ x-api-key)
- *    /deal-config-submit -> GitHub repository_dispatch: deal-config-submit
  *    /notify-discord     -> Discord webhook
  */
 
@@ -312,36 +311,6 @@ async function proxy(request, env, origin, base, prefix, keys = null) {
   return new Response(bufferedBody ?? upstream.body, { status: upstream.status, headers: out });
 }
 
-// GitHub repository_dispatch
-async function dispatch(request, env, origin, eventType) {
-  if (request.method !== 'POST') return json({ error: 'POST required' }, 405, origin);
-  if (!env.GITHUB_DISPATCH_TOKEN) return json({ error: 'dispatch not configured' }, 503, origin);
-
-  let payload;
-  try {
-    payload = await request.json();
-  } catch {
-    return json({ error: 'invalid JSON body' }, 400, origin);
-  }
-
-  const res = await fetch(`https://api.github.com/repos/${env.GITHUB_REPO}/dispatches`, {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${env.GITHUB_DISPATCH_TOKEN}`,
-      'Accept': 'application/vnd.github+json',
-      'Content-Type': 'application/json',
-      'User-Agent': UPSTREAM_UA,
-    },
-    body: JSON.stringify({ event_type: eventType, client_payload: payload }),
-  });
-
-  if (!res.ok) {
-    const detail = (await res.text()).slice(0, 200);
-    return json({ error: `github dispatch failed (${res.status}): ${detail}` }, 502, origin);
-  }
-  return json({ ok: true }, 202, origin);
-}
-
 // Discord dispatch
 async function notifyDiscord(request, env, origin) {
   if (request.method !== 'POST') return json({ error: 'POST required' }, 405, origin);
@@ -393,9 +362,6 @@ export default {
       const keys = apiKeys(env);
       if (!keys.length) return json({ error: 'game API token not configured' }, 503, origin);
       return proxy(request, env, origin, GAME_API, '/trpc', keys);
-    }
-    if (url.pathname === '/deal-config-submit') {
-      return dispatch(request, env, origin, 'deal-config-submit');
     }
     if (url.pathname === '/notify-discord') {
       return notifyDiscord(request, env, origin);

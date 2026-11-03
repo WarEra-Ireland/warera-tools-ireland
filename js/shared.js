@@ -64,7 +64,7 @@ const IRELAND_COUNTRY_ID = '6813b6d446e731854c7ac7fe';
  */
 const V027_PAUSED = new Set([
   'profit', 'profit-dev', 'sp-advisor', 'factory-tax',
-  'buddy', 'tax', 'tax-dev', 'tax-partner', 'tax-deals', 'partner-guide',
+  'buddy', 'tax', 'tax-dev',
 ]);
 const isPaused = view => V027_PAUSED.has(view);
 const V027_CONTINUED = new Set();

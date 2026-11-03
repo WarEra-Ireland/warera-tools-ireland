@@ -10,7 +10,6 @@ headers the upstream APIs don't send.
 | Path | Upstream | Token |
 |------|----------|-------|
 | `/trpc/*` | `https://api2.warera.io/trpc/*` | injects `x-api-key` from the key pool |
-| `/deal-config-submit` | GitHub `repository_dispatch` → `deal-config-submit` | `$GITHUB_DISPATCH_TOKEN` |
 | `/notify-discord` | `$DISCORD_WEBHOOK_URL` | webhook URL is the secret |
 | `/healthz` | - | reports pool size and how many keys are cooling |
 
@@ -105,7 +104,6 @@ pnpm install -g wrangler # or pnpx wrangler
 wrangler login
 
 wrangler secret put WARERA_API_KEYS         # required (comma-separated)
-wrangler secret put GITHUB_DISPATCH_TOKEN   # optional (deal submit)
 wrangler secret put DISCORD_WEBHOOK_URL     # optional
 
 wrangler deploy
@@ -126,8 +124,8 @@ NEW="https://your-new-worker.workers.dev"
 grep -rl "$OLD" --include='*.js' --include='*.py' . | xargs sed -i "s|$OLD|$NEW|g"
 ```
 
-That covers `js/shared.js` (`API_BASE`) and the four log scripts
-(`wealth_log.py`, `bunker_log.py`, `tax_log.py`, `tax_engine.py`).
+That covers `js/shared.js` (`API_BASE`) and the two log scripts
+(`wealth_log.py`, `tax_log.py`).
 
 ## Local development
 

@@ -4,11 +4,10 @@ ONBOARDING.md
 # Plaintext source of the password-gated tools. These must not be public, or the
 # AES gating is pointless (anyone could read the tool logic without the password).
 # NOTE: they are already tracked in git history — gitignore only stops FUTURE commits.
-# To actually remove them: `git rm --cached bo-payload.js buddy-payload.js beer-payload.js`
+# To actually remove them: `git rm --cached bo-payload.js buddy-payload.js`
 # (and scrub history if the logic must stay private).
 bo-payload.js
 buddy-payload.js
-beer-payload.js
 tax-payload.js
 
 # Local-only dev helper: serves the site and proxies the API with the Origin

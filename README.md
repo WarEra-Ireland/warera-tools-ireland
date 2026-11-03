@@ -59,7 +59,6 @@ js/
   mu.js           Irish Military Units
   buddy.js        Buddy System Monitor (encrypted, MoE password)
   battle-orders.js Battle Orders (encrypted, MoD password)
-  beer.js         Bunker monitor (encrypted, BEER password)
   router.js       Loaded last. Hash routing + view switching.
 images/           Item icons used by the advisor and clock-in tools
 worker/           Cloudflare Worker: the API proxy with the key pool
@@ -251,22 +250,17 @@ Charts any Irish citizen's wealth over time. A scheduled GitHub Action (`wealth_
 
 Which training card to keep. Loading a username reads every employee of the player's companies through the company employee endpoints (`employee.getCompanyEmployees`, `getCompanyEstimate`), shows a workforce summary with profit at today's prices, ranks where the next 10 energy is best spent (training each employee or hiring into a company with a free slot), compares typed-in candidates (hire, reroll or wait), ranks who is worth keeping against the best of a fresh candidate set (fire, replace or keep, with the bar a candidate must beat), and fills a calculator that ranks an exact hand for one employee. A hand an employee was dealt but hasn't picked from is read from the API (`pendingTraining.offers`) and listed above the energy ranking, so the player never types it in. Management fills from the account.
 
-### Bunker monitor (`beer.js`)
-
-A searchable, timezone-aware log of region bunker activity for the BEER alliance block. A scheduled GitHub Action (`bunker_log.py`) snapshots every region every few hours, diffs it, and records came-online / went-offline / level-changed / built events into `data/events.json` (rolling 30-day window), with `data/state.json` as the previous-snapshot baseline. Password-encrypted like the other two gated tools (BEER password).
-
 ## Data layer
 
 All game data comes through one Cloudflare Worker at `warera-proxy.0x5ca1ab1e.workers.dev`. Its source lives in `worker/` — see `worker/README.md` for deploying it. It exposes these routes:
 
 - `/trpc/*` proxies the live War Era tRPC API at `api2.warera.io`, injecting the game API token.
-- `/deal-config-submit` creates a tax deal. Its dashboard is paused for v0.27 and the workflow is disabled.
 - `/notify-discord` forwards a message to the Battle Orders Discord webhook (held as a Worker secret).
 - `/healthz` reports whether the game API token is configured.
 
 The old Worker also carried a `/monitored-update` route for a wealth-monitor watch-list. Nothing called it and no workflow received it, so it was not carried over.
 
-The Worker holds the secrets — the game API token, and the GitHub PAT for the deal route. The browser never sees them. The whole site otherwise runs client-side and stores nothing about users.
+The Worker holds the secrets — the game API token and the Discord webhook URL. The browser never sees them. The whole site otherwise runs client-side and stores nothing about users.
 
 Endpoints currently in use, for reference:
 
@@ -289,18 +283,18 @@ There are two separate mechanisms. Don't confuse them.
 
 **Irish-only gate.** Personal tools (advisor, clock-in, buddy-finder) call `enforceIrishOnly` to block non-Irish users. Append `?bypass=1` to the hash for admin or debugging. The MU tool doesn't gate; it filters MUs down to Irish ones instead.
 
-**Password-encrypted tools.** Buddy System Monitor (`#buddy`, MoE), Battle Orders (`#battle-orders`, MoD), and the Bunker monitor (`#beer`, BEER) ship their entire tool (CSS, HTML, JS) as an AES-encrypted blob in the source. The page is useless without the password, so the sensitive logic never reaches an unauthorised browser in readable form. (Caveat: the plaintext payload sources — `bo-payload.js`, `buddy-payload.js`, `beer-payload.js` — are also committed, so this only holds if the repo is private; see `.gitignore`.)
+**Password-encrypted tools.** Buddy System Monitor (`#buddy`, MoE), and Battle Orders (`#battle-orders`, MoD) ship their entire tool (CSS, HTML, JS) as an AES-encrypted blob in the source. The page is useless without the password, so the sensitive logic never reaches an unauthorised browser in readable form. (Caveat: the plaintext payload sources — `bo-payload.js`, `buddy-payload.js` — are also committed, so this only holds if the repo is private; see `.gitignore`.)
 
 ### How the encrypted tools work
 
 - Blob format: base64 of `salt(16) || iv(12) || AES-GCM-256 ciphertext`.
 - Key derivation: PBKDF2-SHA-256, 200000 iterations.
 - On correct password, the gate decrypts the blob and injects it as a `<script>` tag, which mounts the real tool.
-- The blob lives in the `BO_ENCRYPTED_PAYLOAD` / `BUDDY_ENCRYPTED_PAYLOAD` / `BEER_ENCRYPTED_PAYLOAD` constant at the top of the respective gate file.
+- The blob lives in the `BO_ENCRYPTED_PAYLOAD` / `BUDDY_ENCRYPTED_PAYLOAD` constant at the top of the respective gate file.
 
-To set up or rotate a password: encrypt the tool's payload file with the standalone `encrypt.html` generator (it is payload-agnostic and works for all three tools), then paste the resulting base64 string as the constant value. Until the constant is filled in, the gate shows "payload not configured yet" and does nothing.
+To set up or rotate a password: encrypt the tool's payload file with the standalone `encrypt.html` generator (it is payload-agnostic and works for both tools), then paste the resulting base64 string as the constant value. Until the constant is filled in, the gate shows "payload not configured yet" and does nothing.
 
-The gate code itself (`buddy.js`, `battle-orders.js`, `beer.js`) is plain and public. Only the payload is secret.
+The gate code itself (`buddy.js`, `battle-orders.js`) is plain and public. Only the payload is secret.
 
 ## Styling conventions
 
