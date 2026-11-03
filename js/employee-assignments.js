@@ -123,8 +123,8 @@ const EmployeeAssignments = (() => {
   const equippedToolIds = team => team.companies.flatMap(activeOf).filter(e => e.toolItem?._id).map(e => e.toolItem._id);
   // team.toolLog: { owned, complete } from the page's load, or null when it failed.
   const sparesFor = (team, settings) => sparesOf(team.toolLog?.owned || null, equippedToolIds(team), settings, unloadedOf(team));
-  // Days until the youngest retires: age rises one a day, and the planner allows at most 47.
-  const careerDays = ages => Math.min(47, Math.max(1, ...ages.filter(Number.isFinite).map(age => Math.ceil(EC.CFG.retireAge - age))));
+  // Remaining working days from the API, or age for manually supplied employees.
+  const careerDays = employees => Math.min(47, Math.max(1, ...employees.map(EC.workingDays).filter(Number.isFinite).map(Math.ceil)));
 
   function snapshotOf(team, market, settings, now = Date.now()) {
     if (!team || !market?.ppValue) return { errors: ['Load your employees and product prices first.'] };
@@ -145,11 +145,15 @@ const EmployeeAssignments = (() => {
       const p = market.list.find(p => p.code === c.itemCode);
       // Management, manager and core-region bonuses, as an active employee gets them.
       const known = active.find(e => Array.isArray(e.productionBonus?.contributions))?.productionBonus.contributions;
-      const bonus = known ? known.filter(x => ['management', 'manager', 'coreRegion'].includes(x.source)).reduce((n, x) => n + x.percent, 0) : null;
+      // A disabled company produces nothing: its employees can only move out.
+      const disabled = !!c.disabledAt || active.some(e => e.companyDisabled);
+      const bonus = known ? known.filter(x => ['management', 'manager', 'coreRegion'].includes(x.source)).reduce((n, x) => n + x.percent, 0) : disabled ? 0 : null;
       const reasons = missing(entry, active);
-      if (active.length && !known) reasons.push('its production bonus did not load');
+      if (active.length && !known && !disabled) reasons.push('its production bonus did not load');
       if (reasons.length) excluded.set(c._id, reasons);
-      return { id: c._id, name: c.name || c.itemCode, product: c.itemCode, type: market.types?.[c.itemCode], margin: p?.perPP,
+      return { id: c._id, name: c.name || c.itemCode, product: c.itemCode, type: market.types?.[c.itemCode], margin: p?.perPP, disabled,
+        engineDailyProd: market.engineLevels?.[c.activeUpgradeLevels?.automatedEngine]?.stats?.dailyProd || 0,
+        engineBonus: entry.engineBonus || 0,
         bonus, tax: entry.incomeTax, country: region?.country, coreCountry: region?.initialCountry,
         storage: c.activeUpgradeLevels?.storage ?? 0, full: !!c.isFull, capacity: c.activeUpgradeLevels?.breakRoom ?? 1 };
     });
@@ -170,10 +174,12 @@ const EmployeeAssignments = (() => {
       if (e.eventModifiers?.some(event => event.kind === 'away' && hoursUntil(event.until, now) > 0)) reasons.push(`${e.name} is temporarily away; absence forecasts are not supported`);
       if (!e.specializations) reasons.push(`${e.name}'s saved specializations did not load`);
       if (reasons.length) excluded.set(company._id, [...(excluded.get(company._id) || []), ...reasons]);
-      return { id: e._id, name: e.name, company: company._id, age: e.age, locked: pinned.has(e._id),
-        production: e.base?.production, responsibility: e.base?.responsibility, luck: e.base?.luck ?? 0, trainingBaseLuck: e.base?.luck ?? 0, trainingLuck: e.breakdown?.luck?.total ?? 0,
+      const traitProduction = EC.ownTraitProduction(e);
+      const paid = EC.paidProduction({ production: e.base?.production || 0, traitProduction });
+      return { id: e._id, name: e.name, company: company._id, age: e.age, retireInDays: e.retireInDays, locked: pinned.has(e._id),
+        production: e.base?.production, traitProduction, responsibility: e.base?.responsibility, luck: e.base?.luck ?? 0, trainingBaseLuck: e.base?.luck ?? 0, trainingLuck: e.breakdown?.luck?.total ?? 0,
         potentialLeft: Math.max(0, (e.potentialMax || 0) - (e.potential || 0)), wage: e.wage, negotiationExpectation: e.wageExpectation,
-        climberRaise: e.traits?.some(t => t.code === 'climber') ? e.base?.production / 4 * market.ppValue * 0.02
+        climberRaise: e.traits?.some(t => t.code === 'climber') ? paid / 4 * market.ppValue * 0.02
           * (e.traits.some(t => t.code === 'greedy') ? 1.2 : e.traits.some(t => t.code === 'modest') ? 0.85 : 1) : 0,
         gender: e.gender, nationality: e.nationality, traits: e.traits || [], specializations: { ...e.specializations, [company.itemCode]: currentSpec },
         tenure, employedDays: Math.max(0, (now - Date.parse(e.createdAt)) / 864e5),
@@ -193,9 +199,10 @@ const EmployeeAssignments = (() => {
     const trainingQuota = learners.length ? dailyTrainings / learners.length : 0;
     for (const e of learners) {
       const c = companies.find(c => c.id === e.company);
-      const model = { ...EC.DEFAULT_EMPLOYEE, ...e, extraProduction: e.observed.production - e.production,
+      // Only paid Production (EC.paidProduction) carries the wage; Rival, Mentor and coworkers' never does.
+      const model = { ...EC.DEFAULT_EMPLOYEE, ...e, extraProduction: e.observed.production - e.production - e.traitProduction,
         bonus: e.observed.bonus / 100, happiness: e.observed.happiness, specialization: 20,
-        wageExpectation: e.production ? e.wage / (e.production / 4 * market.ppValue) : 1 };
+        wageExpectation: e.wage / (EC.paidProduction(e) / 4 * market.ppValue) };
       const context = { sellRatio: c.margin / market.ppValue, toolboxValue: (settings.toolboxValue || 0) / market.ppValue, futureTraining: false };
       e.trainingValues = EC.RARITIES.map(r => Math.max(0, ...EC.NUMERIC_CARDS[r].map(card => EC.cardValue(model, card, context, 0) ?? 0)))
         .map(value => value * market.ppValue);
@@ -207,7 +214,7 @@ const EmployeeAssignments = (() => {
       const first = EC.freshSetValue(groups, { slots: 3, rate: 'slot' });
       c.recruitmentValues = [first.best, ...[4, 5, 6].map(slots => EC.freshSetValue(groups, { slots, rate: first.rate }).best)].map(value => value * market.ppValue);
     }
-    const days = settings.horizon === 'career' ? careerDays(employees.filter(e => !excluded.has(e.company)).map(e => e.age)) : Number(settings.horizon);
+    const days = settings.horizon === 'career' ? careerDays(employees.filter(e => !excluded.has(e.company))) : Number(settings.horizon);
     return { errors, snapshot: { companies, employees, tools, days, toolboxValue: settings.toolboxValue || 0, trainingQuota, management: team.management || 0 } };
   }
 
@@ -377,7 +384,7 @@ const EmployeeAssignments = (() => {
       // After recording, so the page's card values see this load's spares.
       onResult(null);
       const people = team.companies.flatMap(entry => activeOf(entry).map(e => ({ e, company: entry.company })));
-      const career = careerDays(people.map(({ e }) => e.age));
+      const career = careerDays(people.map(({ e }) => e));
       const horizon = h => h === 'career' ? `Careers · ${career} d` : `${h} d`;
       root.innerHTML = `${notices.length ? `<ul class="tr-warn" role="status">${notices.map(n => `<li>${esc(n)}</li>`).join('')}</ul>` : ''}
         <div class="tr-asg-head">
@@ -406,7 +413,7 @@ const EmployeeAssignments = (() => {
             <section class="tr-asg-box" aria-labelledby="plan-pins-heading"><h4 id="plan-pins-heading">Keep in place</h4>
               <p class="tr-muted">Selected employees stay in their company. They can still get a tool.</p>
               <div class="tr-asg-pins">${people.map(({ e, company }) => `<button type="button" class="tr-asg-pin" data-plan-pin="${esc(e._id)}" aria-pressed="${settings.pinned.includes(e._id)}" title="${esc(companyName(company._id) || company.name || '')}">${productIcon(company.itemCode)}${esc(e.name)}</button>`).join('')}</div></section>
-            <details class="tr-more"><summary>What the comparison includes</summary><p class="tr-calc-sub">The planner scores whole company rosters: Craftsman on manufactured goods and weapons, Laborer on raw resources, Handy and Improviser, coworker traits, company bonuses and taxes, happiness, saved specialization, tenure and retirement. Moving an employee between your companies costs no happiness, but Creature of Habit loses 30 bonus points for three days. Company tenure restarts; the same product keeps its specialization, and another product restores that product's saved progress. Tools stop when their capacity runs out and are not replaced.</p><p class="tr-calc-sub">Careers value every change until the last planned employee retires at ${EC.CFG.retireAge}, one year older each day. A retired employee's place stays empty: hiring a replacement is not valued. A shorter window ignores everything after it, so it favours quick wins over moves that pay back later.</p><p class="tr-calc-sub">This is a bounded search for a better arrangement, not a guarantee of the best one. Each employee moves at most once. A company with a hidden or unknown trait, or whose current numbers the planner cannot reproduce, is left exactly as it is and is not part of the totals. Toolboxes use your entered value. Trainer and coworker Luck use a bounded training estimate and your daily budget. Recruiter is valued only for a planned candidate set. Earnings assume employees stay; quitting probabilities and future price changes are not modeled. Equipped tools can be reassigned to any compatible employee. Nothing is changed in the game.</p></details>
+            <details class="tr-more"><summary>What the comparison includes</summary><p class="tr-calc-sub">The planner scores whole company rosters: Craftsman on manufactured goods and weapons, Laborer on raw resources, Handy and Improviser, coworker traits, company bonuses and taxes, happiness, saved specialization, tenure and retirement. Moving an employee between your companies costs no happiness, but Creature of Habit loses 30 bonus points for three days. Company tenure restarts; the same product keeps its specialization, and another product restores that product's saved progress. Tools stop when their capacity runs out and are not replaced. A disabled company's employees don't work, train or get paid there, so moving them out to a working company can pay; nobody is moved into a disabled company.</p><p class="tr-calc-sub">Careers value every change until the last planned employee retires at ${EC.CFG.retireAge}, one year older per day worked or trained. A retired employee's place stays empty: hiring a replacement is not valued. A shorter window ignores everything after it, so it favours quick wins over moves that pay back later.</p><p class="tr-calc-sub">This is a bounded search for a better arrangement, not a guarantee of the best one. Each employee moves at most once. A company with a hidden or unknown trait, or whose current numbers the planner cannot reproduce, is left exactly as it is and is not part of the totals. Toolboxes use your entered value. Trainer and coworker Luck use a bounded training estimate and your daily budget. Recruiter is valued only for a planned candidate set. Earnings assume employees stay; quitting probabilities and future price changes are not modeled. Equipped tools can be reassigned to any compatible employee. Nothing is changed in the game.</p></details>
           </div>
         </div>`;
       if (focus) root.querySelector(focus)?.focus();
@@ -525,7 +532,12 @@ const EmployeeAssignments = (() => {
         const e = emp(id), list = reasons(e, co(e.company), co(final.get(id).company), row(baseline, id), row(proposed, id), productName);
         return list.map(r => `<span class="tr-asg-tag${r.tone ? ` is-${r.tone}` : ''}"${r.hint ? ` title="${esc(r.hint)}"` : ''}>${esc(r.text)}</span>`).join('');
       };
-      const equip = id => { const t = newTool(id); return t ? `<span>then give ${esc(emp(id).name)} the <b>${toolText(t)}</b> · ${toolLife(t)}</span>` : emp(id).equipped && !final.get(id).tool ? `<span>Remove ${esc(emp(id).name)}'s current tool</span>` : ''; };
+      // A tool that does not fit the new company returns to inventory by itself.
+      const equip = id => {
+        const t = newTool(id), back = EP.returnsTool(emp(id), final.get(id), snapshot.tools, snapshot.companies);
+        return `${back ? `<span class="tr-muted">${esc(emp(id).name)}'s ${toolText(back)} goes back to inventory</span>` : ''}${t ? `<span>then give ${esc(emp(id).name)} the <b>${toolText(t)}</b> · ${toolLife(t)}</span>`
+          : !back && emp(id).equipped && !final.get(id).tool ? `<span>Remove ${esc(emp(id).name)}'s current tool</span>` : ''}`;
+      };
       const stepHtml = (item, i) => {
         const [a, b] = item.employees.map(emp), value = item.employees.reduce((v, id) => v + delta(id), 0);
         let glyph, head, detail;
@@ -564,7 +576,7 @@ const EmployeeAssignments = (() => {
       const used = manual.length - result.unused.filter(id => manual.some(t => t.id === id)).length;
       const planned = snapshot.companies.filter(c => !result.excluded.some(x => x.company === c.id));
       const plannedPeople = snapshot.employees.filter(e => planned.some(c => c.id === e.company));
-      const last = plannedPeople.reduce((a, e) => !a || e.age < a.age ? e : a, null);
+      const last = plannedPeople.reduce((a, e) => !a || EC.workingDays(e) > EC.workingDays(a) ? e : a, null);
       const pinned = plannedPeople.filter(e => e.locked).length;
       const good = result.gain > 1e-7;
       const tile = (k, v, s, cls = '') => `<div class="tr-asg-tile${cls}"><div class="tr-asg-k">${k}</div><div class="tr-asg-v">${v}</div><div class="tr-asg-s">${s}</div></div>`;
@@ -573,12 +585,12 @@ const EmployeeAssignments = (() => {
           good ? `≈ ${signed(result.gain / days)} a day · game money after wages, at today's prices` : 'No more profitable arrangement found', good ? ' is-big' : ' is-big is-flat')}
         ${tile('Moves', moved.length, moved.length ? (payback > 1 ? `pays back by day ${payback}` : 'pays off from day 1') : 'none worth it')}
         ${tile('Tools used', `${used}<span class="tr-muted"> / ${manual.length}</span>`, !manual.length ? 'none available' : used < manual.length ? `${manual.length - used} left unused` : 'all in use')}
-        ${tile('Horizon', `${days} d`, settings.horizon === 'career' ? (last ? `${esc(last.name)} retires last, at ${EC.CFG.retireAge}` : 'until retirement') : 'fixed window')}
+        ${tile('Horizon', `${days} d`, settings.horizon === 'career' ? (last ? `${esc(last.name)} retires last, after ${EC.workingDays(last)} working days` : 'until retirement') : 'fixed window')}
         ${tile('Planned', `${planned.length}<span class="tr-muted"> / ${snapshot.companies.length}</span>`, `companies · ${plural(plannedPeople.length, 'employee')}${pinned ? ` · ${pinned} kept in place` : ''}`)}</div>`;
 
       // Chart markers: retirements, and tools wearing out, inside the horizon.
       const events = [];
-      for (const e of plannedPeople) { const d = EC.CFG.retireAge - e.age; if (d > 0 && d < days) events.push({ day: d, text: `${e.name} retires` }); }
+      for (const e of plannedPeople) { const d = EC.workingDays(e); if (d > 0 && d < days) events.push({ day: d, text: `${e.name} retires` }); }
       for (const a of result.arrangement) {
         const t = a.tool && tool(a.tool), d = t && t.hours / 24;
         if (d > 0 && d < days && planned.some(c => c.id === a.company)) events.push({ day: d, text: `${emp(a.employee).name}'s ${t.type} wears out` });

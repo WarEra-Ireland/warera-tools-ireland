@@ -30,7 +30,12 @@
 const EmployeeTrainingTool = (() => {
   const EC = EmployeeCore;
   const STAT = { production: 'Production', responsibility: 'Responsibility', luck: 'Luck' };
-  const STAT_SHORT = { production: 'Prod', responsibility: 'Resp', luck: 'Luck' };
+  const STAT_SHORT = { production: 'Prod', responsibility: 'Happiness', luck: 'Luck' };
+  // The game shows Responsibility as the lasting happiness it gives, not as
+  // a stat: 3 happiness a point.
+  const respHappiness = n => EC.CFG.respHappiness * n;
+  const statShown = (k, n) => k === 'responsibility' ? respHappiness(n) : n;
+  const statGainText = (k, n) => k === 'responsibility' ? `+${respHappiness(n)} happiness` : `+${n} ${STAT[k] || k}`;
   const RARITY_NAME = { common: 'Common', uncommon: 'Uncommon', rare: 'Rare', epic: 'Epic', legendary: 'Legendary' };
   const RECENT_KEY = 'tr:recent-usernames';
   const RECENT_MAX = 8;
@@ -199,7 +204,7 @@ const EmployeeTrainingTool = (() => {
       return [{ code, perPP, ratio: perPP / ppValue }];
     }).sort((a, b) => b.ratio - a.ratio);
     const types = Object.fromEntries(codes.map(c => [c, items[c].type]));
-    return { ppValue: ppValue > 0 ? ppValue : null, list, types };
+    return { ppValue: ppValue > 0 ? ppValue : null, list, types, engineLevels: config?.upgradesConfig?.automatedEngine?.levels || {} };
   }
   let marketPending = false;
   function refreshMarket() {
@@ -217,8 +222,8 @@ const EmployeeTrainingTool = (() => {
   // The cards a hand of each rarity can hold, by kind. Trait kinds take one
   // trait (two for a Habit pair) from the lists below.
   const TRAIT_KINDS = {
-    uncommon:  [{ card: 'wildCard' }],
-    rare:      [{ card: 'rehab', polarity: 'negative' }, { card: 'habit', polarity: 'mixed' }],
+    uncommon:  [{ card: 'reroll' }],
+    rare:      [{ card: 'rehab', polarity: 'negative' }, { card: 'wildCard' }],
     epic:      [{ card: 'habit', polarity: 'positive' }],
     legendary: [{ card: 'habitPair', polarity: 'positive' }, { card: 'rehabAll' }],
   };
@@ -267,6 +272,7 @@ const EmployeeTrainingTool = (() => {
 
   // The game's own icons (Material Design paths), for the hand cards.
   const GAME_ICON = {
+    reroll: 'M19,8L15,12H18A6,6 0 0,1 12,18C11,18 10.03,17.75 9.2,17.3L7.74,18.76C8.97,19.54 10.43,20 12,20A8,8 0 0,0 20,12H23M6,12A6,6 0 0,1 12,6C13,6 13.97,6.25 14.8,6.7L16.26,5.24C15.03,4.46 13.57,4 12,4A8,8 0 0,0 4,12H1L5,16L9,12',
     production: 'M14.79,10.62L3.5,21.9L2.1,20.5L13.38,9.21L14.79,10.62M19.27,7.73L19.86,7.14L19.07,6.35L19.71,5.71L18.29,4.29L17.65,4.93L16.86,4.14L16.27,4.73C14.53,3.31 12.57,2.17 10.47,1.37L9.64,3.16C11.39,4.08 13,5.19 14.5,6.5L14,7L17,10L17.5,9.5C18.81,11 19.92,12.61 20.84,14.36L22.63,13.53C21.83,11.43 20.69,9.47 19.27,7.73Z',
     responsibility: 'M6,2L10,6L7,17L12,22L17,17L14,6L18,2Z',
     luck: 'M12,11.18C15.3,8.18 17,6.64 17,4.69C17,3.19 15.75,2 14.25,2C13.39,2 12.57,2.36 12,3C11.43,2.36 10.61,2 9.69,2C8.19,2 7,3.25 7,4.75C7,6.64 8.7,8.18 12,11.18M11.18,12C8.18,8.7 6.64,7 4.69,7C3.19,7 2,8.25 2,9.75C2,10.61 2.36,11.43 3,12C2.36,12.57 2,13.39 2,14.31C2,15.81 3.25,17 4.75,17C6.64,17 8.18,15.3 11.18,12M12.83,12C15.82,15.3 17.36,17 19.31,17C20.81,17 22,15.75 22,14.25C22,13.39 21.64,12.57 21,12C21.64,11.43 22,10.61 22,9.69C22,8.19 20.75,7 19.25,7C17.36,7 15.82,8.7 12.83,12M12,12.82C8.7,15.82 7,17.36 7,19.31C7,20.81 8.25,22 9.75,22C10.61,22 11.43,21.64 12,21C12.57,21.64 13.39,22 14.31,22C15.81,22 17,20.75 17,19.25C17,17.36 15.3,15.82 12,12.82Z',
@@ -288,18 +294,19 @@ const EmployeeTrainingTool = (() => {
   // Game card titles (the training hand's own names).
   function cardTitle(c) {
     if (c.card === 'drill') return c.delta > 1 ? 'Intensive drill' : 'Drill';
-    return { negotiation: 'Negotiation', secondWind: 'Second wind', habit: 'New habit', habitPair: 'Two new habits',
+    return { reroll: 'Reroll', negotiation: 'Negotiation', secondWind: 'Second wind', habit: 'New habit', habitPair: 'Two new habits',
       rehab: 'Rehab', rehabAll: 'Clean slate', wildCard: 'Wild card', mentoring: 'Mentoring' }[c.card];
   }
   function effectText(c) {
-    if (c.card === 'drill') return `+${c.delta} ${STAT[c.stat]}`;
+    if (c.card === 'reroll') return 'new hand';
+    if (c.card === 'drill') return statGainText(c.stat, c.delta);
     if (c.card === 'negotiation') return `−${Math.round(c.drop * 100)}% wage expectation`;
     if (c.card === 'secondWind') return `+${c.gain} training potential`;
     if (c.card === 'habit' || c.card === 'rehab') return c.code ? traitName(c.code) : 'pick the trait';
     if (c.card === 'habitPair') return (c.codes || []).map(traitName).join(' + ') || 'pick the traits';
     if (c.card === 'mentoring') return c.code && c.to ? `${traitName(c.code)} → ${traitName(c.to)}` : 'moves a trait one step up its ladder';
     if (c.card === 'rehabAll') return 'removes every negative trait';
-    return 'a random trait, good or bad, and +1 to a random stat';
+    return `a random trait, good or bad, and +${EC.CFG.wildCardStatGain} to a random stat`;
   }
 
   // Traits a slot's trait card could name. Rehab: what the employee holds,
@@ -383,6 +390,8 @@ const EmployeeTrainingTool = (() => {
 
   // The one employee picker, over the employee tabs: the loaded employees by
   // company, with previous and next.
+  const canAct = (emp, entry) => !emp.leftAt && !emp.companyDisabled && !entry.company.disabledAt;
+  const actionEmployees = () => (team?.companies || []).flatMap(entry => entry.employees.filter(emp => canAct(emp, entry)).map(emp => ({ emp, entry })));
   const allEmployees = () => (team?.companies || []).flatMap(x => x.employees);
   function renderPicker() {
     $work.hidden = $pick.hidden = !EMP_TABS.includes(view.tab) || !team;
@@ -412,7 +421,7 @@ const EmployeeTrainingTool = (() => {
     return {
       ...EC.DEFAULT_EMPLOYEE,
       nationality: inp.nationality, productionEvents: inp.productionEvents,
-      age: inp.age, production: inp.production, extraProduction: inp.extraProduction,
+      age: inp.age, retireInDays: inp.retireInDays, production: inp.production, traitProduction: inp.traitProduction || 0, extraProduction: inp.extraProduction,
       responsibility: inp.responsibility, luck: inp.luck,
       bonus: inp.bonusPct / 100, traitBonus: (inp.traitBonusPct || 0) / 100, specialization: inp.specPct, wageExpectation: 1 + inp.wagePct / 100,
       happinessLoss: inp.happinessLoss, happiness: inp.happiness ?? null, potentialLeft: inp.potentialLeft, trainingsPerDay: inp.trainingsPerDay,
@@ -439,7 +448,7 @@ const EmployeeTrainingTool = (() => {
     const m = v * market.ppValue;
     return `${m < 0 ? '−' : ''}${Math.abs(m).toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 })} money`;
   };
-  const ARG_SHORT = { production: 'Prod', responsibility: 'Resp', luck: 'Luck', match: 'its product', other: 'other good' };
+  const ARG_SHORT = { production: 'Prod', responsibility: 'Happiness', luck: 'Luck', match: 'its product', other: 'other good' };
 
   let cardPricer = null, cardRevision = null;
   // A number per object, for memo keys over objects that are replaced
@@ -524,7 +533,7 @@ const EmployeeTrainingTool = (() => {
     const order = new Map(feedRows().filter(r => r.kind === 'train').map((r, i) => [r.emp._id, i]));
     const saved = input, keys = [];
     try {
-      for (const { emp, entry } of allEmployees().filter(emp => !emp.leftAt).map(emp => findEmployee(emp._id))
+      for (const { emp, entry } of actionEmployees()
         .sort((a, b) => (order.get(a.emp._id) ?? Infinity) - (order.get(b.emp._id) ?? Infinity))) {
         if (taken.has(emp._id)) continue;
         input = { ...inputsFor(emp, entry), pick: emp._id, hand: pendingHand(emp) };
@@ -546,7 +555,7 @@ const EmployeeTrainingTool = (() => {
   function quoteDetail(q) {
     if (q.value === null) return q.note || 'Not priced.';
     const plans = q.outcomes.length ? [...new Set(q.outcomes.map(o => o.plan.description))].join(' / ') : q.plan.description;
-    return `Here ${signedPP(q.stay)} PP; rearranged ${signedPP(q.value)} PP, of which ${signedPP(q.value - q.stay)} from rearranging. Assumes ${plans}. ${q.forecast ? 'Forecast of future numeric trainings.' : q.note || ''}`;
+    return `Here ${signedPP(q.stay)} PP; rearranged ${signedPP(q.value)} PP, of which ${signedPP(q.value - q.stay)} from rearranging. Assumes ${plans}. ${q.note || (q.forecast ? 'Forecast of future training.' : '')}`;
   }
 
   // Each slot's card with its value and, for traits rolled on gain, the
@@ -624,17 +633,20 @@ const EmployeeTrainingTool = (() => {
 
   // A card's effect as the game draws it: a drill shows the gain and the
   // stat before and after.
-  function cardFace(c) {
+  function cardFace(c, value) {
+    if (c.card === 'reroll') return `<div class="tr-gc-effect">Reroll: new hand, worth ~${signedPP(value)} PP</div><div class="tr-gc-note">Rarity rolled again. No energy or potential.</div>`;
     if (c.card === 'drill') {
-      const now = c.stat === 'production' ? input.production + input.extraProduction : input[c.stat];
+      const now = c.stat === 'production' ? input.production + (input.traitProduction || 0) + input.extraProduction : input[c.stat];
       const stat = (v, cls = '') => `<span class="tr-stat-${c.stat}${cls}">${gameIcon(c.stat)}</span>${v}`;
-      return `<div class="tr-gc-gain">${stat(`+${c.delta}`)}</div>
-        <div class="tr-gc-change">${stat(now)}${gameIcon('arrow', 'tr-gc-arrow')}${stat(now + c.delta)}</div>`;
+      const shown = n => statShown(c.stat, n);
+      const unit = c.stat === 'responsibility' ? ' happiness' : '';
+      return `<div class="tr-gc-gain">${stat(`+${shown(c.delta)}${unit}`)}</div>
+        <div class="tr-gc-change">${stat(shown(now))}${gameIcon('arrow', 'tr-gc-arrow')}${stat(shown(now + c.delta))}</div>`;
     }
     if (c.card === 'mentoring' && c.code && c.to) return `<div class="tr-gc-effect">${escapeHtml(traitName(c.code))}${gameIcon('arrow', 'tr-gc-arrow')}${escapeHtml(traitName(c.to))}</div>`;
     if (c.card === 'wildCard') {
       const risk = EC.wildCardRisk(input.traits.map(t => t.code), input.sit.gender);
-      return `<span class="tr-gc-mark">${gameIcon('question')}</span><div class="tr-gc-effect">Random trait, +1 random stat</div>${risk == null ? '' : `<div class="tr-gc-note">${Math.round(100 * risk)}% chance of a bad trait</div>`}`;
+      return `<span class="tr-gc-mark">${gameIcon('question')}</span><div class="tr-gc-effect">Random trait, +${EC.CFG.wildCardStatGain} random stat</div>${risk == null ? '' : `<div class="tr-gc-note">${Math.round(100 * risk)}% chance of a bad trait</div>`}`;
     }
     return `<div class="tr-gc-effect">${escapeHtml(effectText(c))}</div>`;
   }
@@ -648,6 +660,16 @@ const EmployeeTrainingTool = (() => {
     if (!Number.isFinite(after)) return '';
     const wage = n => n.toFixed(4);
     return `<div class="tr-gc-note">Wage /h: ${wage(emp.wage)} → ${wage(after)}</div>`;
+  }
+
+  // The card's daily profit as the game shows it (today, not career-averaged),
+  // or '' when the game shows none or prices haven't loaded.
+  function gameDailyText(c) {
+    const ppMoney = market?.ppValue > 0 ? context().sellRatio * market.ppValue : null;
+    const wage = findEmployee(input.pick)?.emp?.wage;
+    const v = EC.gameDailyProfit({ ...employee(), ...(Number.isFinite(wage) ? { wage } : {}) }, c, context(), ppMoney);
+    if (v == null) return '';
+    return `<div class="tr-gc-note" title="The daily profit the game shows on this card: today's extra output at the market price, minus the wage change, over 24 hours. It leaves out specialization growth, aging, coworkers and future trainings, which the value above includes.">Game: ${v < 0 ? '−' : '+'}₿${Math.abs(v).toLocaleString('en', { maximumFractionDigits: 3 })}/day today</div>`;
   }
 
   // A card value as average profit per day over the employee's working days, or
@@ -680,12 +702,13 @@ const EmployeeTrainingTool = (() => {
         <span class="tr-gc-rarity">${RARITY_NAME[input.hand.rarity]}</span>
         ${gameIcon(x.c.card, 'tr-gc-icon')}
         <div class="tr-gc-title">${escapeHtml(cardTitle(x.c))}</div>
-        <div class="tr-gc-face">${cardFace(x.c)}${cardWage(x.c)}
+        <div class="tr-gc-face">${cardFace(x.c, x.value)}${cardWage(x.c)}
         ${x.c.card === 'mentoring' ? (x.c.to ? traitHelp(x.c.to, 'Trait effect') : '') : x.c.code ? traitHelp(x.c.code, 'Trait effect') : (x.c.codes || []).map(code => traitHelp(code)).join('')}</div>
         <div class="tr-gc-value">
           ${x.value === null ? `<div class="tr-gc-pp muted">not priced</div><div class="tr-gc-note">${escapeHtml(x.note || 'depends on the trait')}</div>`
             : `<div class="tr-gc-pp${x.value < 0 ? ' neg' : ''}"${x.detail ? ` title="${escapeHtml(x.detail)}"` : ''}><span class="tr-gc-num">${x.outcomes.length ? '≈ ' : ''}${daily || `${signedPP(x.value)} PP`}</span>${x.outcomes.length ? ' <em>avg</em>' : ''}</div>
                ${daily ? `<div class="tr-gc-note">${signedPP(x.value)} PP</div>` : ''}
+               ${gameDailyText(x.c)}
                ${split}${groups.length ? '' : bar}`}
         </div>
         <button type="button" class="tr-took${isBest ? ' btn-primary' : ''}" data-took="${x.slot}">I took this</button>
@@ -723,7 +746,7 @@ const EmployeeTrainingTool = (() => {
       ${toolLine(hand)}
       ${v.html}
       ${hand.length ? `<div class="tr-hand-row">${handCards(hand, v.best)}
-        ${help('What the card values mean', `Each value is the extra profit per day the card adds, at the PP money value, averaged over the employee's remaining working days. Below it are the production points the card adds before retirement, counting coworkers and moves between your companies. ${escapeHtml(hand.scope)} Wild card averages every eligible trait equally, excluding held traits, conflicts, gender mismatches and partner traits. Wages use hired and trained Production; Negotiation reduces wage expectation before Greedy or Modest applies.`)}</div>` : ''}
+        ${help('What the card values mean', `Each value is the extra profit per day the card adds, at the PP money value, averaged over the employee's remaining working days. Below it are the production points the card adds before retirement, counting coworkers and moves between your companies. ${escapeHtml(hand.scope)} Wild card averages every eligible trait equally, excluding held traits, conflicts, gender mismatches and partner traits, plus +${EC.CFG.wildCardStatGain} to each stat equally. Wages use hired and trained Production; Negotiation reduces wage expectation before Greedy or Modest applies. "Game" is the daily profit the game shows on the card: today's change only, at the market price, so it differs from the career average.`)}</div>` : ''}
       ${warnings.length ? `<ul class="tr-facts">${warnings.map(w => `<li class="tr-warn">${w}</li>`).join('')}</ul>` : ''}`;
   }
 
@@ -855,14 +878,16 @@ const EmployeeTrainingTool = (() => {
       companies: companies.map((company, i) => ({ company,
         employees: (Array.isArray(rosters[i]) ? rosters[i] : []).filter(e => !e.leftAt).map(e => ({ ...e, traits: EC.currentTraits(e.traits) })), rosterMissing: !Array.isArray(rosters[i]),
         estimate: estimates[i] || null, region: regionById[company.region] || null,
+        engineBonus: (computeProductionBonus(taxes[countryIds.indexOf(regionById[company.region]?.country)], regionById[company.region], company.itemCode)?.total || 0) / 100,
         incomeTax: incomeTax[regionById[company.region]?.country],
         managerPct: managers[i]?.status === 'fulfilled' ? managers[i].value?.productionBonusPercent || 0 : null })),
     };
   }
 
   // Employee from the API → calculator inputs. The API's `base` already
-  // includes trained points (breakdown.production.base is the hired value),
-  // and the wage is paid on it. Trait Production is the rest of the total.
+  // includes trained points (breakdown.production.base is the hired value).
+  // The wage is paid on it (plus own traits' flat Production if
+  // CFG.traitProductionPaid); the rest (Rival, Mentor, coworkers) is unpaid.
   // The wage expectation is read off the wage itself, so Greedy, Modest and
   // Climber are included.
   // `models` adds each coworker as a model employee, so cards can price what
@@ -872,17 +897,19 @@ const EmployeeTrainingTool = (() => {
     const { company } = entry;
     const hired = emp.base?.production || 0;
     const total = emp.breakdown?.production?.total ?? hired;
+    const traitProduction = EC.ownTraitProduction(emp);
     const spec = (emp.productionBonus?.contributions || []).find(c => c.source === 'specialization')?.percent || 0;
-    const paidPerHour = hired / 4 * (market?.ppValue || 0);
+    const paidPerHour = EC.paidProduction({ production: hired, traitProduction }) / 4 * (market?.ppValue || 0);
     const expectation = paidPerHour > 0 ? emp.wage / paidPerHour : emp.wageExpectation;
     return {
-      age: emp.age,
+      age: emp.age, retireInDays: emp.retireInDays,
       nationality: emp.nationality,
       productionEvents: (emp.productionBonus?.contributions || [])
         .filter(c => c.source === 'event' && c.until)
         .map(c => ({ delta: c.percent || 0, hours: Math.max(0, (Date.parse(c.until) - Date.now()) / 36e5) })),
       production: hired,
-      extraProduction: total - hired,
+      traitProduction,
+      extraProduction: total - hired - traitProduction,
       responsibility: emp.breakdown?.responsibility?.total ?? emp.base?.responsibility ?? 0,
       luck: emp.breakdown?.luck?.total ?? emp.base?.luck ?? 0,
       bonusPct: Math.round((emp.productionBonus?.total ?? 0) * 10) / 10,
@@ -922,9 +949,9 @@ const EmployeeTrainingTool = (() => {
       itemType: market?.types?.[entry.company.itemCode] || EC.DEFAULT_SITUATION.itemType,
       product: entry.company.itemCode,
       tenureDays: Number.isFinite(since) ? Math.max(0, Math.floor((Date.now() - since) / 864e5)) : 0,
-      peers: others.map(x => ({ model: { age: x.age, nationality: x.nationality } })),
+      peers: others.map(x => ({ model: { age: x.age, retireInDays: x.retireInDays, nationality: x.nationality } })),
     };
-    const model = { age: emp.age, nationality: emp.nationality, production: paidProd(emp), traits: emp.traits || [] };
+    const model = { age: emp.age, retireInDays: emp.retireInDays, nationality: emp.nationality, production: paidProd(emp), traits: emp.traits || [] };
     return { model, situation, production: EC.comparisonProduction(model, situation),
       wagePP: emp.wage / (market?.ppValue || 1) };
   }
@@ -941,7 +968,7 @@ const EmployeeTrainingTool = (() => {
   // `lasting`, only the losses that don't expire count.
   // `shared` leaves out the employee's own traits' losses (Homesick…).
   function lifeLoss(x, { lasting = false, shared = false } = {}) {
-    const hours = Math.max(1, (EC.CFG.retireAge - (x.age || 0)) * 24);
+    const hours = Math.max(1, EC.workingDays(x) * 24);
     return (x.happinessBreakdown?.contributions || []).reduce((a, c) => {
       if (!(c.delta < 0) || shared && ownTrait(c)) return a;
       if (!c.until) return a - c.delta;
@@ -967,6 +994,8 @@ const EmployeeTrainingTool = (() => {
       coworkerOutput: outputs.length ? outputs.reduce((a, v) => a + v, 0) / outputs.length * (p?.ratio ?? 1) : null,
       sit: {
         ...EC.DEFAULT_SITUATION,
+        engineDailyProd: market?.engineLevels?.[company.activeUpgradeLevels?.automatedEngine]?.stats?.dailyProd || 0,
+        engineBonus: entry.engineBonus || 0,
         nationality: nat,
         gender: emp.gender === 'female' ? 'female' : 'male',
         coworkers: others.length,
@@ -1059,6 +1088,8 @@ const EmployeeTrainingTool = (() => {
       coworkerOutput: outputs.length ? outputs.reduce((a, v) => a + v, 0) / outputs.length * (p?.ratio ?? 1) : undefined,
       situation: {
         ...EC.DEFAULT_SITUATION,
+        engineDailyProd: market?.engineLevels?.[company.activeUpgradeLevels?.automatedEngine]?.stats?.dailyProd || 0,
+        engineBonus: entry.engineBonus || 0,
         gender, nationality,
         coworkers: employees.length,
         coworkerIds: employees.map(x => x._id),
@@ -1116,12 +1147,12 @@ const EmployeeTrainingTool = (() => {
   function energyFeed() {
     if (!team || !market?.ppValue || taken.size) return [];
     const rows = team.companies.filter(entry => !entry.rosterMissing).flatMap(entry => entry.employees
-      .filter(emp => (emp.potentialMax || 0) - (emp.potential || 0) > 0).map(emp => trainRow(emp, entry)));
+      .filter(emp => canAct(emp, entry) && (emp.potentialMax || 0) - (emp.potential || 0) > 0).map(emp => trainRow(emp, entry)));
     rows.sort((a, b) => (b.ready - a.ready) || (b.value - a.value));
     // A hire's trainings count above what the energy earns training.
     const alt = altFrom(rows).value;
     for (const entry of team.companies) {
-      if (!entry.rosterMissing && entry.employees.length < headcountCap(entry.company)) rows.push(hireRow(entry, alt));
+      if (!entry.company.disabledAt && !entry.rosterMissing && entry.employees.length < headcountCap(entry.company)) rows.push(hireRow(entry, alt));
     }
     return rows.sort((a, b) => (b.ready - a.ready) || (b.value - a.value));
   }
@@ -1145,7 +1176,7 @@ const EmployeeTrainingTool = (() => {
     const moved = move && team.companies.find(x => x.company._id === move.to);
     if (moved) return { company: moved.company, planned: true };
     const raw = (emp.traits || []).some(t => t.code === 'laborer');
-    const fits = team.companies.filter(x => !x.rosterMissing && x !== entry && (market?.types?.[x.company.itemCode] === 'raw') === raw)
+    const fits = team.companies.filter(x => !x.company.disabledAt && !x.rosterMissing && x !== entry && (market?.types?.[x.company.itemCode] === 'raw') === raw)
       .sort((a, b) => (productFor(b.company.itemCode)?.ratio ?? 0) - (productFor(a.company.itemCode)?.ratio ?? 0));
     return { company: fits[0]?.company || null, planned: false };
   }
@@ -1225,7 +1256,7 @@ const EmployeeTrainingTool = (() => {
     };
     const groups = { now: [], energy: [], check: [], done: [] };
     const where = entry => companyLabelHtml(entry.company);
-    const all = team.companies.flatMap(entry => entry.employees.map(emp => ({ emp, entry })));
+    const all = actionEmployees();
     for (const { emp, entry } of all) {
       const hand = pendingHand(emp);
       if (hand) groups.now.push({ icon: '🃏', go: { tab: 'train', emp: emp._id },
@@ -1280,6 +1311,13 @@ const EmployeeTrainingTool = (() => {
     else if (plan?.gain > 1e-7) groups.check.push({ icon: '🧭', go: { tab: 'assignments' },
       what: `Rearrange: ${plan.gain >= 0 ? '+' : '−'}${Math.abs(plan.gain).toFixed(2)} ${plan.horizon === 'career' ? 'over their careers' : `over ${plural(plan.days, 'day')}`}`,
       sub: `${plural(plan.changes, 'move or tool change', 'moves or tool changes')}${plan.cancelled ? ', search cut short' : ''} · in game money after wages` });
+    // Employees of a disabled company don't work, age or train there.
+    for (const entry of team.companies) {
+      const idle = entry.employees.filter(emp => !emp.leftAt && !canAct(emp, entry));
+      if (idle.length) groups.check.push({ icon: '⏸', go: { tab: 'assignments' },
+        what: `${where(entry)} is disabled: ${plural(idle.length, 'employee')} idle`,
+        sub: `${escapeHtml(idle.map(emp => emp.name).join(', '))} won't work, age or train there · the planner can move them to a working company` });
+    }
     if (plan?.coverage?.length) groups.check.push({ icon: 'ⓘ', go: { tab: 'assignments' }, what: 'Review valuation assumptions', sub: `Earnings assume employees stay. ${plan.excluded?.length || 0} companies excluded; toolbox, training and recruiting assumptions are in Assignments.` });
     for (const { emp, entry } of all) {
       const m = mismatchOf(emp, entry.company);
@@ -1333,7 +1371,7 @@ const EmployeeTrainingTool = (() => {
     const verdicts = new Map(keepRows().map(r => [r.emp._id, keepVerdict(r)]));
     const topTrain = new Set(feedRows().filter(r => r.kind === 'train' && r.ready).slice(0, 5).map(r => r.emp._id));
     const stat = (emp, k) => {
-      const base = emp.base?.[k] ?? 0, total = emp.breakdown?.[k]?.total ?? base, diff = total - base;
+      const base = statShown(k, emp.base?.[k] ?? 0), total = statShown(k, emp.breakdown?.[k]?.total ?? emp.base?.[k] ?? 0), diff = total - base;
       return `${base}${diff ? `<span class="${diff < 0 ? 'tr-neg' : 'tr-pos'}">${diff > 0 ? '+' : '−'}${Math.abs(diff)}</span>` : ''}`;
     };
     const pips = emp => `<span class="tr-emp-pips" title="${emp.potential || 0} used of ${emp.potentialMax || 0}">${Array.from({ length: emp.potentialMax || 0 }, (_, k) => `<i${k < (emp.potential || 0) ? ' class="used"' : ''}></i>`).join('')}</span>`;
@@ -1350,7 +1388,7 @@ const EmployeeTrainingTool = (() => {
             ${traits ? `<small>${escapeHtml(traits)}</small>` : ''}
             <small class="tr-roster-mob">Age ${emp.age} · Prod ${stat(emp, 'production')} · ${plural(left, 'training')} left</small></td>
           <td class="num tr-roster-wide">${emp.age}</td>
-          <td class="tr-roster-wide">Prod ${stat(emp, 'production')} · Resp ${stat(emp, 'responsibility')} · Luck ${stat(emp, 'luck')}</td>
+          <td class="tr-roster-wide">Prod ${stat(emp, 'production')} · Happiness ${stat(emp, 'responsibility')} · Luck ${stat(emp, 'luck')}</td>
           <td class="tr-roster-wide">${pips(emp)} <span class="tr-muted">${left}</span></td>
           <td><span class="tr-badges">${flagsOf(emp, entry, verdicts, topTrain)}</span></td>
           <td class="num${profit != null && profit < 0 ? ' tr-neg' : ''}">${dailyProfitFmt(profit)}</td></tr>`;
@@ -1376,11 +1414,17 @@ const EmployeeTrainingTool = (() => {
   const MAX_SLOTS = 6;   // 3, plus 1 per Recruiter up to 3
   const LETTERS = 'ABCDEF';
   const todayUtc = () => new Date().toISOString().slice(0, 10);
-  const CAND_FIELDS = ['age', 'gender', 'nat', 'wage', 'production', 'responsibility', 'luck'];
-  const blankCand = () => ({ age: '', gender: 'male', nat: '', wage: '', production: '', responsibility: '', luck: '' });
+  // The hire card shows the happiness Responsibility gives a newcomer
+  // (50 + 3 a point), not the stat, so that is what's typed.
+  const CAND_FIELDS = ['age', 'gender', 'nat', 'wage', 'production', 'happiness', 'luck'];
+  const blankCand = () => ({ age: '', gender: 'male', nat: '', wage: '', production: '', happiness: '', luck: '' });
+  const NEW_HIRE_HAPPINESS = 50;
+  const candResponsibility = h => h == null ? null : (h - NEW_HIRE_HAPPINESS) / EC.CFG.respHappiness;
   // Candidates saved before cards showed every stat carry traits, a hidden
   // count and potential; those are left behind.
-  const savedCand = c => ({ ...blankCand(), ...Object.fromEntries(CAND_FIELDS.filter(k => c?.[k] != null).map(k => [k, c[k]])) });
+  const savedCand = c => ({ ...blankCand(), ...Object.fromEntries(CAND_FIELDS.filter(k => c?.[k] != null).map(k => [k, c[k]])),
+    // Drafts saved before the card showed happiness typed the stat.
+    ...(c?.happiness == null && c?.responsibility != null && c.responsibility !== '' && Number.isFinite(+c.responsibility) ? { happiness: String(NEW_HIRE_HAPPINESS + EC.CFG.respHappiness * +c.responsibility) } : {}) });
   function loadRecruit() {
     const fresh = { company: '', headcount: null, unit: 'day', day: todayUtc(), rerolls: 0, cands: [blankCand(), blankCand(), blankCand()] };
     try {
@@ -1493,7 +1537,7 @@ const EmployeeTrainingTool = (() => {
     // Contexts built while this is worked out leave energy out.
     energyMemo = { key, curve: null };
     const learners = team.companies.filter(entry => !entry.rosterMissing).flatMap(entry => entry.employees
-      .filter(emp => (emp.potentialMax || 0) - (emp.potential || 0) > 0).map(emp => {
+      .filter(emp => canAct(emp, entry) && (emp.potentialMax || 0) - (emp.potential || 0) > 0).map(emp => {
         const inp = inputsFor(emp, entry, { models: false });
         const e = employeeOf(inp);
         return { value: EC.trainingOutlook({ ...e, potentialMax: emp.potentialMax }, contextOf(inp), { depth: 0 }).value,
@@ -1650,10 +1694,9 @@ const EmployeeTrainingTool = (() => {
 
   // The wage as typed, per hour (the card may show it per day).
   const hourlyWage = c => { const w = numOrNull(c.wage); return w == null ? null : recruit.unit === 'day' ? w / 24 : w; };
-  const STATS = ['production', 'responsibility', 'luck'];
   function priceCandidate(c, entry, alt) {
     const age = numOrNull(c.age), wage = hourlyWage(c);
-    const [production, responsibility, luck] = STATS.map(k => numOrNull(c[k]));
+    const [production, responsibility, luck] = [numOrNull(c.production), candResponsibility(numOrNull(c.happiness)), numOrNull(c.luck)];
     if (entry?.rosterMissing || taken.size || !Number.isInteger(age) || age < 18 || age > 45
       || wage == null || wage < 0 || !c.nat || !['male', 'female'].includes(c.gender)
       || ![production, responsibility, luck].every(n => Number.isInteger(n) && n >= 1 && n <= 4) || !market?.ppValue) return null;
@@ -1685,7 +1728,7 @@ const EmployeeTrainingTool = (() => {
       </div>
       <div class="tr-cand-stats">
         ${num('production', 'Prod', 'min="1" max="4" step="1" inputmode="numeric" required')}
-        ${num('responsibility', 'Resp', 'min="1" max="4" step="1" inputmode="numeric" required')}
+        ${num('happiness', 'Happiness', `min="${NEW_HIRE_HAPPINESS + EC.CFG.respHappiness}" max="${NEW_HIRE_HAPPINESS + 4 * EC.CFG.respHappiness}" step="${EC.CFG.respHappiness}" inputmode="numeric" required`)}
         ${num('luck', 'Luck', 'min="1" max="4" step="1" inputmode="numeric" required')}
       </div>
       <div class="tr-cand-res" id="tr-cand-res-${i}"></div>
@@ -1728,7 +1771,7 @@ const EmployeeTrainingTool = (() => {
     }
     const prefs = entry ? prefsHtml(hirePrefs(entry), `What to look for in ${escapeHtml(companyName(entry.company))}`) : '';
     $recruit.innerHTML = `
-      ${help('How candidates are valued', `<p>Each candidate is worth their output after wages until retirement, plus their trait, their trainings and what they change for the coworkers' traits. Each point of Responsibility adds 3 happiness, and each point of happiness above 50 adds 1% to output.</p><p>The trait and potential show only after hire. The trait is the average roll, weighted by how likely each trait is. A wage expectation above 130% means Greedy, and one below 70% means Modest. Potential is averaged from 3 to 10. Each training counts only what it earns beyond the same 10 energy spent elsewhere.</p><p>The verdict compares the best candidate with a fresh set's likely pick, after what a new hire earns in the slot each working day. Reroll or wait when a fresh set is likely to do better.</p>`)}
+      ${help('How candidates are valued', `<p>Each candidate is worth their output after wages until retirement, plus their trait, their trainings and what they change for the coworkers' traits. The happiness on the card is 50 plus 3 for each point of Responsibility, and lasts. Each point of happiness above 50 adds 1% to output.</p><p>The trait and potential show only after hire. The trait is the average roll, weighted by how likely each trait is. A wage expectation above 130% means Greedy, and one below 70% means Modest. Potential is averaged from 3 to 10. Each training counts only what it earns beyond the same 10 energy spent elsewhere.</p><p>The verdict compares the best candidate with a fresh set's likely pick, after what a new hire earns in the slot each working day. Reroll or wait when a fresh set is likely to do better.</p>`)}
       ${prefs}
       <div class="tr-recruit-top">
         <label class="tr-field" for="tr-r-company"><span>Hiring into</span><select id="tr-r-company" data-r="company"${team ? '' : ' disabled'}>${companyOpts}</select></label>
@@ -1913,7 +1956,7 @@ const EmployeeTrainingTool = (() => {
           if (entry.rosterMissing) continue;
           for (const emp of entry.employees) {
             if (keepJob !== job) break;
-            if (emp.pendingTraining) continue;
+            if (!canAct(emp, entry) || emp.pendingTraining) continue;
             const projection = retentionOf(job, emp._id);
             if (!projection.valid) { reasons.set(emp._id, projection.reason); continue; }
             await breathe();
@@ -2096,7 +2139,7 @@ const EmployeeTrainingTool = (() => {
     next: ['Next training value', r => r.next?.value, -1],
     left: ['Trainings left', r => r.left, -1],
     production: ['Production', r => r.prod, -1],
-    responsibility: ['Responsibility', r => r.emp.breakdown?.responsibility?.total ?? r.emp.base?.responsibility ?? 0, -1],
+    responsibility: ['Lasting happiness', r => r.emp.breakdown?.responsibility?.total ?? r.emp.base?.responsibility ?? 0, -1],
     luck: ['Luck', r => r.emp.breakdown?.luck?.total ?? r.emp.base?.luck ?? 0, -1],
     traits: ['Number of traits', r => (r.emp.traits || []).length, -1],
     age: ['Age, youngest first', r => r.emp.age, 1],
@@ -2178,18 +2221,18 @@ const EmployeeTrainingTool = (() => {
     const select = (key, label, options) => `<label class="tr-field"><span>${label}</span><select data-emp-view="${key}">${options.map(([v, t]) =>
       `<option value="${escapeHtml(v)}"${v === empView[key] ? ' selected' : ''}>${escapeHtml(t)}</option>`).join('')}</select></label>`;
     const stat = (emp, k) => {
-      const base = emp.base?.[k] ?? 0, total = emp.breakdown?.[k]?.total ?? base, diff = total - base;
+      const base = statShown(k, emp.base?.[k] ?? 0), total = statShown(k, emp.breakdown?.[k]?.total ?? emp.base?.[k] ?? 0), diff = total - base;
       return `${base}${diff ? `<span class="${diff < 0 ? 'tr-neg' : 'tr-pos'}">${diff > 0 ? '+' : '−'}${Math.abs(diff)}</span>` : ''}`;
     };
     const body = shown.map(({ emp, entry, next, profit, left }) => {
-      const toRetire = EC.CFG.retireAge - emp.age;
+      const toRetire = EC.workingDays(emp);
       const status = pendingHand(emp) ? 'hand waiting' : doneToday(emp) ? 'trained today' : '';
       return `<tr style="--co:${colour.get(entry)}">
         <td data-label="Employee"><strong>${gameLink(entry.company, emp.name)}</strong><small>${companyLabelHtml(entry.company)}</small>
           <span class="tr-badges">${flagsOf(emp, entry, verdicts, topTrain)}</span></td>
         <td data-label="Age" class="num">${emp.age}<small>${toRetire > 0 ? `${plural(toRetire, 'day')} left` : 'retiring'}</small></td>
         <td data-label="Prod" class="num">${stat(emp, 'production')}</td>
-        <td data-label="Resp" class="num">${stat(emp, 'responsibility')}</td>
+        <td data-label="Lasting happiness" class="num">${stat(emp, 'responsibility')}</td>
         <td data-label="Luck" class="num">${stat(emp, 'luck')}</td>
         <td data-label="Trainings"><span class="tr-emp-pips" title="${emp.potential || 0} used of ${emp.potentialMax || 0}">${Array.from({ length: emp.potentialMax || 0 }, (_, k) => `<i${k < (emp.potential || 0) ? ' class="used"' : ''}></i>`).join('')}</span>
           <small>${emp.potential || 0} used, ${left} left${status ? ` · ${status}` : ''}</small></td>
@@ -2208,7 +2251,7 @@ const EmployeeTrainingTool = (() => {
         <span class="tr-muted" role="status">${plural(shown.length, 'employee')} shown</span>
       </div>
       <div class="tr-emps-wrap"><table class="tr-emps">
-        <thead><tr>${[['name', 'Employee'], ['age', 'Age', 1], ['production', 'Prod', 1], ['responsibility', 'Resp', 1], ['luck', 'Luck', 1], ['left', 'Trainings'],
+        <thead><tr>${[['name', 'Employee'], ['age', 'Age', 1], ['production', 'Prod', 1], ['responsibility', 'Lasting happiness', 1], ['luck', 'Luck', 1], ['left', 'Trainings'],
           ['next', 'Next training', 1], ['traits', 'Traits'], ['happiness', 'Happiness'], ['profit', 'Profit / day', 1]].map(([key, label, num]) => {
             const on = empView.sort === key, dir = EMP_SORTS[key][2] * (empView.flip ? -1 : 1);
             return `<th scope="col"${num ? ' class="num"' : ''} aria-sort="${on ? (dir > 0 ? 'ascending' : 'descending') : 'none'}"><button type="button" class="tr-emps-sort" data-emp-sort="${key}">${label}${on ? `<span aria-hidden="true">${dir > 0 ? '▲' : '▼'}</span>` : ''}</button></th>`;
@@ -2393,7 +2436,7 @@ const EmployeeTrainingTool = (() => {
     const profit = p && emp.estimate ? emp.estimate.production * p.perPP - emp.wage : null;
     const left = Math.max(0, (emp.potentialMax || 0) - (emp.potential || 0));
     const stat = k => {
-      const base = emp.base?.[k] ?? 0, total = emp.breakdown?.[k]?.total ?? base, diff = total - base;
+      const base = statShown(k, emp.base?.[k] ?? 0), total = statShown(k, emp.breakdown?.[k]?.total ?? emp.base?.[k] ?? 0), diff = total - base;
       return `${STAT_SHORT[k]} <b>${base}</b>${diff ? `<span class="${diff < 0 ? 'tr-neg' : 'tr-pos'}">${diff > 0 ? '+' : '−'}${Math.abs(diff)}</span>` : ''}`;
     };
     const hb = emp.happinessBreakdown;
@@ -2401,7 +2444,7 @@ const EmployeeTrainingTool = (() => {
     const status = hand ? `<p class="tr-emp-status"><span class="tr-badge tr-badge-hand">Hand</span> ${RARITY_NAME[hand.rarity]} hand waiting${hand.drawnAt ? `, dealt ${utcTime(new Date(hand.drawnAt))}` : ''}.${view.tab === 'train' ? '' : ` <button type="button" class="tr-link" data-go-tab="train" data-go-emp="${emp._id}">Rank it</button>`}</p>`
         : doneToday(emp) ? `<p class="tr-emp-status">Trained today. Next training at 00:00 UTC, in ${escapeHtml(formatDuration(untilReset()))}.</p>` : '';
     $empHead.innerHTML = `<div class="tr-emp-name"><strong>${gameLink(entry.company, emp.name)}</strong> <span class="tr-muted">${companyLabelHtml(entry.company)}${p ? ` (${p.ratio.toFixed(2)}×)` : ''}</span></div>
-      <div class="tr-emp-facts"><span>Age <b>${emp.age}</b> · ${plural(Math.max(0, EC.CFG.retireAge - emp.age), 'working day')}</span>
+      <div class="tr-emp-facts"><span>Age <b>${emp.age}</b> · ${plural(EC.workingDays(emp), 'working day')}</span>
         <span>${stat('production')} · ${stat('responsibility')} · ${stat('luck')}</span>
         <span><b>${left}</b> of ${emp.potentialMax || 0} trainings left</span>
         ${hb && typeof hb.value === 'number' ? `<span class="${hb.value < 30 ? 'tr-warn' : ''}">Happiness <b>${fmtNum(hb.value)}</b></span>` : ''}
@@ -2419,7 +2462,7 @@ const EmployeeTrainingTool = (() => {
     const emp = found.emp;
     // The last pick the game had recorded, to tell this one from it.
     const lastPick = (emp.trainingHistory || []).reduce((a, h) => h.pickedAt > a ? h.pickedAt : a, '');
-    taken.set(emp._id, { text: c.card === 'wildCard' ? 'Wild card' : `${cardTitle(c)}: ${effectText(c)}`, rolled: [], lastPick });
+    taken.set(emp._id, { text: c.card === 'wildCard' ? 'Wild card' : `${cardTitle(c)}: ${effectText(c)}`, rolled: [], lastPick, card: c.card, pending: JSON.stringify(emp.pendingTraining) });
     cardPricer?.dispose();
     cardPricer = null;
     cardRevision = null;
@@ -2437,8 +2480,8 @@ const EmployeeTrainingTool = (() => {
   }
 
   // A recorded choice confirmed from the game: the company's roster is read
-  // again until the employee's hand is gone and their training history holds
-  // a newer pick. The fresh roster replaces the company's (a card can change
+  // again until the employee's hand is gone and history holds a newer pick,
+  // or a Reroll replaces the hand. The fresh roster replaces the company's (a card can change
   // coworkers too) and advice resumes once no choice is left unconfirmed.
   const CONFIRM_TRIES = 12, CONFIRM_EVERY_MS = 15000;
   let confirmed = null;   // { emp, text }: the last pick the game confirmed
@@ -2455,7 +2498,14 @@ const EmployeeTrainingTool = (() => {
         trpc('employee.getCompanyEstimate', { companyId: entry.company._id }, { fresh: true }).catch(() => entry.estimate),
       ]);
       const fresh = Array.isArray(roster) ? roster.find(x => x._id === empId) : null;
-      pick = fresh && !fresh.pendingTraining?.offers?.length ? newestPick(fresh, t.lastPick ?? '') : null;
+      if (t.card === 'reroll') {
+        const recorded = fresh && newestPick(fresh, t.lastPick ?? '');
+        const newHand = fresh?.pendingTraining?.offers?.length &&
+          (JSON.stringify(fresh.pendingTraining) !== t.pending || recorded?.card === 'reroll');
+        pick = newHand ? { card: 'reroll' } : null;
+      } else {
+        pick = fresh && !fresh.pendingTraining?.offers?.length ? newestPick(fresh, t.lastPick ?? '') : null;
+      }
     } catch (err) { console.warn('[training] pick check failed', err); }
     t.checking = false;
     if (taken.get(empId) !== t || !findEmployee(empId)) return;   // reloaded meanwhile
@@ -2485,13 +2535,14 @@ const EmployeeTrainingTool = (() => {
   }
   // A training history entry as the game resolved it: the card, then what it did.
   function pickText(h) {
+    if (h.card === 'reroll') return 'Reroll: new hand';
     const o = h.outcome || {};
     const c = h.card === 'habit' && h.traitTo2 ? { card: 'habitPair' } : h.card === 'negotiation' ? { card: 'negotiation', drop: h.delta }
       : h.card === 'secondWind' ? { card: 'secondWind', gain: h.delta } : { card: h.card, stat: h.stat, delta: h.delta };
     const did = [
       ...EC.currentTraits(o.gained || []).map(g => `gained ${traitName(g.code)}`),
       ...EC.currentTraits((o.lost || []).map(code => ({ code: typeof code === 'string' ? code : code?.code }))).map(g => `lost ${traitName(g.code)}`),
-      o.stat && o.statGain ? `+${o.statGain} ${STAT[o.stat] || o.stat}` : null,
+      o.stat && o.statGain ? statGainText(o.stat, o.statGain) : null,
       o.potentialMax != null ? `potential now ${o.potentialMax}` : null,
       o.wageExpectation != null ? `wage expectation now ${Math.round(o.wageExpectation * 100)}%` : null,
     ].filter(Boolean);
@@ -2573,7 +2624,7 @@ const EmployeeTrainingTool = (() => {
   // training progress, what's waiting, and the top three Spend energy
   // actions with their profit a day (money, or PP for a hire).
   function snapshot() {
-    const all = team.companies.flatMap(entry => entry.employees.map(emp => ({ emp, entry })));
+    const all = actionEmployees();
     const hand = all.filter(x => pendingHand(x.emp));
     const trainable = all.filter(x => pendingHand(x.emp) || doneToday(x.emp) || (x.emp.potentialMax || 0) - (x.emp.potential || 0) > 0);
     const energy = energyNow();
@@ -2590,7 +2641,7 @@ const EmployeeTrainingTool = (() => {
       : `${r.entry.employees.length} of ${r.cap} slots used`;
     return {
       username: team.username,
-      employees: all.length,
+      employees: allEmployees().length,
       companies: team.companies.length,
       energy,
       energyMax: team.energyBar?.max ?? null,

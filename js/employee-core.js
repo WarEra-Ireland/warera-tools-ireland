@@ -10,12 +10,15 @@
  *  rankings don't depend on it; only the toolbox value does.
  *
  *  Model, per worked hour:
- *    output = (P + extra)/4 × (1 + bonus) × sellRatio × V
+ *    output = (P + T + extra)/4 × (1 + bonus) × sellRatio × V
  *    wage   = P/4 × wageExpectation × V
- *  P is the Production the wage is paid on: hired plus trained (the API's
- *  `base`). `extra` is Production from traits, which isn't paid for. Both
- *  checked against every employee's wage. So a
- *  Production drill earns only its margin over the wage it adds.
+ *  P is hired plus trained Production (the API's `base`). T is the flat
+ *  Production of the employee's own traits (Laborer, Expat, Early Bloomer…)
+ *  and `extra` the rest (Rival, Mentor and coworkers' effects); neither is
+ *  paid for. Checked against every employee's wage (2026-11-03). v0.27.4
+ *  briefly paid T too; CFG.traitProductionPaid turns that back on. So a
+ *  Production drill earns only its margin over the wage it adds, and a
+ *  trait's Production earns its full output.
  *  sellRatio is what your product earns per point ÷ V (1 = an average product).
  *  Specialization adds +1% bonus a day on the same product, up to +20%; the
  *  bonus typed in is today's, and it keeps climbing while specialization does.
@@ -27,6 +30,11 @@ const EmployeeCore = (() => {
     wageFloor: 0.7,
     potentialMaxCap: 15,
     handSize: 3,
+    wildCardStatGain: 2,            // a Wild Card's random stat gain (v0.27.4: 1 → 2)
+    // Whether the wage is paid on the employee's own traits' flat Production
+    // too. v0.27.4 paid it for a few hours on 2026-11-02, then the server
+    // went back to base (hired + trained) Production only.
+    traitProductionPaid: false,
     respHappiness: 3,               // happiness per point of Responsibility, always on
     happinessMax: 100,
     specializationMax: 20,          // % bonus, gained 1% a day on one product
@@ -47,12 +55,11 @@ const EmployeeCore = (() => {
     epic:      [drill('production', 3), drill('responsibility', 3), drill('luck', 3), wind(3)],
     legendary: [drill('production', 4), drill('responsibility', 4), drill('luck', 4), wind(4)],
   };
-  // Trait cards that change Production can be priced: trait Production
-  // isn't paid for, so each point is pure output. They only count while the
-  // trait's condition holds (product type, coworkers, region, age).
+  // Trait cards that change Production can be priced: each point earns its
+  // output (less the wage only if CFG.traitProductionPaid). They only count while the trait's condition
+  // holds (product type, coworkers, region, age).
   const PROD_TRAIT_CARDS = {
-    rare:      [traitProd(3, 'Habit', '+3 Prod trait', 'Rival, Craftsman, Laborer'),
-                traitProd(2, 'Rehab', '−2 Prod trait', 'Xenophobe, Homesick, Worn Out')],
+    rare:      [traitProd(2, 'Rehab', '−2 Prod trait', 'Xenophobe, Homesick, Worn Out')],
     epic:      [traitProd(2, 'Habit', '+2 Prod trait', 'Patriot, Expat, Cosmopolitan')],
     legendary: [traitProd(4, 'Habit pair', '+4 Prod or more', 'two of Patriot, Expat, Cosmopolitan')],
   };
@@ -63,11 +70,12 @@ const EmployeeCore = (() => {
 
   const DEFAULT_EMPLOYEE = {
     age: 30, production: 3, responsibility: 2, luck: 2,
-    extraProduction: 0,     // from traits; produces but isn't paid
+    traitProduction: 0,     // own traits' flat Production, today; paid like P only if CFG.traitProductionPaid
+    extraProduction: 0,     // Rival, Mentor and coworkers' Production; produces but isn't paid
     bonus: 0.24,            // production bonus as a fraction (+24%), today
     productionEvents: [],   // included in bonus today: [{ delta: percent, hours: remaining }]
     specialization: 20,     // % of the bonus that is specialization; 20 = maxed, no further growth
-    wageExpectation: 1,     // wage ÷ (P/4 × V): 1 = market rate, Greedy/Modest folded in
+    wageExpectation: 1,     // wage ÷ (paid Production/4 × V): 1 = market rate, Greedy/Modest folded in
     happinessLoss: 10,      // happiness points lost to tax, storage, moves… (Loyal halves them)
     happiness: null,        // today's happiness, 0 to 100; null = unknown, so gains aren't capped
     potentialLeft: 3,
@@ -80,10 +88,14 @@ const EmployeeCore = (() => {
     energyValue: 0,         // PP 10 energy earns elsewhere, or a list by day from today; Second Wind's trainings are net of it
   };
 
-  const workingDays = e => Math.max(0, CFG.retireAge - e.age);
+  const workingDays = e => Math.max(0, Number.isFinite(e.retireInDays) ? e.retireInDays : CFG.retireAge - e.age);
   const hoursLeft = e => workingDays(e) * 24;
-  const pph = e => (e.production + e.extraProduction) / CFG.outputDivisor;   // output points per hour before bonuses
-  const paidPph = e => e.production / CFG.outputDivisor;                     // the points the wage is paid on
+  // The Production the wage is paid on. Assumed never below 1, like the stat.
+  const paidProduction = e => Math.max(1, e.production + (CFG.traitProductionPaid ? e.traitProduction || 0 : 0));
+  const pph = e => (e.production + (e.traitProduction || 0) + e.extraProduction) / CFG.outputDivisor;   // output points per hour before bonuses
+  const paidPph = e => paidProduction(e) / CFG.outputDivisor;                                      // the points the wage is paid on
+  // Traits whose Production isn't paid: they compare the employee with coworkers.
+  const UNPAID_PRODUCTION = new Set(['rival', 'mentor']);
 
   // Average bonus over the working days left: today's, plus the
   // specialization still to come (+1% a day until the cap).
@@ -107,7 +119,7 @@ const EmployeeCore = (() => {
 
   // The wage expectation below which a Production drill beats the
   // Negotiation of the same rarity (margin > 5% × paid Production).
-  const drillBeatsNegotiationBelow = (e, ctx) => (1 + careerBonus(e)) * ctx.sellRatio - 0.05 * e.production;
+  const drillBeatsNegotiationBelow = (e, ctx) => (1 + careerBonus(e)) * ctx.sellRatio - 0.05 * paidProduction(e);
 
   // What the employee earns you per hour (output − wage), averaged over the
   // working days left, in PP.
@@ -134,7 +146,8 @@ const EmployeeCore = (() => {
       if (!canNegotiate(e, c)) return null;   // card not offered
       return paidPph(e) * c.drop * wageTraitMultiplier(e);
     }
-    if (c.card === 'traitProd') return c.delta * (1 + careerBonus(e)) * ctx.sellRatio / CFG.outputDivisor;
+    if (c.card === 'traitProd') return c.delta / CFG.outputDivisor
+      * (CFG.traitProductionPaid ? marginPerPoint(e, ctx) : (1 + careerBonus(e)) * ctx.sellRatio);
     if (c.card === 'drill') {
       if (c.stat === 'production') return (c.delta / CFG.outputDivisor) * marginPerPoint(e, ctx);
       if (c.stat === 'responsibility') {
@@ -146,11 +159,31 @@ const EmployeeCore = (() => {
     return 0;
   }
 
+  // The card's daily profit as the game shows it: today's change in output
+  // at the market price, minus today's change in wage, over 24 hours, in
+  // money. Not averaged over the career, so specialization growth, aging,
+  // coworkers and future trainings are left out. `ppMoney` is the money one
+  // PP of this product sells for; e.wage, when known, is the wage per hour in
+  // money. null for a card whose outcome is random or a trait, or a
+  // Negotiation the game would not offer.
+  function gameDailyProfit(e, c, ctx, ppMoney) {
+    e = { ...DEFAULT_EMPLOYEE, ...e };
+    if (!(ppMoney > 0) || !['drill', 'negotiation', 'secondWind'].includes(c.card)) return null;
+    if (c.card === 'negotiation' && !canNegotiate(e, c)) return null;
+    let output = 0;   // PP per hour
+    if (c.card === 'drill' && c.stat === 'production') output = c.delta / CFG.outputDivisor * (1 + e.bonus);
+    if (c.card === 'drill' && c.stat === 'responsibility') output = pph(e) * happyGain(CFG.respHappiness * c.delta, e.happiness) * 0.01;
+    const next = cardOutcomes(e, c, ctx)[0]?.employee || e;
+    const wage = x => Number.isFinite(e.wage) ? x.wage : paidPph(x) * x.wageExpectation * ppMoney / (ctx?.sellRatio || 1);
+    return 24 * (output * ppMoney - (wage(next) - wage(e)));
+  }
+
   // Value of a card over the employee's remaining working life. `memo`
   // holds work shared by the cards of one pool (same employee and context).
   function cardValue(e, c, ctx, depth = 1, memo = {}) {
     e = { ...DEFAULT_EMPLOYEE, ...e };
     ctx = { ...DEFAULT_CONTEXT, ...ctx };
+    if (c.card === 'reroll') return trainingOutlook(e, ctx, { depth, memo }).value;
     if (c.card === 'secondWind') return secondWindValue(e, c, ctx, depth, null, memo);
     let v = traitCardValue(e, c, ctx, memo);
     if (v === undefined) {
@@ -255,18 +288,17 @@ const EmployeeCore = (() => {
 
   // A one-step forecast: extra Luck changes the rarity of the remaining draws.
   // Their values exclude further Luck forecasts and Second Wind recursion.
-  // The outlook is the same for every Luck card in a pool, so `memo` keeps it.
+  // The pool is the same for every Luck card in a pool, so `memo` keeps it.
+  // A fresh hand is worth what Reroll is, which itself moves with Luck, so
+  // each Luck re-solves it from the other cards.
   function futureLuckValue(e, delta, ctx = {}, memo = {}) {
     if (ctx.futureTraining === false || !delta) return 0;
     const days = workingDays(e), count = Math.max(0, e.potentialLeft || 0);
     if (days <= 0 || !count) return 0;
     // Trait values don't depend on futureTraining, so the pool's carry over.
-    const outlook = memo.luckOutlook ??= trainingOutlook(e, { ...ctx, futureTraining: false }, { depth: 0, memo: { traits: traitsOf(memo) } });
-    const mean = luck => {
-      const odds = rarityOdds(luck, ctx.management || 0);
-      const norm = outlook.rarities.reduce((n, r) => n + odds[r.rarity], 0);
-      return norm ? outlook.rarities.reduce((n, r) => n + odds[r.rarity] * r.value, 0) / norm : 0;
-    };
+    const pool = memo.luckPool ??= (p => ({ ...p, uncommon: p.uncommon.filter(c => c.card !== 'reroll') }))(
+      cardPool(e, { ...ctx, futureTraining: false }, { depth: 0, memo: { traits: traitsOf(memo) } }));
+    const mean = luck => rerollValue(pool, { luck }, { management: ctx.management || 0 });
     const gain = mean(e.luck + delta) - mean(e.luck);
     let total = 0;
     for (let k = 1; k <= count; k++) total += gain * Math.max(0, days - k / (e.trainingsPerDay || 1)) / days;
@@ -298,6 +330,7 @@ const EmployeeCore = (() => {
   }
 
   function cardLabel(c) {
+    if (c.card === 'reroll') return `Reroll: new hand, worth ~${Math.round(c.value)} PP`;
     if (c.card === 'traitProd') return `${c.name} (${c.detail})`;
     if (c.card === 'drill') return `${c.stat} +${c.delta}`;
     if (c.card === 'negotiation') return `negotiation −${Math.round(c.drop * 100)}%`;
@@ -315,16 +348,18 @@ const EmployeeCore = (() => {
   // Ranks an actual hand (any priced cards), best first.
   function rankHand(cards, e, ctx) {
     return cards
-      .map(c => ({ ...c, label: c.trait ? `${c.name} (${c.detail})` : cardLabel(c), value: c.trait ? null : cardValue(e, c, ctx) }))
+      .map(c => {
+        const value = c.trait ? null : cardValue(e, c, ctx);
+        return { ...c, label: c.trait ? `${c.name} (${c.detail})` : cardLabel({ ...c, value }), value };
+      })
       .sort((a, b) => (b.value ?? -Infinity) - (a.value ?? -Infinity));
   }
 
   // Trait cards depend on which trait, so they can't be priced. They sit at
   // a fixed place in their tier: before the card named in `before`, or last.
   const TRAIT_CARDS = {
-    uncommon:  [trait('wildCard', 'Wild Card', 'random trait, +1 stat', 'responsibility')],
     rare:      [trait('rehab', 'Rehab', 'other negative trait', 'secondWind'),
-                trait('habit', 'Habit', 'other mixed trait', null)],
+                trait('wildCard', 'Wild Card', 'random trait, +2 stat', null)],
     epic:      [trait('habit', 'Habit', 'other positive trait', 'responsibility')],
     legendary: [trait('habitPair', 'Habit pair', 'other positive traits', 'responsibility'),
                 trait('rehabAll', 'Rehab All', 'every negative trait', 'responsibility')],
@@ -386,6 +421,8 @@ const EmployeeCore = (() => {
    */
   const DEFAULT_SITUATION = {
     gender: 'male',
+    engineDailyProd: 0,         // raw Automated Engine PP/day
+    engineBonus: 0,             // company production bonus, as a fraction
     coworkers: 2,               // Break Room level 3, the top, holds 3 employees
     femaleCoworkers: 1,         // of the coworkers
     sameNationalityCoworkers: null,
@@ -420,17 +457,18 @@ const EmployeeCore = (() => {
   const TRAITS = [
     ['handy', 'Handy', 'positive', 5, '+40% output while holding a tool', x => x.s.hasTool ? x.pct(40) : 0],
     ['improviser', 'Improviser', 'positive', 5, '+25% output without a tool', x => x.s.hasTool ? 0 : x.pct(25)],
-    ['nationalist', 'Nationalist', 'positive', 10, '+2 Responsibility and +5 happiness with a coworker of the same nationality', x => (x.s.sameNationalityCoworkers ?? (x.s.coworkers && !x.s.otherNationalities)) ? x.resp(2) + x.happy(5) : 0],
+    ['nationalist', 'Nationalist', 'positive', 10, '+6 and +5 happiness with a coworker of the same nationality', x => (x.s.sameNationalityCoworkers ?? (x.s.coworkers && !x.s.otherNationalities)) ? x.resp(2) + x.happy(5) : 0],
     ['xenophobe', 'Xenophobe', 'negative', 10, '−2 Production and −5 happiness with a coworker of another nationality', x => x.s.otherNationalities ? x.prod(-2) + x.happy(-5) : 0],
     ['cosmopolitan', 'Cosmopolitan', 'positive', 10, '+2 Prod per other nationality, cap +4', x => x.prod(per(x.s.otherNationalities, 2, 4))],
+    ['talksToMachines', 'Talks to Machines', 'positive', 5, 'Doubles Automated Engine output while the holder is the only employee', x => x.s.coworkers === 0 ? x.engine() : 0],
     ['loner', 'Loner', 'positive', 5, '+100% output and +5 happiness as the sole employee', x => x.s.coworkers ? 0 : x.pct(100) + x.happy(5)],
     ['sociable', 'Sociable', 'mixed', 10, '+25% output per coworker, capped at +50%; −10 happiness alone', x => x.s.coworkers ? x.pct(per(x.s.coworkers, 25, 50)) : x.happy(-10)],
     ['comic', 'Comic', 'mixed', 10, '−1 Prod, coworkers +10 happiness; multiple Comics do not stack', x => x.s.coworkers ? x.prod(-1) + x.teamHappy(10) : 0],
     ['mentor', 'Mentor', 'mixed', 2, 'a coworker with lower Production before peer effects gains +2 Production; self −1 Production', x => x.s.weakerCoworker ? x.teamProd(2) + x.prod(-1) : 0],
-    ['foreman', 'Foreman', 'positive', 5, 'coworkers +3 Resp', x => x.s.coworkers ? x.teamResp(3) : 0],
+    ['foreman', 'Foreman', 'positive', 5, 'coworkers +9 happiness', x => x.s.coworkers ? x.teamResp(3) : 0],
     ['rival', 'Rival', 'mixed', 5, '+3 Production with a stronger coworker before peer effects; −1 otherwise; no effect alone', x => x.s.coworkers ? x.prod(x.s.strongerCoworker ? 3 : -1) : 0],
     ['primaDonna', 'Prima Donna', 'mixed', 5, '+20% output if highest paid; otherwise −10 happiness; no effect alone', x => x.s.coworkers ? (x.s.betterPaid ? x.happy(-10) : x.pct(20)) : 0],
-    ['bully', 'Bully', 'mixed', 5, '+2 Prod, coworkers −10 happiness', x => x.s.coworkers ? x.prod(2) + x.teamHappy(-10) : 0],
+    ['bully', 'Bully', 'negative', 5, '+2 Prod, coworkers −10 happiness', x => x.s.coworkers ? x.prod(2) + x.teamHappy(-10) : 0],
     ['envious', 'Envious', 'negative', 10, '−5 happiness per better-paid coworker', x => x.happy(per(x.s.betterPaid, -5, -10))],
     ['oldFriends', 'Old Friends', 'positive', 2, '+15% output while the linked employee is present', x => x.pct(15), { partner: true }],
     ['nemesis', 'Nemesis', 'negative', 2, '−15% output while the linked employee is present', x => x.pct(-15), { partner: true }],
@@ -458,7 +496,7 @@ const EmployeeCore = (() => {
     ['homesick', 'Homesick', 'negative', 10, '−2 Production and −10 happiness outside their home country', x => x.s.place === 'abroad' && !x.s.homeCore ? x.prod(-2) + x.happy(-10) : 0],
     ['expat', 'Expat', 'positive', 10, '+2 Production outside their home country', x => x.s.place === 'abroad' ? x.prod(2) : 0],
     ['taxShy', 'Tax Shy', 'negative', 10, '−1% output per income tax percentage point, capped at −30%', x => x.pct(-Math.min(30, x.s.incomeTax))],
-    ['statist', 'Statist', 'positive', 10, '+2 Responsibility when income tax is at least 20%', x => x.s.incomeTax >= 20 ? x.resp(2) : 0],
+    ['statist', 'Statist', 'positive', 10, '+6 happiness when income tax is at least 20%', x => x.s.incomeTax >= 20 ? x.resp(2) : 0],
     // Held, the wage already includes it; gained, it applies on top.
     ['greedy', 'Greedy', 'negative', 10, 'wage +20%', x => x.wage(x.held ? 1 - 1 / 1.2 : 0.2)],
     ['modest', 'Modest', 'positive', 10, 'wage −15%', x => x.wage(x.held ? 1 - 1 / 0.85 : -0.15)],
@@ -478,10 +516,26 @@ const EmployeeCore = (() => {
   // Retired codes and what the game turned them into.
   const RENAMED_TRAITS = { sprinter: 'earlyBloomer' };
   const currentTraits = traits => (traits || []).map(t => RENAMED_TRAITS[t.code] ? { ...t, code: RENAMED_TRAITS[t.code] } : t);
+  // An API employee's own trait Production: the flat Production entries in
+  // breakdown.production.contributions from traits they hold, but not Rival
+  // or Mentor. Coworkers' Mentor bonus carries the code 'mentor' too.
+  function ownTraitProduction(emp) {
+    const held = new Set(currentTraits(emp?.traits).map(t => t.code));
+    return (emp?.breakdown?.production?.contributions || []).reduce((a, c) => {
+      const code = RENAMED_TRAITS[c.code] || c.code;
+      return !c.percent && held.has(code) && !UNPAID_PRODUCTION.has(code) && Number.isFinite(c.delta) ? a + c.delta : a;
+    }, 0);
+  }
 
   // An employee can't hold both of a pair.
   const EXCLUSIVE = [
     ['handy', 'improviser'],
+    ['talksToMachines', 'sociable'],
+    ['talksToMachines', 'comic'],
+    ['talksToMachines', 'foreman'],
+    ['talksToMachines', 'mentor'],
+    ['talksToMachines', 'trainer'],
+    ['talksToMachines', 'luckyCharm'],
     ['loner', 'sociable'],
     ['cosmopolitan', 'xenophobe'],
     ['comic', 'bully'],
@@ -514,7 +568,7 @@ const EmployeeCore = (() => {
   ];
   const conflicts = (a, b) => EXCLUSIVE.some(([x, y]) => (x === a && y === b) || (x === b && y === a));
 
-  // Traits a Habit (positive or mixed) or Wild Card (any) could give.
+  // Traits a Habit (positive) or Wild Card (any) could give.
   function eligibleTraits(heldCodes, gender, polarities) {
     return TRAITS.filter(t => !t.partner && polarities.includes(t.polarity) && !heldCodes.includes(t.code)
       && !heldCodes.some(h => conflicts(h, t.code)) && (!t.gender || t.gender === gender));
@@ -523,7 +577,7 @@ const EmployeeCore = (() => {
     const pool = eligibleTraits(heldCodes, gender, ['positive', 'mixed', 'negative']);
     return pool.length ? pool.filter(t => t.polarity === 'negative').length / pool.length : null;
   }
-  const HABIT_POLARITY = { rare: 'mixed', epic: 'positive', legendary: 'positive' };
+  const HABIT_POLARITY = { epic: 'positive', legendary: 'positive' };
 
   // Known arguments stay fixed. Diamond rolls each stat equally; a gained
   // Specialist takes the company's good, or a match if the product is unknown.
@@ -533,20 +587,25 @@ const EmployeeCore = (() => {
     return [{ arg: held ? null : s.product || 'match', p: 1 }];
   }
 
-  // { value, outcomes: [{ arg, p, value }] } over the working life; value is
-  // the expected PP, null if unpriced. `held` prices having it now (Rehab
-  // is minus that).
+  // { value, outcomes: [{ arg, p, value }], wageBase } over the working life;
+  // value is the expected PP, null if unpriced. `held` prices having it now
+  // (Rehab is minus that). With CFG.traitProductionPaid the trait's own flat
+  // Production is paid (never Rival's or Mentor's), so value includes that
+  // wage at e.wageExpectation;
+  // wageBase is the paid Production it adds, in output points over the
+  // working life, so the value at another expectation w is
+  // value + (e.wageExpectation − w) × wageBase.
   function traitValue(code, e, ctx = {}, { arg = null, held = false } = {}) {
     const t = TRAIT[code];
-    if (!t || t.unpriced) return { value: null, outcomes: [], note: t?.unpriced };
+    if (!t || t.unpriced) return { value: null, outcomes: [], wageBase: 0, note: t?.unpriced };
     if (code === 'anchor') {
       const loss = (e.happiness ?? 50) < 30 ? -0.5 * pph({ ...DEFAULT_EMPLOYEE, ...e }) * (ctx.sellRatio ?? 1) * hoursLeft(e) : 0;
-      return { value: loss, outcomes: [], note: t.partial };
+      return { value: loss, outcomes: [], wageBase: 0, note: t.partial };
     }
     e = { ...DEFAULT_EMPLOYEE, ...e };
     ctx = { ...DEFAULT_CONTEXT, ...ctx };
     const s = { ...DEFAULT_SITUATION, ...ctx.situation };
-    if (t.partner && !s.coworkerIds.includes(arg)) return { value: 0, outcomes: [] };
+    if (t.partner && !s.coworkerIds.includes(arg)) return { value: 0, outcomes: [], wageBase: 0 };
     if (s.peers) {
       const own = wagePP(e);
       s.betterPaid = s.peers.filter(p => p.wagePP > own + 1e-9).length;
@@ -559,10 +618,19 @@ const EmployeeCore = (() => {
     const gain = (n, h) => held ? n : happyGain(n, h);
     let productionBase = e.production;
     let happyRecipients = s.coworkers;
+    const paid = CFG.traitProductionPaid && !UNPAID_PRODUCTION.has(code);
+    let paidToday = 0;
     const base = {
       e, s, held, male: Math.max(0, s.coworkers - s.femaleCoworkers), loss: e.happinessLoss,
       // Production never drops below 1, so a loss only counts down to it.
-      prod: d => (Math.max(1, productionBase + d) - Math.max(1, productionBase)) / CFG.outputDivisor * (1 + B) * sr,
+      // The wage is assumed to follow the same floor.
+      prod: d => {
+        const points = (Math.max(1, productionBase + d) - Math.max(1, productionBase)) / CFG.outputDivisor;
+        if (!paid) return points * (1 + B) * sr;
+        paidToday += points;
+        return points * ((1 + B) * sr - e.wageExpectation);
+      },
+      engine: () => s.engineDailyProd / 24 * (1 + s.engineBonus) * sr,
       pct: p => pph(e) * p / 100 * sr,
       happy: h => pph(e) * sr * gain(h, e.happiness) / 100,
       resp: d => pph(e) * sr * gain(CFG.respHappiness * d, e.happiness) / 100,
@@ -601,7 +669,7 @@ const EmployeeCore = (() => {
       st = { productionBase: ordinaryProduction(others, s, d), happyRecipients: null, patch: null, peerProduction: null };
       if (s.peers) {
         const own = comparisonProduction(e, s, d);
-        const activePeers = s.peers.filter(p => !p.model || p.model.age + d < CFG.retireAge);
+        const activePeers = s.peers.filter(p => !p.model || d < workingDays(p.model));
         const peers = activePeers.map(p => p.model ? comparisonProduction(p.model, p.situation, d) : p.production);
         st.happyRecipients = code === 'comic' && activePeers.every(p => p.model?.traits)
           ? activePeers.filter(recipient => !activePeers.some(other => other !== recipient
@@ -635,7 +703,7 @@ const EmployeeCore = (() => {
       return st;
     };
     const outcomes = traitArgs(t, arg, s, held).map(({ arg: a, p }) => {
-      let total = 0;
+      let total = 0, wageBase = 0;
       // The trait rules only read what they are handed: one record, its
       // day fields set afresh.
       const x = { ...base, arg: a, age: 0, tenure: 0, employed: 0 };
@@ -648,11 +716,14 @@ const EmployeeCore = (() => {
           if (st.peerProduction != null) { total += st.peerProduction / CFG.outputDivisor * (1 + B) * sr * 24; continue; }
         }
         x.age = e.age + d; x.tenure = s.tenureDays + d; x.employed = s.employedDays + d;
+        paidToday = 0;
         total += t.hourly(x) * 24;
+        wageBase += paidToday * 24;
       }
-      return { arg: a, p, value: total };
+      return { arg: a, p, value: total, wageBase };
     });
-    return { value: outcomes.reduce((a, o) => a + o.p * o.value, 0), outcomes: outcomes.length > 1 ? outcomes : [] };
+    return { value: outcomes.reduce((a, o) => a + o.p * o.value, 0), outcomes: outcomes.length > 1 ? outcomes : [],
+      wageBase: outcomes.reduce((a, o) => a + o.p * o.wageBase, 0) };
   }
 
   // For each working day, the first day of its stretch: a day on which
@@ -667,15 +738,15 @@ const EmployeeCore = (() => {
     decades.push(e.age, s.tenureDays + 1e-9);
     for (const p of s.peers || []) {
       if (!p.model) continue;
-      retire.push(p.model.age);
+      retire.push(workingDays(p.model));
       decades.push(p.model.age, tenureOf(p.situation) + 1e-9);
-      for (const q of p.situation?.peers || []) if (q.model) retire.push(q.model.age);
+      for (const q of p.situation?.peers || []) if (q.model) retire.push(workingDays(q.model));
     }
     const steps = new Array(days);
     let start = 0;
     for (let d = 0; d < days; d++) {
       if (d && (decades.some(x => Math.floor((x + d) / 10) !== Math.floor((x + d - 1) / 10))
-        || retire.some(a => (a + d < CFG.retireAge) !== (a + d - 1 < CFG.retireAge)))) start = d;
+        || retire.some(a => (d < a) !== (d - 1 < a)))) start = d;
       steps[d] = start;
     }
     return steps;
@@ -694,7 +765,7 @@ const EmployeeCore = (() => {
   function ordinaryProduction(e, situation = {}, day = 0) {
     const s = { ...DEFAULT_SITUATION, ...situation };
     if (s.peers) {
-      const active = s.peers.filter(p => !p.model || p.model.age + day < CFG.retireAge);
+      const active = s.peers.filter(p => !p.model || day < workingDays(p.model));
       s.coworkers = active.length;
       const nationality = e.nationality || s.nationality;
       if (nationality && active.every(p => p.model?.nationality)) {
@@ -707,7 +778,7 @@ const EmployeeCore = (() => {
     const x = { e, s, age: e.age + day, tenure: s.tenureDays + day + 1e-9, held: true,
       male: s.coworkers - s.femaleCoworkers, prod, pct: noop, happy: noop, resp: noop,
       luck: noop, boxes: noop, wage: noop, raise: noop, teamHappy: noop, teamProd: noop,
-      teamResp: noop, quickStudy: 0, loss: 0 };
+      engine: noop, teamResp: noop, quickStudy: 0, loss: 0 };
     x.stat = (stat, n) => stat === 'production' ? prod(n) : 0;
     for (const t of e.traits || []) {
       if (['rival', 'mentor'].includes(t.code)) continue;
@@ -790,10 +861,10 @@ const EmployeeCore = (() => {
     }
     if (c.card === 'wildCard') {
       // A random eligible trait, good or bad (unpriced ones count as 0), and
-      // +1 to a random stat.
+      // +2 to a random stat.
       const pool = eligibleTraits(held.map(h => h.code), s.gender, ['positive', 'mixed', 'negative']);
       const traitAvg = pool.reduce((a, t) => a + (v(t.code) ?? 0), 0) / (pool.length || 1);
-      const statAvg = STAT_ARGS.reduce((a, st) => a + cardValue(e, drill(st, 1), ctx), 0) / 3;
+      const statAvg = STAT_ARGS.reduce((a, st) => a + cardValue(e, drill(st, CFG.wildCardStatGain), ctx), 0) / 3;
       return traitAvg + statAvg;
     }
     return undefined;
@@ -806,7 +877,7 @@ const EmployeeCore = (() => {
     ctx = { ...DEFAULT_CONTEXT, ...ctx };
     const s = { ...DEFAULT_SITUATION, ...ctx.situation };
     const pool = eligibleTraits((e.traits || []).map(h => h.code), s.gender, ['positive', 'mixed', 'negative']);
-    const stats = STAT_ARGS.map(st => cardValue(e, drill(st, 1), ctx));
+    const stats = STAT_ARGS.map(st => cardValue(e, drill(st, CFG.wildCardStatGain), ctx));
     return pool.flatMap(t => {
       const v = traitValue(t.code, e, ctx).value;
       return stats.map(x => ({ p: 1 / (3 * pool.length), value: (v ?? 0) + x, arg: t.code, unpriced: v === null }));
@@ -814,8 +885,11 @@ const EmployeeCore = (() => {
   }
 
   // Resolved transitions, shared by projected hands and outlooks. Each roll
-  // applies all changes together before its placement is valued.
+  // applies all changes together before its placement is valued. The wage
+  // follows paid Production: a Production gain, or a trait's flat Production
+  // in ctx.situation, moves it; wageExpectation (per paid point) stays.
   function cardOutcomes(e, c, ctx = {}) {
+    if (c.card === 'reroll') return [];
     const s = { ...DEFAULT_SITUATION, ...ctx.situation };
     const held = e.traits || [];
     if (c.card === 'rehab' && TRAIT[c.code]?.polarity !== 'negative') return [];
@@ -835,37 +909,43 @@ const EmployeeCore = (() => {
       const pool = eligibleTraits(held.map(t => t.code), s.gender, ['positive', 'mixed', 'negative']);
       rolls = pool.flatMap(t => add(rolls, t.code).map(r => ({ ...r, p: r.p / pool.length })));
     }
+    // The flat Production the employee's ordinary traits give today.
+    const ownProduction = traits => ordinaryProduction({ ...e, traits }, s) - e.production;
+    const heldProduction = ownProduction(held);
     return rolls.flatMap(r => (c.card === 'wildCard' ? STAT_ARGS : [c.stat]).map(stat => {
       const next = { ...e, traits: r.traits };
-      const delta = c.card === 'wildCard' ? 1 : c.card === 'drill' ? c.delta : 0;
+      const delta = c.card === 'wildCard' ? CFG.wildCardStatGain : c.card === 'drill' ? c.delta : 0;
       if (delta) next[stat] = (e[stat] || 0) + delta;
-      let factor = stat === 'production' && delta ? next.production / e.production : 1;
+      next.traitProduction = (e.traitProduction || 0) + ownProduction(r.traits) - heldProduction;
+      const paidRatio = paidProduction(next) / paidProduction(e);
+      let factor = 1;
       for (const [code, m] of [['greedy', 1.2], ['modest', 0.85]]) {
         if (!held.some(t => t.code === code) && r.traits.some(t => t.code === code)) factor *= m;
         if (held.some(t => t.code === code) && !r.traits.some(t => t.code === code)) factor /= m;
       }
-      const raiseFactor = factor;
+      const raiseFactor = factor * paidRatio;
       if (c.card === 'negotiation') factor *= Math.max(0, e.wageExpectation - c.drop * wageTraitMultiplier(e)) / e.wageExpectation;
-      if (Number.isFinite(e.wage)) next.wage = e.wage * factor;
-      next.wageExpectation = e.wageExpectation * factor / (stat === 'production' && delta ? next.production / e.production : 1);
+      if (Number.isFinite(e.wage)) next.wage = e.wage * factor * paidRatio;
+      next.wageExpectation = e.wageExpectation * factor;
       if (c.card === 'negotiation' && e.negotiationExpectation != null) next.negotiationExpectation = Math.round(1000 * (e.negotiationExpectation - c.drop)) / 1000;
       const climbs = r.traits.some(t => t.code === 'climber');
       const wageTrait = r.traits.some(t => t.code === 'greedy') ? 1.2 : r.traits.some(t => t.code === 'modest') ? 0.85 : 1;
       next.climberRaise = !climbs ? 0 : e.climberRaise ? e.climberRaise * raiseFactor
-        : next.production / 4 * (ctx.ppValue || 1) * 0.02 * wageTrait;
+        : paidProduction(next) / 4 * (ctx.ppValue || 1) * 0.02 * wageTrait;
       return { p: r.p / (c.card === 'wildCard' ? 3 : 1), arg: r.arg, employee: next };
     }));
   }
 
   // Each trait's value for this employee, best first. `unit` is +1 trait
-  // Production over the working life, for scaling tiers.
+  // Production over the working life (its margin over the wage when paid),
+  // for scaling tiers; no ratio when that margin isn't positive.
   function traitChart(e, ctx = {}) {
     const held = e.traits || [];
     const unit = traitUnit(e, ctx);
     return TRAITS.filter(t => t.weight > 0 || held.some(h => h.code === t.code)).map(t => {
       const h = held.find(x => x.code === t.code);
       const r = traitValue(t.code, e, ctx, { held: !!h, arg: h?.arg });
-      return { ...t, ...r, held: !!h, ratio: r.value === null || !unit ? null : r.value / unit };
+      return { ...t, ...r, held: !!h, ratio: r.value === null || !(unit > 0) ? null : r.value / unit };
     }).sort((a, b) => (b.value ?? 0) - (a.value ?? 0));
   }
   function traitUnit(e, ctx) {
@@ -909,7 +989,6 @@ const EmployeeCore = (() => {
     if (held.filter(h => TRAIT[h.code]?.polarity === 'negative').length >= 2) {
       pool.legendary.push({ card: 'rehabAll', value: value({ card: 'rehabAll' }) });
     }
-    for (const t of eligibleTraits(codes, s.gender, ['mixed'])) pool.rare.push({ card: 'habit', code: t.code, value: tv(t.code) });
     const positives = eligibleTraits(codes, s.gender, ['positive']);
     for (const t of positives) pool.epic.push({ card: 'habit', code: t.code, value: tv(t.code) });
     for (let i = 0; i < positives.length; i++) {
@@ -919,9 +998,43 @@ const EmployeeCore = (() => {
       }
     }
     if (eligibleTraits(codes, s.gender, ['positive', 'mixed', 'negative']).length) {
-      pool.uncommon.push({ card: 'wildCard', value: value({ card: 'wildCard' }) });
+      pool.rare.push({ card: 'wildCard', value: value({ card: 'wildCard' }) });
     }
+    pool.uncommon.push({ card: 'reroll', value: rerollValue(pool, e, ctx) });
     return pool;
+  }
+
+  // On each interval between Uncommon card values, E[new hand] = a + bR.
+  // Hands containing Reroll contribute max(R, best of the other k-1 cards).
+  function rerollValue(pool, e, ctx) {
+    const odds = rarityOdds(e.luck, ctx.management);
+    const k = CFG.handSize;
+    const open = RARITIES.filter(r => pool[r].length + (r === 'uncommon' ? 1 : 0) >= k);
+    const norm = open.reduce((sum, r) => sum + odds[r], 0);
+    if (!norm) return 0;
+    const p = open.includes('uncommon') ? odds.uncommon / norm : 0;
+    const vals = pool.uncommon.map(c => c.value).sort((a, b) => a - b);
+    const n = vals.length + 1;
+    const choose = (n, k) => {
+      let v = 1;
+      for (let i = 0; i < k; i++) v *= (n - i) / (i + 1);
+      return v;
+    };
+    let a = open.filter(r => r !== 'uncommon').reduce((sum, r) =>
+      sum + odds[r] / norm * expectedMax(pool[r].map(c => c.value), k), 0)
+      + p * (n - k) / n * expectedMax(vals, k);
+    const maxima = vals.slice(k - 2).map((value, j) => ({ value,
+      p: p * choose(j + k - 2, k - 2) / choose(n, k) }));
+    a += maxima.reduce((sum, x) => sum + x.p * x.value, 0);
+    let b = 0;
+    for (const x of maxima) {
+      const value = a / (1 - b);
+      if (value <= x.value) return value;
+      a -= x.p * x.value;
+      b += x.p;
+    }
+    // Every hand holds Reroll (Uncommon alone, 3 cards): rerolling gains nothing.
+    return b < 1 - 1e-12 ? a / (1 - b) : vals[vals.length - 1];
   }
 
   // Expected best of k cards dealt from vals without replacement: sorted
@@ -963,14 +1076,27 @@ const EmployeeCore = (() => {
   function rolledTraitValue(e, ctx, genders = ['male', 'female']) {
     return genders.reduce((a, gender) => a + rolledTraits(e, ctx, gender).reduce((b, t) => b + t.p * t.value, 0) / genders.length, 0);
   }
-  // Each trait that can roll for this gender: [{ code, p, value }].
+  // Each trait that can roll for this gender: [{ code, p, value, wageBase }]
+  // (traitValue's wageBase: value moves with the wage expectation).
   function rolledTraits(e, ctx, gender) {
     const held = (e.traits || []).map(t => t.code);
     const rollable = TRAITS.filter(t => t.weight && (!t.gender || t.gender === gender)
       && !held.includes(t.code) && !held.some(h => conflicts(h, t.code)));
     const gctx = { ...ctx, situation: { ...ctx.situation, gender } };
     const weights = rollable.reduce((a, t) => a + t.weight, 0);
-    return rollable.map(t => ({ code: t.code, p: t.weight / weights, value: t.partner ? 0 : traitValue(t.code, e, gctx).value ?? 0 }));
+    return rollable.map(t => {
+      const v = t.partner ? null : traitValue(t.code, e, gctx);
+      return { code: t.code, p: t.weight / weights, value: v?.value ?? 0, wageBase: v?.wageBase || 0 };
+    });
+  }
+  // The paid flat Production a trait gained at hire gives on day one: it
+  // shows in the wage on the candidate's card (0 unless CFG.traitProductionPaid).
+  function hireProduction(code, age, situation) {
+    const t = TRAIT[code];
+    if (!CFG.traitProductionPaid || !t?.hourly || t.partner || UNPAID_PRODUCTION.has(code)) return 0;
+    const s = { ...DEFAULT_SITUATION, ...situation };
+    const arg = traitArgs(t, null, s)[0].arg;
+    return ordinaryProduction({ age, nationality: s.nationality, production: 0, traits: [{ code, ...(arg ? { arg } : {}) }] }, s);
   }
 
   /* ── Recruiting ────────────────────────────────────────────
@@ -987,19 +1113,20 @@ const EmployeeCore = (() => {
   const withHappiness = (bonus, happiness) => bonus + (happiness - 50) / 100;
   const wageMult = code => WAGE_MULT[code] || 1;
 
-  // How likely a wage reading x = expectation × Greedy/Modest is for a
-  // trait with wage multiplier m. The expectation is uniform on 70% to
-  // 130%, so x is uniform on m × that range, with density ∝ 1/m.
+  // How likely a wage reading x = expectation × m is for a trait with wage
+  // multiplier m: Greedy/Modest × paid ÷ shown Production (when the trait's
+  // flat Production is paid). The expectation is uniform on 70% to 130%, so
+  // x is uniform on m × that range, with density ∝ 1/m.
   function wageFit(x, m) {
     const ex = x / m;
     return ex >= CFG.wageFloor - 1e-6 && ex <= 2 - CFG.wageFloor + 1e-6 ? 1 / m : 0;
   }
-  // The roll weights of a hidden trait given the wage reading x: Greedy
-  // and Modest move the wage, so the wage hints at them (above 130% only
-  // Greedy fits). With no trait fitting, the plain roll weights.
-  // [{ code, p, value }].
+  // The roll weights of a hidden trait given the wage reading x: Greedy,
+  // Modest and flat Production traits move the wage, so the wage hints at
+  // them (above 130% only those raising it fit). With no trait fitting,
+  // the plain roll weights. [{ code, p, mult, … }].
   function traitsGivenWage(list, x) {
-    const fit = list.map(t => t.p * wageFit(x, wageMult(t.code)));
+    const fit = list.map(t => t.p * wageFit(x, t.mult));
     const total = fit.reduce((a, v) => a + v, 0);
     return total ? list.map((t, i) => ({ ...t, p: fit[i] / total })).filter(t => t.p > 0) : list;
   }
@@ -1023,35 +1150,49 @@ const EmployeeCore = (() => {
   // A typed-in candidate over their working life, in PP. cand: { age,
   // gender, wagePP (hourly wage ÷ V), production, responsibility, luck }.
   // The trait and potential are hidden: one trait by roll weight, given
-  // what the wage says about Greedy and Modest, and potential 3 to 10.
+  // what the wage says about it (Greedy, Modest and flat Production move
+  // the wage), and potential 3 to 10.
   // ctx.situation is the company seen from this candidate. `alt` prices
   // the energy a training uses; `bonus` is the company's, without
   // happiness. { value, output, trait, potential, happiness,
-  // wageExpectation, odds: { greedy, modest }, spread }. spread is every way
-  // they could turn out, over the trait and potential: [{ p, value }].
+  // wageExpectation (per paid point, averaged over the trait), odds: { greedy,
+  // modest }, spread }. spread is every way they could turn out, over the
+  // trait and potential: [{ p, value }].
   function candidateValue(cand, ctx = {}, { bonus = 0, happinessLoss = DEFAULT_EMPLOYEE.happinessLoss, alt = 0 } = {}) {
     ctx = { ...DEFAULT_CONTEXT, ...ctx };
     const production = cand.production ?? HIRE.avgStat;
     const gender = cand.gender === 'female' ? 'female' : 'male';
-    // Expectation × Greedy/Modest, as the model's wage expectation is.
-    const wageExpectation = 4 * (cand.wagePP || 0) / production;
+    // The wage reading: wage ÷ (Production/4 × V). When the hidden trait's
+    // flat Production is paid too, the expectation per paid point (Greedy
+    // and Modest folded in, as the model's is) depends on the trait.
+    const reading = 4 * (cand.wagePP || 0) / production;
     const responsibility = cand.responsibility ?? HIRE.avgStat;
     const happiness = hireHappiness(responsibility, happinessLoss);
     const e = {
-      ...DEFAULT_EMPLOYEE, age: cand.age, production, extraProduction: 0,
+      ...DEFAULT_EMPLOYEE, age: cand.age, production, traitProduction: 0, extraProduction: 0,
       responsibility, luck: cand.luck ?? HIRE.avgStat, bonus: withHappiness(bonus, happiness), happiness,
-      specialization: 0, wageExpectation, happinessLoss, traits: [], trainingsPerDay: 1,
+      specialization: 0, wageExpectation: reading, happinessLoss, traits: [], trainingsPerDay: 1,
     };
-    const output = hourlyProfit(e, ctx) * hoursLeft(e);
-    // Greedy and Modest are already in the wage, so they add nothing more.
-    const rolls = traitsGivenWage(rolledTraits(e, ctx, gender), wageExpectation)
-      .map(t => WAGE_MULT[t.code] ? { ...t, value: 0 } : t);
-    const trait = rolls.reduce((a, t) => a + t.p * t.value, 0);
-    const pots = POTENTIALS.map(n => potentialValue(e, ctx, n, alt));
+    const hours = hoursLeft(e);
+    const situation = { ...ctx.situation, gender };
+    const rolls = traitsGivenWage(rolledTraits(e, ctx, gender).map(t => {
+      const paid = Math.max(1, production + hireProduction(t.code, e.age, situation));
+      return { ...t, paid, mult: wageMult(t.code) * paid / production };
+    }), reading).map(t => {
+      const w = reading * production / t.paid;
+      // Its own output and wage; the trait priced at that expectation. Greedy
+      // and Modest are already in the wage, so they add nothing more.
+      const output = hourlyProfit({ ...e, wageExpectation: w }, ctx) * hours;
+      const value = WAGE_MULT[t.code] ? 0 : t.value + (reading - w) * t.wageBase;
+      return { ...t, w, output, value };
+    });
+    const mean = k => rolls.reduce((a, t) => a + t.p * t[k], 0);
+    const output = mean('output'), trait = mean('value'), wageExpectation = mean('w');
+    const pots = POTENTIALS.map(n => potentialValue({ ...e, wageExpectation }, ctx, n, alt));
     const potential = pots.reduce((a, v) => a + v, 0) / pots.length;
     const p = code => rolls.find(t => t.code === code)?.p || 0;
     // Each trait by its odds, each potential equally likely.
-    const spread = rolls.flatMap(t => pots.map(v => ({ p: t.p / pots.length, value: output + t.value + v })));
+    const spread = rolls.flatMap(t => pots.map(v => ({ p: t.p / pots.length, value: t.output + t.value + v })));
     return { value: output + trait + potential, output, trait, potential, happiness, wageExpectation, odds: { greedy: p('greedy'), modest: p('modest') }, spread };
   }
 
@@ -1061,9 +1202,9 @@ const EmployeeCore = (() => {
   // a group by weight, either gender, Production and Responsibility 1 to 4
   // (Responsibility sets their happiness), expectation 70% to 130%, age
   // 18 to 45, potential 3 to 10, one trait by roll weight (Greedy ×1.2 and
-  // Modest ×0.85 on the wage). Each is valued twice: as the card reads (the
-  // trait by its odds given the wage, potential averaged) and as they turn
-  // out. The pick
+  // Modest ×0.85 on the wage, and its flat Production if paid). Each is valued
+  // twice: as the card reads (the trait by its odds given the wage,
+  // potential averaged) and as they turn out. The pick
   // is the best-reading of `slots`, so a set is worth what its pick turns
   // out to be on average, and beat(bar) is how often that beats bar.
   // groups: [{ weight, ctx, bonus, happinessLoss, key, coworkers }], one per
@@ -1107,31 +1248,39 @@ const EmployeeCore = (() => {
       perDay[P] = trainingOutlook({ ...mid, production: P }, ctx).value / midDays;
       yield;
     }
-    // Rollable traits by gender, each priced by Production at age 31.
+    // Rollable traits by gender, each priced by Production at age 31 at
+    // expectation 1 (wageBase moves it to another), with the flat
+    // Production it gives at each hiring age.
     const traits = {};
     for (const gender of ['male', 'female']) {
-      const gctx = { ...ctx, situation: { ...ctx.situation, gender } };
+      const situation = { ...ctx.situation, gender };
+      const gctx = { ...ctx, situation };
       const list = [];
       for (const t of TRAITS.filter(t => t.weight && (!t.gender || t.gender === gender))) {
+        const priced = [0, 1, 2, 3, 4].map(P => !P || t.partner || WAGE_MULT[t.code] ? null
+          : traitValue(t.code, { ...mid, production: P }, gctx));
         list.push({ code: t.code, weight: t.weight, mult: wageMult(t.code),
-          value: [0, 1, 2, 3, 4].map(P => !P || t.partner || WAGE_MULT[t.code] ? 0
-            : traitValue(t.code, { ...mid, production: P }, gctx).value ?? 0) });
+          value: priced.map(v => v?.value ?? 0), wageBase: priced.map(v => v?.wageBase || 0),
+          production: Array.from({ length: ages }, (_, a) => hireProduction(t.code, HIRE.minAge + a, situation)) });
         yield;
       }
       const total = list.reduce((a, t) => a + t.weight, 0);
-      // Greedy and Modest are worth 0, so by wage multiplier: the weight
-      // and the weighted value of the traits with it.
-      const byMult = [1, ...Object.values(WAGE_MULT)].map(m => {
-        const of = list.filter(t => t.mult === m);
-        return { m, weight: of.reduce((a, t) => a + t.weight, 0), value: [0, 1, 2, 3, 4].map(P => of.reduce((a, t) => a + t.weight * t.value[P], 0)) };
-      });
-      // The trait's average as the card reads, given the wage reading x.
-      const seen = (P, x) => {
-        let w = 0, v = 0;
-        for (const b of byMult) { const f = wageFit(x, b.m); w += f * b.weight; v += f * b.value[P]; }
-        return w ? v / w : byMult.reduce((a, b) => a + b.value[P], 0) / total;
-      };
-      traits[gender] = { list, total, seen };
+      // Traits that read alike on the card, by age and Production: the same
+      // wage multiplier and paid Production. k = Production ÷ paid
+      // Production; weight, value and wageBase are summed over the traits.
+      const groups = Array.from({ length: ages }, (_, a) => [0, 1, 2, 3, 4].map(P => {
+        if (!P) return [];
+        const byKey = new Map();
+        for (const t of list) {
+          const paid = Math.max(1, P + t.production[a]);
+          const key = `${t.mult}|${paid}`;
+          let g = byKey.get(key);
+          if (!g) byKey.set(key, g = { m: t.mult * paid / P, k: P / paid, weight: 0, value: 0, wageBase: 0 });
+          g.weight += t.weight; g.value += t.weight * t.value[P]; g.wageBase += t.weight * t.wageBase[P];
+        }
+        return [...byKey.values()];
+      }));
+      traits[gender] = { list, total, groups };
     }
     const base = { gross, hours, days, perDay, traits, midDays };
     if (OWN_TABLES.size >= 200) OWN_TABLES.delete(OWN_TABLES.keys().next().value);
@@ -1215,12 +1364,25 @@ const EmployeeCore = (() => {
       let tr = rand() * T.total, trait = T.list[0];
       for (const t of T.list) { if ((tr -= t.weight) < 0) { trait = t; break; } }
       const scale = days[a] / midDays;
-      const worth = (p, x) => p / CFG.outputDivisor * (gross[R][a] - x) * hours[a] + coworkerAt(g.cw[gender][p], x);
-      const wage = expectation * trait.mult;
-      const cw = coworkerAt(g.cw[gender][P], wage);
+      // w is the expectation per paid point; the card reads x, the wage
+      // ÷ (Production/4 × V), which holds the trait's paid Production.
+      const w = expectation * trait.mult;
+      const x = w * Math.max(1, P + trait.production[a]) / P;
+      const cw = coworkerAt(g.cw[gender][P], x);
       coworkerSum += cw;
-      const value = worth(P, wage) + trait.value[P] * scale + pot[P][a][n];
-      const seen = worth(P, wage) + T.seen(P, wage) * scale + pot[P][a].slice(HIRE.minPotential).reduce((x, v) => x + v, 0) / pots;
+      // Output and coworkers alike for every trait; then the wage on P, and
+      // the trait with its own wage at w (its value is at expectation 1).
+      const fixed = P / CFG.outputDivisor * gross[R][a] * hours[a] + cw;
+      const own = (w, weight, value, wageBase) => -P / CFG.outputDivisor * w * hours[a] * weight + (value + (1 - w) * wageBase) * scale;
+      const value = fixed + own(w, 1, trait.value[P], trait.wageBase[P]) + pot[P][a][n];
+      // As the card reads: each group of traits by how well it fits x.
+      let fit = 0, read = 0;
+      for (const grp of T.groups[a][P]) {
+        const f = wageFit(x, grp.m) * grp.weight;
+        if (f) { fit += f; read += wageFit(x, grp.m) * own(x * grp.k, grp.weight, grp.value, grp.wageBase); }
+      }
+      if (!fit) for (const grp of T.groups[a][P]) { fit += grp.weight; read += own(x * grp.k, grp.weight, grp.value, grp.wageBase); }
+      const seen = fixed + read / fit + pot[P][a].slice(HIRE.minPotential).reduce((x, v) => x + v, 0) / pots;
       cands.push({ seen, value, days: days[a] });
     }
     // The k-th worst-reading of `draws` is the best of `slots` with
@@ -1248,8 +1410,8 @@ const EmployeeCore = (() => {
 
   return {
     toolboxRate, CFG, RARITIES, NUMERIC_CARDS, PROD_TRAIT_CARDS, TRAIT_CARDS, DEFAULT_EMPLOYEE, DEFAULT_CONTEXT, LADDER_FLAGS,
-    TRAITS, TRAIT, DEFAULT_SITUATION, HABIT_POLARITY, EXCLUSIVE, currentTraits,
-    cardPool, cardOutcomes, wildCardOutcomes, secondWindValue, energyOn, expectedMax, trainingOutlook, rolledTraitValue, futureLuckValue,
+    TRAITS, TRAIT, DEFAULT_SITUATION, HABIT_POLARITY, EXCLUSIVE, currentTraits, ownTraitProduction, paidProduction,
+    cardPool, cardOutcomes, gameDailyProfit, wildCardOutcomes, secondWindValue, energyOn, expectedMax, trainingOutlook, rolledTraitValue, futureLuckValue,
     potentialValue, candidateValue, freshSetValue, freshSetWarm,
     comparisonProduction, productionStanding, peerProduction, nationalitySituation, locationSituation, eligibleTraits, wildCardRisk, canNegotiate, traitValue, traitChart, traitUnit,
     drill, neg, wind, cardValue, rankTier, rankHand, rarityOdds, ladder,

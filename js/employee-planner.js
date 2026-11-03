@@ -17,8 +17,20 @@ const EmployeePlanner = (() => {
   const has = (e, code) => e.traits.some(t => t.code === code);
   const byId = (a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
   const compatible = (tool, company) => !!TOOL_TYPES[tool.type]?.includes(company.product);
+  // The wage as reported, paid on today's paid Production (EC.paidProduction),
+  // plus Climber raises to come.
   const wageAt = (e, hour) => !e.climberRaise ? e.wage
     : e.wage + e.climberRaise * (Math.floor((e.employedDays + hour / 24 + EPS) / 7) - Math.floor((e.employedDays + EPS) / 7));
+  // The wage on `traitProduction` own-trait Production instead. When own
+  // traits' flat Production is paid, it moves with the company and the hour.
+  const paidWageAt = (e, hour, traitProduction) => wageAt(e, hour)
+    * EC.paidProduction({ production: e.production, traitProduction }) / EC.paidProduction(e);
+  // A move into a company the held tool does not fit sends it back to
+  // inventory, where it is a spare for anyone else in the plan.
+  const returnsTool = (e, a, tools, companies) => {
+    const t = e.equipped && tools.find(t => t.id === e.equipped.id), c = companies.find(c => c.id === a.company);
+    return t && c && a.company !== e.company && a.tool !== t.id && !compatible(t, c) ? t : null;
+  };
   const initial = s => s.employees.map(e => ({ employee: e.id, company: e.company, tool: e.equipped?.id || null }));
 
   // Effects the planner cannot reproduce. Their company stays as it is.
@@ -63,6 +75,7 @@ const EmployeePlanner = (() => {
       if (!e || !c) { errors.push('Unknown employee or company.'); continue; }
       if ((frozen(e) || c.excluded) && (a.company !== e.company || a.tool !== (e.equipped?.id || null))) errors.push(`${c.name} is not being planned, so its roster and tools stay unchanged.`);
       if (e.locked && a.company !== e.company) errors.push(`${e.name} is kept in their current company.`);
+      if (c.disabled && a.company !== e.company) errors.push(`${c.name} is disabled, so nobody is moved into it.`);
       if (!a.tool) continue;
       const t = s.tools.find(t => t.id === a.tool);
       if (!t || used.has(a.tool) || (!compatible(t, c) && (a.company !== e.company || a.tool !== e.equipped?.id)) || (t.holder && frozen(s.employees.find(e => e.id === t.holder)) && t.holder !== e.id)) errors.push('A tool must have one eligible employee.');
@@ -118,8 +131,9 @@ const EmployeePlanner = (() => {
     // hour, which projectCompany adds as a boundary. Age, for Early Bloomer,
     // Late Bloomer and Worn Out, steps at the daily boundaries.
     const tenure = (moved ? 0 : e.tenure) + hour / 24 + EPS;
-    const fx = { production: 0, responsibility: 0, luck: 0, bonus: 0, happiness: [], teamHappiness: [], teamProduction: 0, teamResponsibility: 0 };
+    const fx = { engine: 0, production: 0, responsibility: 0, luck: 0, bonus: 0, happiness: [], teamHappiness: [], teamProduction: 0, teamResponsibility: 0 };
     if (!hourly || !e.traits.length) return fx;
+    // Pay as reported: a move's change to own-trait Production isn't in it.
     const own = wageAt(e, hour) + 1e-9;
     let betterPaid = 0;
     for (const x of others) if (wageAt(x, hour) > own) betterPaid++;
@@ -129,6 +143,7 @@ const EmployeePlanner = (() => {
       const add = (key, n) => { sc.fx[key] += n; return 0; };
       const x = sc.x = {
         s: { ...fixed }, e, age: 0, tenure: 0, held: true, loss: 0, male: others.length - femaleCoworkers,
+        engine: () => add('engine', (company.engineDailyProd || 0) / 24 * (1 + (company.engineBonus || 0))),
         prod: n => add('production', n), pct: n => add('bonus', n), happy: n => { sc.fx.happiness.push(n); return 0; },
         resp: n => add('responsibility', n), luck: n => add('luck', n), boxes: () => 0, wage: () => 0,
         teamHappy: n => { sc.fx.teamHappiness.push(n); return 0; },
@@ -171,7 +186,7 @@ const EmployeePlanner = (() => {
 
   function instant(s, company, members, hour, rosters = null, flags = flagsFor(members)) {
     const flagsOf = e => flags.get(e);
-    let roster = members.filter(({ e }) => hour < (EC.CFG.retireAge - e.age) * 24).map(({ e }) => e);
+    let roster = members.filter(({ e }) => hour < EC.workingDays(e) * 24).map(({ e }) => e);
     if (rosters) {
       const key = roster.map(e => e.id).join(',');
       roster = rosters.get(key) || (rosters.set(key, roster), roster);
@@ -211,10 +226,10 @@ const EmployeePlanner = (() => {
       const baseLuck = e.trainingBaseLuck ?? e.luck ?? 0;
       const luck = Number.isFinite(o.luck) ? o.luck + (e.luck || 0) - baseLuck : Math.max(1, (e.luck || 0) + fx.luck + coworkerLuck);
       const learningLuck = Number.isFinite(o.luck) ? o.luck : Math.max(1, baseLuck + fx.luck + coworkerLuck);
-      const toolboxes = company.full && !f.salvager ? 0 : EC.toolboxRate(luck) * (f.scavenger ? 2 : 1);
-      const loot = toolboxes * (s.toolboxValue || 0);
+      let toolboxes = company.full && !f.salvager ? 0 : EC.toolboxRate(luck) * (f.scavenger ? 2 : 1);
+      let loot = toolboxes * (s.toolboxValue || 0);
       const trainingsPerDay = Number.isFinite(o.trainingsPerDay) ? o.trainingsPerDay : 1 + 2 * trainers;
-      const trainingRate = Math.min(s.trainingQuota || 0, trainingsPerDay);
+      let trainingRate = Math.min(s.trainingQuota || 0, trainingsPerDay);
       const responsibility = Math.max(1, e.responsibility + teamResponsibility);
       // Responsibility adds 3 happiness a point; Loyal halves every loss.
       const lossFactor = f.loyal ? 0.5 : 1;
@@ -232,13 +247,18 @@ const EmployeePlanner = (() => {
       const anchor = f.anchor && mood < 30 ? -50 : 0;
       const events = (e.productionEvents || []).reduce((sum, event) => sum + (hour < event.hours ? event.delta : 0), 0);
       const bonus = company.bonus + fx.bonus + events + specialization + mood - 50 + (tool?.bonus || 0) + anchor;
-      const output = production / 4 * Math.max(0, 1 + bonus / 100);
+      // A disabled company's employees don't work, train or get paid there
+      // (nor age: they leave only by moving, and then start working).
+      const off = !!company.disabled;
+      const output = off ? 0 : production / 4 * Math.max(0, 1 + bonus / 100);
       // Current pay already includes Greedy, Modest and past Climber raises.
-      const wage = wageAt(e, hour);
+      const wage = off ? 0 : paidWageAt(e, hour, fx.production);
+      const engine = off ? 0 : fx.engine;
+      if (off) toolboxes = loot = trainingRate = 0;
       const row = { luck, learningLuck, toolboxes, loot, trainingRate, trainingsPerDay, id: e.id, company: company.id, tool: tool?.id || null, production, responsibility, happiness: mood, specialization, bonus,
         parts: { company: company.bonus, traits: fx.bonus + anchor, events, specialization, happiness: mood - 50, tool: tool?.bonus || 0, traitProduction: production - e.production },
-        output, wage, profit: output * company.margin - wage + loot };
-      calc.push({ production, pre: company.bonus + fx.bonus + events, mood, tool: tool?.bonus || 0, anchor, saved, loot, rate: f.quickStudy ? 2 : 1, wage });
+        output, engineOutput: engine, wage, profit: (output + engine) * company.margin - wage + loot };
+      calc.push({ engine, production: off ? 0 : production, pre: company.bonus + fx.bonus + events, mood, tool: tool?.bonus || 0, anchor, saved, loot, rate: f.quickStudy ? 2 : 1, wage });
       return row;
     });
     result.calc = calc;
@@ -247,7 +267,7 @@ const EmployeePlanner = (() => {
   // A row's profit on a later day of the same stretch, where only
   // specialization moves: instant's arithmetic in the same order.
   const profitOn = (c, d, margin) =>
-    c.production / 4 * Math.max(0, 1 + (c.pre + Math.min(20, c.saved + d * c.rate) + c.mood - 50 + c.tool + c.anchor) / 100) * margin - c.wage + c.loot;
+    c.production / 4 * Math.max(0, 1 + (c.pre + Math.min(20, c.saved + d * c.rate) + c.mood - 50 + c.tool + c.anchor) / 100) * margin + c.engine * margin - c.wage + c.loot;
   // Traits whose effect steps with age (a year a day, in decades).
   const AGE_TRAITS = new Set(['lateBloomer', 'earlyBloomer', 'wornOut']);
 
@@ -285,7 +305,7 @@ const EmployeePlanner = (() => {
     const boundaries = new Set([0, end]);
     for (const { e, tool } of members) {
       const moved = e.company !== company.id;
-      for (const h of [tool?.hours, (EC.CFG.retireAge - e.age) * 24, ...e.happiness.map(x => x.hours), ...(e.productionEvents || []).map(x => x.hours), ...traitHours(e, moved, end)]) {
+      for (const h of [tool?.hours, EC.workingDays(e) * 24, ...e.happiness.map(x => x.hours), ...(e.productionEvents || []).map(x => x.hours), ...traitHours(e, moved, end)]) {
         if (h > 0 && h < end) boundaries.add(h);
       }
       if (e.traits.some(t => AGE_TRAITS.has(t.code))) {
@@ -306,11 +326,11 @@ const EmployeePlanner = (() => {
       if (i === 0) first = rows;
       const at = rows.map(row => slot.get(row.id));
       if (s.trainingQuota > 0) for (let r = 0; r < rows.length; r++) {
-        const row = rows[r], m = at[r], e = members[m].e, daysLeft = EC.CFG.retireAge - e.age;
+        const row = rows[r], m = at[r], e = members[m].e, daysLeft = EC.workingDays(e);
         if (!(e.potentialLeft > 0) || !e.trainingValues) continue;
         const from = hours[i] / 24, to = hours[i + 1] / 24;
         const before = trainingProgress[m], after = Math.min(e.potentialLeft, before + row.trainingRate * (to - from));
-        if (row.trainingRate <= 1 && row.learningLuck === e.trainingLuck && Math.abs(before - Math.min(e.potentialLeft, from * row.trainingRate)) < 1e-9) {
+        if (row.trainingRate === Math.min(1, s.trainingQuota) && row.learningLuck === e.trainingLuck && Math.abs(before - Math.min(e.potentialLeft, from * row.trainingRate)) < 1e-9) {
           trainingProgress[m] = after;
           continue;
         }
@@ -342,8 +362,8 @@ const EmployeePlanner = (() => {
         h = next;
       }
     }
-    if (company.recruitmentValues) {
-      const recruiters = members.filter(({ e }) => has(e, 'recruiter') && e.age < EC.CFG.retireAge);
+    if (company.recruitmentValues && !company.disabled) {
+      const recruiters = members.filter(({ e }) => has(e, 'recruiter') && EC.workingDays(e) > 0);
       const benefit = company.recruitmentValues[Math.min(3, recruiters.length)] - company.recruitmentValues[0];
       value += benefit; daily[0] += benefit;
       for (const { e } of recruiters) totals[slot.get(e.id)] += benefit / recruiters.length;
@@ -425,7 +445,7 @@ const EmployeePlanner = (() => {
           || (Number.isFinite(o.responsibility) && Math.abs(row.responsibility - o.responsibility) > 0.01)
           || (Number.isFinite(o.happiness) && Math.abs(row.happiness - o.happiness) > 0.15)
           || (Number.isFinite(o.bonus) && Math.abs(row.bonus - o.bonus) > 0.15)
-          || (Number.isFinite(o.output) && Math.abs(row.output - o.output) > 0.011)) {
+          || (!c.disabled && Number.isFinite(o.output) && Math.abs(row.output - o.output) > 0.011)) {
           note(c.id, `${members.find(m => m.e.id === row.id).e.name}'s rebuilt stats or bonuses differ from the game, so an unmodelled effect may be present.`);
         }
       }
@@ -446,7 +466,7 @@ const EmployeePlanner = (() => {
       const reason = errors[0] || !e && 'Employee not loaded.' || company?.excluded;
       if (reason) return { valid: false, reason };
       const members = s.employees.filter(x => x.company === company.id).map(e => ({ e, tool: tools.get(e.equipped?.id) }));
-      const days = Math.min(47, Math.max(1, ...members.map(({ e }) => Math.ceil(EC.CFG.retireAge - e.age))));
+      const days = Math.min(47, Math.max(1, ...members.map(({ e }) => Math.ceil(EC.workingDays(e)))));
       const project = rows => projectCompany({ ...s, days }, company, rows);
       if (!cache.has(company.id)) cache.set(company.id, project(members));
       const baseline = cache.get(company.id);
@@ -511,7 +531,7 @@ const EmployeePlanner = (() => {
       }
       if (!movable(e)) return out;
       for (const c of planned) {
-        if (c.id === here.id || roster.get(c.id).length >= c.capacity) continue;
+        if (c.id === here.id || c.disabled || roster.get(c.id).length >= c.capacity) continue;
         const step = { kind: 'move', employees: [e.id], to: c.id }, keep = toolFor(cur, c);
         add([[e.id, c.id, keep]], `m:${e.id}:${c.id}:${classOf(tools.get(keep))}`, step);
         // A tool can make a move profitable even if neither change alone is.
@@ -523,6 +543,7 @@ const EmployeePlanner = (() => {
       }
       for (const f of partners) {
         const b = assign.get(f.id), there = companies.get(b.company), theirs = tools.get(b.tool) || null;
+        if (here.disabled || there.disabled) continue;
         const [x, y] = [e.id, f.id].sort(), step = { kind: 'swap', employees: [e.id, f.id] };
         const key = `s:${x}:${y}`;
         add([[e.id, there.id, toolFor(cur, there)], [f.id, here.id, toolFor(theirs, here)]], `${key}:keep`, step);
@@ -652,17 +673,20 @@ const EmployeePlanner = (() => {
     };
     const moves = e => {
       if (!movable(e)) return;
-      for (const c of companies) if (c.id !== e.company && count(c.id) < c.capacity) add('move', [[e.id, c.id]]);
+      for (const c of companies) if (c.id !== e.company && !c.disabled && count(c.id) < c.capacity) add('move', [[e.id, c.id]]);
     };
     const swaps = (e, partners) => {
       if (!movable(e)) return;
-      for (const f of partners) if (movable(f) && f.company !== e.company) add('swap', [[e.id, f.company], [f.id, e.company]]);
+      const off = id => companies.find(c => c.id === id)?.disabled;
+      if (off(e.company)) return;
+      for (const f of partners) if (movable(f) && f.company !== e.company && !off(f.company)) add('swap', [[e.id, f.company], [f.id, e.company]]);
     };
     moves(subject); swaps(subject, people);
     const peers = people.filter(e => e.id !== subject.id && e.company === subject.company);
     peers.forEach(moves);
+    const home = companies.find(c => c.id === subject.company);
     people.filter(e => e.company !== subject.company && movable(e)).forEach(e => {
-      if (count(subject.company) < companies.find(c => c.id === subject.company).capacity) add('move', [[e.id, subject.company]]);
+      if (!home.disabled && count(subject.company) < home.capacity) add('move', [[e.id, subject.company]]);
     });
     peers.forEach(e => swaps(e, people));
     return { plans: plans.slice(0, CARD_PLAN_CAP), total: plans.length };
@@ -671,7 +695,7 @@ const EmployeePlanner = (() => {
   function cardSession(snapshot) {
     const prepared = withExclusions(snapshot);
     const horizon = Math.min(47, Math.max(1, Math.ceil(Math.max(0, ...prepared.employees
-      .filter(e => !prepared.companies.find(c => c.id === e.company)?.excluded).map(e => EC.CFG.retireAge - e.age)))));
+      .filter(e => !prepared.companies.find(c => c.id === e.company)?.excluded).map(e => EC.workingDays(e))))));
     // Card variants change Luck against this reference, so own Luck reaches
     // only toolbox loot (see instant) and the fingerprint can leave it out
     // without toolboxes.
@@ -693,7 +717,7 @@ const EmployeePlanner = (() => {
     const fingerprint = e => {
       let f = fingerprints.get(e);
       if (f === undefined) fingerprints.set(e, f = numberOf(JSON.stringify([e.id, e.traits.filter(t => !(t.code === 'recruiter' && !s.companies.some(c => c.recruitmentValues)) && !(t.code === 'trainer' && !(s.trainingQuota > 1))), s.toolboxValue ? e.luck : null, e.potentialLeft,
-        e.production, e.responsibility, e.wage, e.climberRaise])));
+        e.production, e.traitProduction, e.responsibility, e.wage, e.climberRaise])));
       return f;
     };
     // The assignment result includes nulls so removing an equipped tool is preserved.
@@ -706,7 +730,7 @@ const EmployeePlanner = (() => {
       const ctx = { ...context, ppValue: snapshot.ppValue || 1, situation: { ...context.situation,
         gender: subject.gender, product: companies.find(c => c.id === subject.company).product } };
       const e = { ...EC.DEFAULT_EMPLOYEE, ...employee, ...subject,
-        wageExpectation: employee.wageExpectation ?? subject.wage / (subject.production / 4 * (snapshot.ppValue || 1)) };
+        wageExpectation: employee.wageExpectation ?? subject.wage / (EC.paidProduction(subject) / 4 * (snapshot.ppValue || 1)) };
       // Physical records carry timed happiness events; the calculator expects
       // today's numeric happiness. Keep that model separate for forecasts.
       const forecastEmployee = { ...e, luck: employee.luck ?? e.luck, happiness: employee.happiness ?? null };
@@ -870,7 +894,12 @@ const EmployeePlanner = (() => {
           const key = JSON.stringify([c, employee, context, pool]);
           if (state.quotes.has(key)) return state.quotes.get(key);
           let q;
-          if (c.card === 'secondWind') {
+          if (c.card === 'reroll') {
+            const value = EC.trainingOutlook(e, ctx, { price: card => quote(card, true).value }).value;
+            const stay = EC.cardValue(e, c, ctx);
+            q = { value, stay, outcomes: [], plan: explain(state.best.plan), forecast: true,
+              note: 'A fresh hand, including further Rerolls, with rarity rolled again.' };
+          } else if (c.card === 'secondWind') {
             // Future hands have not been dealt. Like Luck, estimate their value
             // in the current company instead of searching placements for every
             // possible future trait pair under the live hand's finite budget.
@@ -878,14 +907,14 @@ const EmployeePlanner = (() => {
             q = { value, stay: value, outcomes: [], plan: explain(state.plans[0]), forecast: true,
               note: 'Future training uses a bounded current-company estimate, net of what the energy earns elsewhere.' };
           } else if (pool && c.card === 'wildCard') {
-            // A random trait and +1 to a random stat, in a forecast: the
-            // trait's shift plus a +1 drill, apart. Pricing every pair cost
+            // A random trait and +2 to a random stat, in a forecast: the
+            // trait's shift plus a +2 drill, apart. Pricing every pair cost
             // most of the feed; leaving out their interaction moved the
             // training outlooks of a 36-employee workforce by 0.2% on
             // average, 1.9% at most (2026-11-01).
             const traits = EC.eligibleTraits(e.traits.map(t => t.code), ctx.situation.gender, ['positive', 'mixed', 'negative']);
             const shifts = traits.map(t => traitShift(t.code));
-            const drills = STATS.map(stat => quote({ card: 'drill', stat, delta: 1 }, true));
+            const drills = STATS.map(stat => quote({ card: 'drill', stat, delta: EC.CFG.wildCardStatGain }, true));
             const mean = k => shifts.reduce((v, x) => v + x[k], 0) / shifts.length + drills.reduce((v, x) => v + x[k], 0) / drills.length;
             q = { value: mean('value'), stay: mean('stay'), outcomes: [], plan: explain(state.best.plan), coverage: 'trait-plus-stat',
               note: 'Trait and stat priced apart. Unpriced non-output effects count as zero.' };
@@ -940,6 +969,6 @@ const EmployeePlanner = (() => {
     }
     return { valid: !errors.length, horizon, price };
   }
-  return { TOOL_TYPES, evaluate, recommend, cardSession, retentionSession, CARD_PLAN_CAP };
+  return { TOOL_TYPES, returnsTool, evaluate, recommend, cardSession, retentionSession, CARD_PLAN_CAP };
 })();
 if (typeof module !== 'undefined') module.exports = EmployeePlanner;
