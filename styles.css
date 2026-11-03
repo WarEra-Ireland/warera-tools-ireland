@@ -2838,10 +2838,12 @@ table.rs-table {
 :root {
   --tr-common: #9aacb5; --tr-uncommon: #4ade80; --tr-rare: #60a5fa; --tr-epic: #c084fc; --tr-legendary: #fbbf24; --tr-mythic: #f87171;
   --tr-prod: #e0a458; --tr-resp: #f2c94c; --tr-luck: #6fd39b; --tr-good: #4ade80; --tr-grey: #a3adb8;
+  --tr-series-0: #3987e5; --tr-series-1: #d95926; --tr-series-2: #199e70;
 }
 html[data-theme="light"] {
   --tr-common: #526072; --tr-uncommon: #166534; --tr-rare: #1d4ed8; --tr-epic: #7e22ce; --tr-legendary: #92400e; --tr-mythic: #b91c1c;
   --tr-prod: #92400e; --tr-resp: #854d0e; --tr-luck: #166534; --tr-good: #15803d; --tr-grey: #525c66;
+  --tr-series-0: #2a78d6; --tr-series-1: #eb6834; --tr-series-2: #1baf7a;
 }
 .tr-stat-production { color: var(--tr-prod); }
 .tr-stat-responsibility { color: var(--tr-resp); }
@@ -3094,6 +3096,34 @@ html[data-theme="light"] {
 .tr-gc-pp.neg { color: var(--danger); }
 .tr-gc-pp.muted { color: var(--muted); font-weight: 500; }
 .tr-gc-note { font-size: 12px; color: var(--muted); margin-top: 3px; }
+/* Career simulation: a line per hand slot, coloured by slot (validated
+   categorical palette, both themes); text stays in text colours. */
+.tr-career { margin-top: 12px; padding: 10px 12px; min-width: 0; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); }
+.tr-career h4 { margin: 0 0 8px; font-size: 13px; display: flex; align-items: center; gap: 6px; }
+.tr-cs-verdict { margin: 0 0 8px; font-size: 13px; }
+.tr-cs-0 { color: var(--tr-series-0); } .tr-cs-1 { color: var(--tr-series-1); } .tr-cs-2 { color: var(--tr-series-2); }
+.tr-cs-key { display: inline-block; width: 12px; height: 3px; border-radius: 2px; margin-right: 6px; vertical-align: middle; background: currentColor; }
+.tr-cs-chart { margin: 8px 0; }
+.tr-cs-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+.tr-cs-plot { position: relative; }
+.tr-cs-plot svg { display: block; max-width: 100%; height: auto; }
+.tr-cs-plot .grid { stroke: var(--border); stroke-width: 1; }
+.tr-cs-plot .grid.zero { stroke: var(--muted); }
+.tr-cs-plot .axis { font-size: 11px; fill: var(--muted); }
+.tr-cs-plot .label { font-size: 11px; fill: var(--text); }
+.tr-cs-line { fill: none; stroke: currentColor; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.tr-cs-plot .cross { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 3 3; }
+.tr-cs-plot .cross[hidden] { display: none; }
+.tr-cs-tip { position: absolute; top: 4px; pointer-events: none; background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; font-size: 12px; color: var(--text); width: max-content; max-width: 100%; box-sizing: border-box; box-shadow: 0 2px 8px rgba(0, 0, 0, .25); z-index: 2; }
+.tr-cs-tablewrap { overflow-x: auto; margin-top: 6px; }
+.tr-cs-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.tr-cs-name { display: inline-flex; align-items: baseline; }
+.tr-cs-name > .tr-cs-key { flex: none; position: relative; top: -2px; }
+.tr-cs-table th, .tr-cs-table td { text-align: left; padding: 4px 6px; border-bottom: 1px solid var(--border); }
+.tr-cs-table th:not(:first-child), .tr-cs-table td:not(:first-child) { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.tr-cs-table tr.muted td { color: var(--muted); }
+.tr-cs-best { font-size: 10px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin-left: 4px; }
+.tr-cs-controls { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; font-size: 12px; }
 .tr-gc-bar { height: 5px; margin-top: 6px; border-radius: 3px; background: var(--border); overflow: hidden; }
 .tr-gc-bar i { display: block; height: 100%; background: var(--accent); }
 .tr-split { display: flex; height: 16px; margin-top: 6px; border-radius: 4px; overflow: hidden; font-size: 12px; font-weight: 700; color: var(--bg); }
@@ -3103,6 +3133,9 @@ html[data-theme="light"] {
 .tr-arg-luck { background: var(--tr-luck); }
 .tr-arg-match { background: var(--accent); }
 .tr-arg-other { background: var(--border); }
+.tr-arg-negative { background: var(--danger); }
+.tr-arg-mixed { background: var(--tr-grey); }
+.tr-arg-positive { background: var(--tr-good); }
 @media (max-width: 480px) {
   .tr-gc-hero { height: 60px; font-size: 24px; }
   .tr-gc-gain { font-size: 18px; }

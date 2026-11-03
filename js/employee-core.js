@@ -164,19 +164,59 @@ const EmployeeCore = (() => {
   // money. Not averaged over the career, so specialization growth, aging,
   // coworkers and future trainings are left out. `margin` is the game's money
   // per PP of this product (gameMargins); e.wage, when known, is the wage per
-  // hour in money, otherwise it is worked out from `ppValue`. null for a card
-  // whose outcome is random or a trait, or a Negotiation the game would not offer.
+  // hour in money, otherwise it is worked out from `ppValue`. Trait cards
+  // (habits, Rehab, Mentoring) count the change their traits make to the
+  // employee's own output today (traitOutputToday); a trait rolled on gain
+  // averages its rolls. null for a Wild Card or Reroll, whose outcome is
+  // random, or a Negotiation the game would not offer.
+  const GAME_TRAIT_CARDS = new Set(['habit', 'habitPair', 'rehab', 'rehabAll', 'mentoring']);
   function gameDailyProfit(e, c, ctx, margin, ppValue) {
     e = { ...DEFAULT_EMPLOYEE, ...e };
-    if (!(margin > 0) || !['drill', 'negotiation', 'secondWind'].includes(c.card)) return null;
+    if (!(margin > 0) || !['drill', 'negotiation', 'secondWind', ...GAME_TRAIT_CARDS].includes(c.card)) return null;
     if (!Number.isFinite(e.wage) && !(ppValue > 0)) return null;
     if (c.card === 'negotiation' && !canNegotiate(e, c)) return null;
+    const wage = x => Number.isFinite(e.wage) ? x.wage : paidPph(x) * x.wageExpectation * ppValue;
+    if (GAME_TRAIT_CARDS.has(c.card)) {
+      const outcomes = cardOutcomes(e, c, ctx);
+      if (!outcomes.length) return null;
+      const s = { ...DEFAULT_SITUATION, ...ctx?.situation };
+      const codes = traits => new Set((traits || []).map(t => t.code));
+      const before = codes(e.traits);
+      return outcomes.reduce((sum, { p, employee: next }) => {
+        const after = codes(next.traits);
+        let money = 0;   // per hour
+        for (const t of next.traits) if (!before.has(t.code)) money += traitOutputToday(t, next, s, margin, false);
+        for (const t of e.traits || []) if (!after.has(t.code)) money -= traitOutputToday(t, e, s, margin, true);
+        return sum + p * 24 * (money - (wage(next) - wage(e)));
+      }, 0);
+    }
     let output = 0;   // PP per hour
     if (c.card === 'drill' && c.stat === 'production') output = c.delta / CFG.outputDivisor * (1 + e.bonus);
     if (c.card === 'drill' && c.stat === 'responsibility') output = pph(e) * happyGain(CFG.respHappiness * c.delta, e.happiness) * 0.01;
     const next = cardOutcomes(e, c, ctx)[0]?.employee || e;
-    const wage = x => Number.isFinite(e.wage) ? x.wage : paidPph(x) * x.wageExpectation * ppValue;
     return 24 * (output * margin - (wage(next) - wage(e)));
+  }
+  // What a held trait `t` ({ code, arg }) adds to this employee's own output
+  // per hour today, in money at `margin` per PP: the part of the game's
+  // estimate of their production it moves. Its rule runs on today's
+  // Production, bonus and happiness; effects on coworkers, engines, loot,
+  // later days and wages (cardOutcomes moves the wage) count nothing here.
+  // `held` prices one they already have (its happiness isn't capped then).
+  function traitOutputToday(t, e, s, margin, held) {
+    const def = TRAIT[t.code];
+    if (!def?.hourly) return 0;
+    const production = ordinaryProduction({ ...e, traits: (e.traits || []).filter(x => x.code !== t.code) }, s, 0);
+    const gain = (n, h) => held ? n : happyGain(n, h);
+    const output = pph(e), none = () => 0;
+    const x = { e, s, held, male: Math.max(0, s.coworkers - s.femaleCoworkers), loss: e.happinessLoss,
+      arg: t.arg ?? null, age: e.age, tenure: s.tenureDays, employed: s.employedDays,
+      prod: d => (Math.max(1, production + d) - Math.max(1, production)) / CFG.outputDivisor * (1 + e.bonus) * margin,
+      pct: p => output * p / 100 * margin,
+      happy: h => output * gain(h, e.happiness) / 100 * margin,
+      resp: d => output * gain(CFG.respHappiness * d, e.happiness) / 100 * margin,
+      engine: none, luck: none, boxes: none, wage: none, raise: none, teamHappy: none, teamProd: none, teamResp: none, quickStudy: 0 };
+    x.stat = (stat, k) => stat === 'production' ? x.prod(k) : stat === 'responsibility' ? x.resp(k) : 0;
+    return def.hourly(x);
   }
 
   // The game's own money per PP of each product, as its UI prices profit:
@@ -913,6 +953,14 @@ const EmployeeCore = (() => {
   // in ctx.situation, moves it; wageExpectation (per paid point) stays.
   function cardOutcomes(e, c, ctx = {}) {
     if (c.card === 'reroll') return [];
+    if (c.card === 'secondWind') {
+      if (!Number.isInteger(c.gain) || c.gain <= 0) return [];
+      if (e.potentialMax != null && e.potentialMax + c.gain > CFG.potentialMaxCap) return [];
+      return [{ p: 1, arg: null, employee: { ...e,
+        potentialLeft: (e.potentialLeft ?? 0) + c.gain,
+        ...(e.potentialMax == null ? {} : { potentialMax: e.potentialMax + c.gain }),
+      } }];
+    }
     const s = { ...DEFAULT_SITUATION, ...ctx.situation };
     const held = e.traits || [];
     if (c.card === 'rehab' && TRAIT[c.code]?.polarity !== 'negative') return [];

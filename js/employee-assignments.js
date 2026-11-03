@@ -178,7 +178,7 @@ const EmployeeAssignments = (() => {
       const paid = EC.paidProduction({ production: e.base?.production || 0, traitProduction });
       return { id: e._id, name: e.name, company: company._id, age: e.age, retireInDays: e.retireInDays, locked: pinned.has(e._id),
         production: e.base?.production, traitProduction, responsibility: e.base?.responsibility, luck: e.base?.luck ?? 0, trainingBaseLuck: e.base?.luck ?? 0, trainingLuck: e.breakdown?.luck?.total ?? 0,
-        potentialLeft: Math.max(0, (e.potentialMax || 0) - (e.potential || 0)), wage: e.wage, negotiationExpectation: e.wageExpectation,
+        potentialMax: e.potentialMax, potentialLeft: Math.max(0, (e.potentialMax || 0) - (e.potential || 0)), wage: e.wage, negotiationExpectation: e.wageExpectation,
         climberRaise: e.traits?.some(t => t.code === 'climber') ? paid / 4 * market.ppValue * 0.02
           * (e.traits.some(t => t.code === 'greedy') ? 1.2 : e.traits.some(t => t.code === 'modest') ? 0.85 : 1) : 0,
         gender: e.gender, nationality: e.nationality, traits: e.traits || [], specializations: { ...e.specializations, [company.itemCode]: currentSpec },
@@ -668,7 +668,7 @@ const EmployeeAssignments = (() => {
       onResult({ running: true });
       const tag = name => document.querySelector(`script[src*="js/${name}.js"]`)?.getAttribute('src')?.match(/[?&]v=([\w.-]+)/)?.[1] || '';
       try {
-        worker = new Worker(`${root.dataset.worker}&core=${tag('employee-core')}&planner=${tag('employee-planner')}`);
+        worker = new Worker(`${root.dataset.worker}&core=${tag('employee-core')}&planner=${tag('employee-planner')}&career=${tag('employee-career')}`);
       } catch (err) { console.warn('[planner] worker failed', err); fail('The planner could not start in this browser.'); return; }
       running = id;
       worker.onmessage = ({ data }) => {

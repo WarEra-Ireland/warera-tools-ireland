@@ -299,7 +299,8 @@ const EmployeePlanner = (() => {
   }
 
   function projectCompany(s, company, members) {
-    const end = s.days * 24;
+    // s.hours, when given, replaces whole days (a career step can be part of one).
+    const end = s.hours ?? s.days * 24, span = end / 24, days = Math.max(1, Math.ceil(span - EPS));
     // Effects are worked out afresh only where something other than
     // specialization can change; days in between reuse them (profitOn).
     const boundaries = new Set([0, end]);
@@ -309,7 +310,7 @@ const EmployeePlanner = (() => {
         if (h > 0 && h < end) boundaries.add(h);
       }
       if (e.traits.some(t => AGE_TRAITS.has(t.code))) {
-        for (let d = 1; d < s.days; d++) if (Math.floor((e.age + d) / 10) !== Math.floor((e.age + d - 1) / 10)) boundaries.add(d * 24);
+        for (let d = 1; d < days; d++) if (Math.floor((e.age + d) / 10) !== Math.floor((e.age + d - 1) / 10)) boundaries.add(d * 24);
       }
     }
     const hours = [...boundaries].sort((a, b) => a - b);
@@ -317,7 +318,7 @@ const EmployeePlanner = (() => {
     const slot = new Map(members.map(({ e }, i) => [e.id, i]));
     const totals = members.map(() => 0), trainingProgress = members.map(() => 0), trainingValues = members.map(() => 0);
     const minHappiness = members.map(() => 100);
-    const daily = new Array(s.days).fill(0);
+    const daily = new Array(days).fill(0);
     let value = 0;
     const rosters = new Map(), flags = flagsFor(members);
     let first = null;
@@ -336,9 +337,9 @@ const EmployeePlanner = (() => {
         }
         const mean = trainingMean(e, Math.max(1, row.learningLuck), s.management || 0), baseMean = trainingMean(e, e.trainingLuck ?? row.learningLuck, s.management || 0);
         const credit = (at, amount) => {
-          const benefit = amount * Math.max(0, Math.min(daysLeft, s.days) - at) / daysLeft;
+          const benefit = amount * Math.max(0, Math.min(daysLeft, span) - at) / daysLeft;
           if (!benefit) return;
-          value += benefit; daily[Math.min(s.days - 1, Math.floor(at))] += benefit;
+          value += benefit; daily[Math.min(days - 1, Math.floor(at))] += benefit;
           totals[m] += benefit;
           trainingValues[m] += benefit;
         };
@@ -969,6 +970,166 @@ const EmployeePlanner = (() => {
     }
     return { valid: !errors.length, horizon, price };
   }
-  return { TOOL_TYPES, returnsTool, evaluate, recommend, cardSession, retentionSession, CARD_PLAN_CAP };
+  // Rules for EmployeeCareer: the subject's company projected a step at a
+  // time, with every card in `hand` (and taking nothing) as a paired arm.
+  // Card scores are the planner's own profit projections, so cards of every
+  // kind compare on one footing. Second Wind values its extra trainings at a
+  // fresh hand's expected best card, in which a further Second Wind counts 0:
+  // one level of lookahead, so chains of Second Winds stay finite.
+  function careerOptions(snapshot, subjectId, hand, { seed = 1729, start = 0, count = 64, energyValue = 0 } = {}) {
+    const subject = snapshot.employees.find(e => e.id === subjectId);
+    const company = snapshot.companies.find(c => c.id === subject?.company);
+    if (!subject || !company || company.disabled || company.excluded) throw Error('An active employee is required.');
+    const pp = snapshot.ppValue;
+    if (!(pp > 0)) throw Error('Market production-point value is required.');
+    // Only the subject's company is projected, so only its data must be complete.
+    const roster = snapshot.employees.filter(e => e.company === company.id);
+    const ids = new Set(roster.map(e => e.id));
+    const local = { ...snapshot, days: 1, companies: [company], employees: roster,
+      tools: snapshot.tools.filter(t => ids.has(t.holder) || roster.some(e => e.equipped?.id === t.id)) };
+    const errors = validate(local, initial(local));
+    if (errors.length) throw Error(errors[0]);
+    for (const e of roster) { const reason = uncertainty(e); if (reason) throw Error(`${e.name} ${reason}.`); }
+    const horizon = EC.workingDays(subject);
+    if (!Number.isFinite(horizon)) throw Error('Working days left are required.');
+    const peers = roster.filter(e => e.id !== subjectId);
+    const fixed = { ...local, trainingQuota: 0 };
+    const co = { ...company, recruitmentValues: null };
+    const energyCost = t => EC.energyOn({ energyValue }, t);
+    // Career states are never mutated, so each one's derived values are kept.
+    const memo = f => { const m = new WeakMap(); return e => { let v = m.get(e); if (v === undefined) m.set(e, v = f(e)); return v; }; };
+    // Many sampled careers pass through the same state (same day, same cards
+    // taken). Values that depend only on what cards change, and on the day,
+    // are shared between them by this signature. Potential left is not part
+    // of it: nothing shared depends on it.
+    const signature = memo(e => JSON.stringify([e.elapsed, e.production, e.responsibility, e.luck, e.traits, e.wage,
+      e.negotiationExpectation, e.climberRaise, e.traitProduction, e.potentialMax]));
+    const SHARED_LIMIT = 50000;
+    const shared = f => {
+      const m = new Map();
+      return e => {
+        const k = signature(e);
+        let v = m.get(k);
+        if (v === undefined) { if (m.size >= SHARED_LIMIT) m.clear(); m.set(k, v = f(e)); }
+        return v;
+      };
+    };
+    const shifted = (e, days) => ({ ...e, age: e.age + days,
+      retireInDays: Math.max(0, EC.workingDays(e) - days), tenure: e.tenure + days,
+      employedDays: e.employedDays + days, moveAgeHours: e.moveAgeHours + days * 24,
+      wage: wageAt(e, days * 24),
+      negotiationExpectation: e.negotiationExpectation == null ? undefined : e.negotiationExpectation + (has(e, 'climber') ? 0.02 * (Math.floor((e.employedDays + days + EPS) / 7) - Math.floor((e.employedDays + EPS) / 7)) : 0),
+      specializations: Object.fromEntries(Object.entries(e.specializations).map(([good, n]) =>
+        [good, good === co.product ? Math.min(20, n + days * (has(e, 'quickStudy') ? 2 : 1)) : n])),
+      happiness: e.happiness.map(x => ({ ...x, hours: x.hours - days * 24 })).filter(x => x.hours > 0),
+      productionEvents: (e.productionEvents || []).map(x => ({ ...x, hours: x.hours - days * 24 })).filter(x => x.hours > 0),
+    });
+    const members = memo(e => [e, ...peers.map(p => shifted(p, e.elapsed))].map(p => {
+      const tool = snapshot.tools.find(t => t.id === p.equipped?.id);
+      return { e: p, tool: tool ? { ...tool, hours: Math.max(0, tool.hours - e.elapsed * 24) } : null };
+    }));
+    let projections = 0, pools = 0;
+    const project = (e, days = 1) => { projections++; return projectCompany({ ...fixed, hours: days * 24 }, co, members(e)).value / pp; };
+    const base = shared(e => project(e));
+    const ctx = memo(e => ({ ppValue: pp, situation: { ...scene(e, co, members(e).map(m => m.e).filter(p => EC.workingDays(p) > 0)).s,
+      gender: e.gender, tenureDays: e.tenure, employedDays: e.employedDays,
+      coworkerIds: peers.filter(p => EC.workingDays(p) > e.elapsed).map(p => p.id) } }));
+    // Wage per paid point, which cards move (paidProduction is at least 1).
+    const model = memo(e => ({ ...e, wageExpectation: e.wage / (EC.paidProduction(e) / 4 * pp) }));
+    const self = shared(e => instant(fixed, co, members(e), 0).find(r => r.id === e.id));
+    // Trainer coworkers add trainings; the game's reported allowance stands
+    // while the roster is the reported one (see instant).
+    const rate = e => self(e)?.trainingsPerDay ?? 1;
+    const outcomes = (e, c) => EC.cardOutcomes(model(e), c, ctx(e));
+    const pool = shared(e => { pools++; return EC.cardPool(model(e), ctx(e), { price: c => c.card === 'negotiation' && !EC.canNegotiate(model(e), c) ? null : 0 }); });
+    const odds = shared(e => {
+      const p = pool(e), all = EC.rarityOdds(self(e)?.luck ?? e.luck, snapshot.management || 0);
+      const open = EC.RARITIES.filter(r => p[r].length >= EC.CFG.handSize);
+      const total = open.reduce((sum, r) => sum + all[r], 0);
+      return open.map(r => ({ rarity: r, p: all[r] / total }));
+    });
+    const stepMemo = shared(() => new Map());
+    const key = c => [c.card, c.stat, c.delta, c.drop, c.gain, c.code, c.codes?.join('+'), c.to].join('|');
+    const cardMemo = shared(() => new Map());
+    // Career PP of a card taken now, against taking nothing: a day's change in
+    // company profit over the working days left. null if it can't be taken.
+    const lasting = (e, c) => {
+      const m = cardMemo(e), k = key(c);
+      if (!m.has(k)) {
+        const o = outcomes(e, c);
+        m.set(k, o.length ? (o.reduce((sum, x) => sum + x.p * project(x.employee), 0) - base(e)) * EC.workingDays(e) : null);
+      }
+      return m.get(k);
+    };
+    // A fresh hand's expected best card, Reroll left out and Second Wind at 0.
+    // Two new habits count as the sum of each alone, as in the core model:
+    // projecting every pair (about a hundred) would dominate the run.
+    const estimate = (e, c) => c.card === 'secondWind' ? 0
+      : c.card === 'habitPair' ? c.codes.reduce((sum, code) => sum + (lasting(e, { card: 'habit', code }) ?? 0), 0)
+      : lasting(e, c) ?? 0;
+    const fresh = shared(e => {
+      const p = pool(e);
+      return odds(e).reduce((sum, { rarity, p: w }) => sum + w * EC.expectedMax(p[rarity].filter(c => c.card !== 'reroll')
+        .map(c => estimate(e, c)), EC.CFG.handSize), 0);
+    });
+    const reference = shared(e => Math.max(0, ...['production', 'responsibility', 'luck'].map(stat => lasting(e, EC.drill(stat, 1)) ?? 0),
+      EC.canNegotiate(model(e), EC.neg(0.05)) ? lasting(e, EC.neg(0.05)) ?? 0 : 0));
+    const capped = (e, c) => c.card === 'secondWind' && (!Number.isFinite(e.potentialMax) || e.potentialMax + c.gain > EC.CFG.potentialMaxCap);
+    // Each extra training comes after the potential already left, so it is
+    // worth a fresh hand discounted to the working days then remaining, less
+    // what its energy would earn that day.
+    const windValue = (e, c, time) => {
+      const days = EC.workingDays(e), r = rate(e);
+      if (!(days > 0) || !(r > 0)) return 0;
+      const v = fresh(e);
+      let total = 0;
+      for (let j = 1; j <= c.gain; j++) {
+        const until = (e.potentialLeft + j) / r;
+        total += Math.max(0, v * Math.max(0, days - until) / days - energyCost(time + until));
+      }
+      return total;
+    };
+    const apply = (e, c, draw) => {
+      const options = outcomes(e, c);
+      if (!options.length) throw Error('Ineligible career card.');
+      let remaining = draw;
+      for (const o of options) { remaining -= o.p; if (remaining < 0) return o.employee; }
+      return options[options.length - 1].employee;
+    };
+    const rules = {
+      metrics: () => ({ projections, pools }),
+      retirement: () => horizon,
+      next: (e, time) => { const r = rate(e); return r > 0 ? time + 1 / r : Infinity; },
+      energyCost,
+      advance: (e, from, to) => {
+        const m = stepMemo(e), k = to - from;
+        if (!m.has(k)) m.set(k, k ? project(e, k) : 0);
+        return { employee: { ...shifted(e, k), elapsed: to }, profit: m.get(k) };
+      },
+      // Train when an ordinary hand's typical best card pays for the energy.
+      shouldTrain: (e, time, cost) => reference(e) > cost,
+      hand: (e, rand) => {
+        const p = pool(e), open = odds(e);
+        if (!open.length) return [];
+        let roll = rand(0), rarity = open[open.length - 1].rarity;
+        for (const o of open) { roll -= o.p; if (roll < 0) { rarity = o.rarity; break; } }
+        const cards = [...p[rarity]], dealt = [];
+        for (let i = 0; i < EC.CFG.handSize; i++) dealt.push(cards.splice(Math.floor(rand(i + 1) * cards.length), 1)[0]);
+        return dealt;
+      },
+      score: (e, c, time) => c.card === 'reroll' ? fresh(e) : capped(e, c) ? null
+        : c.card === 'secondWind' ? windValue(e, c, time) : lasting(e, c),
+      apply,
+    };
+    const employee = { ...subject, trainingBaseLuck: subject.luck, elapsed: 0 };
+    const arms = [{ slot: null, card: null }], skipped = [];
+    hand.forEach((card, slot) => {
+      const ok = card && (card.card === 'reroll' || (!capped(employee, card) && outcomes(employee, card).length));
+      (ok ? arms : skipped).push(ok ? { slot, card } : slot);
+    });
+    return { employee, arms, skipped, seed, start, count, rules, horizon };
+  }
+
+  return { careerOptions, TOOL_TYPES, returnsTool, evaluate, recommend, cardSession, retentionSession, CARD_PLAN_CAP };
 })();
 if (typeof module !== 'undefined') module.exports = EmployeePlanner;

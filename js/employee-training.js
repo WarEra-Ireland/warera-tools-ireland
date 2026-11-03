@@ -359,7 +359,7 @@ const EmployeeTrainingTool = (() => {
       const b = second.some(t => t.code === slot.b) ? slot.b : second[0]?.code;
       return { ...kind, codes: [a, b].filter(Boolean) };
     }
-    return kind;
+    return slot.numeric ? { ...kind, ...slot.numeric } : kind;
   }
 
   // The hand an employee was dealt and hasn't picked from yet, as hand
@@ -382,11 +382,17 @@ const EmployeeTrainingTool = (() => {
       const card = o.card === 'habit' && o.traitTo2 ? 'habitPair' : o.card;
       const codes = (card === 'mentoring' ? [o.trait, o.traitTo] : [o.traitTo ?? o.trait, o.traitTo2]).map(codeOf).filter(Boolean);
       const k = kinds.findIndex(kind => kind.card === card && (
-        kind.card === 'drill' ? kind.stat === o.stat && kind.delta === o.delta
+        kind.card === 'drill' ? kind.stat === o.stat
           : kind.card === 'habit' || kind.card === 'rehab' ? EC.TRAIT[codes[0]]?.polarity === kind.polarity
             : true));
       if (k < 0) { missing++; console.warn('[training] unknown offer', o); return { k: -1 }; }
-      return codes.length ? { k, a: codes[0], ...(codes[1] ? { b: codes[1] } : {}) } : { k };
+      const field = { drill: 'delta', negotiation: 'drop', secondWind: 'gain' }[card];
+      if (field && (!Number.isFinite(o.delta) || o.delta <= 0)) {
+        missing++;
+        return { k: -1 };
+      }
+      return { k, ...(field ? { numeric: { [field]: o.delta } } : {}),
+        ...(codes.length ? { a: codes[0], ...(codes[1] ? { b: codes[1] } : {}) } : {}) };
     });
     while (slots.length < 3) { missing++; slots.push({ k: -1 }); }
     return { rarity, slots, missing, drawnAt: emp.pendingTraining.drawnAt || null };
@@ -485,11 +491,7 @@ const EmployeeTrainingTool = (() => {
   const cardKey = c => JSON.stringify(Object.fromEntries(Object.entries(c).filter(([k]) => k !== 'value')));
   function prepareCardPricing() {
     if (!cardPricer) cardPricer = EmployeeAssignments.createCardPricer({
-      workerFactory: () => {
-        const tag = name => document.querySelector(`script[src*="js/${name}.js"]`)?.getAttribute('src')?.match(/[?&]v=([\w.-]+)/)?.[1] || '';
-        const url = document.getElementById('tr-assignments-body').dataset.worker;
-        return new Worker(`${url}&core=${tag('employee-core')}&planner=${tag('employee-planner')}`);
-      },
+      workerFactory: plannerWorker,
       onUpdate: () => renderAfter({ train: ['result', 'team', 'fire'], keep: ['fire', 'result', 'team'] }[view.tab] || ['team', 'result', 'fire']),
     });
     const settings = assignments?.cardSettings();
@@ -576,6 +578,26 @@ const EmployeeTrainingTool = (() => {
     return `Here ${signedPP(q.stay)} PP; rearranged ${signedPP(q.value)} PP, of which ${signedPP(q.value - q.stay)} from rearranging. Assumes ${plans}. ${q.note || (q.forecast ? 'Forecast of future training.' : '')}`;
   }
 
+  // Positive habits a card's new traits would rule out of every future hand
+  // (traits that conflict can't both be held), worth something to this
+  // employee as a habit now, best first. None once no training is left.
+  function blockedHabits(c, e, ctx) {
+    const held = heldCodes();
+    const after = c.card === 'habit' ? [...held, c.code] : c.card === 'habitPair' ? [...held, ...(c.codes || [])]
+      : c.card === 'mentoring' && c.to ? [...held.filter(code => code !== c.code), c.to] : null;
+    if (!after || after.includes(undefined) || !(input.potentialLeft > 0)) return [];
+    const open = new Set(EC.eligibleTraits(after, input.sit.gender, ['positive']).map(t => t.code));
+    return EC.eligibleTraits(held, input.sit.gender, ['positive']).filter(t => !after.includes(t.code) && !open.has(t.code))
+      .map(t => ({ code: t.code, value: EC.traitValue(t.code, e, ctx).value })).filter(b => b.value > 0)
+      .sort((a, b) => b.value - a.value);
+  }
+  function blockedText(blocks) {
+    if (!blocks?.length) return '';
+    const list = blocks.map(b => `${escapeHtml(traitName(b.code))} (~${fmtPP(b.value)} PP)`);
+    const names = list.length > 1 ? `${list.slice(0, -1).join(', ')} and ${list.at(-1)}` : list[0];
+    return `<div class="tr-gc-note tr-warn" title="These habits conflict with a trait this card gives, so no later training can offer them. The values are what each would be worth to ${escapeHtml(input.who)} as a habit now. The card value above leaves this out; the career simulation below counts it.">Blocks ${names} in future hands</div>`;
+  }
+
   // Each slot's card with its value and, for traits rolled on gain, the
   // outcomes. Unpriced cards have value null.
   function pricedHand(e, ctx) {
@@ -588,7 +610,7 @@ const EmployeeTrainingTool = (() => {
       const t = EC.TRAIT[c.card === 'mentoring' ? c.to : c.code] || null;
       // A Wild Card's spread, for the verdict (rearranged quotes carry their own outcomes).
       const spread = c.card === 'wildCard' ? EC.wildCardOutcomes(e, ctx) : null;
-      return { slot, c, value, outcomes: tv?.outcomes || [], spread, note: t?.unpriced, when: t?.when };
+      return { slot, c, value, outcomes: tv?.outcomes || [], spread, note: t?.unpriced, when: t?.when, blocks: blockedHabits(c, e, ctx) };
     }).filter(Boolean);
     const batch = selectedPricing(rows.map(x => x.c), 'hand');
     const group = batch.result?.groups[0];
@@ -603,7 +625,8 @@ const EmployeeTrainingTool = (() => {
     return rows;
   }
 
-  const rollName = arg => ARG_SHORT[arg] || (EC.TRAIT[arg] ? traitName(arg) : arg);
+  const POLARITY_NAME = { negative: 'Bad', mixed: 'Mixed', positive: 'Good' };
+  const rollName = arg => ARG_SHORT[arg] || POLARITY_NAME[arg] || (EC.TRAIT[arg] ? traitName(arg) : arg);
   // A card's outcomes merged by what was rolled (a Wild card lists each
   // trait once per stat), with each group's average value.
   function rollGroups(outcomes) {
@@ -615,6 +638,9 @@ const EmployeeTrainingTool = (() => {
     }
     return [...groups.values()].map(g => ({ arg: g.arg, p: g.p, value: g.sum / g.p }));
   }
+  // A Wild card's outcomes merged by whether the trait is bad, mixed or good.
+  const polarityGroups = spread => rollGroups(spread.map(o => ({ ...o, arg: EC.TRAIT[o.arg]?.polarity })))
+    .sort((a, b) => Object.keys(POLARITY_NAME).indexOf(a.arg) - Object.keys(POLARITY_NAME).indexOf(b.arg));
   // Up to this many rolls are listed on a card; more show as a range.
   const ROLLS_LISTED = 4;
 
@@ -715,7 +741,8 @@ const EmployeeTrainingTool = (() => {
   function gameDailyText(c) {
     const wage = findEmployee(input.pick)?.emp?.wage;
     const v = EC.gameDailyProfit({ ...employee(), ...(Number.isFinite(wage) ? { wage } : {}) }, c, context(), market?.gameMargin?.[input.product], market?.ppValue);
-    if (v == null) return '';
+    // The game shows two decimals and hides a change that rounds to nothing.
+    if (v == null || Math.abs(v) < 0.005) return '';
     return `<div class="tr-gc-note" title="The daily profit the game shows on this card: today's extra output at the game's own price, with no market tax, minus the wage change, over 24 hours. The game's price is a slow average, so it can differ from the market price the value above uses. That value also counts specialization growth, aging, coworkers and future trainings.">Game: ${v < 0 ? '−' : '+'}₿${Math.abs(v).toLocaleString('en', { maximumFractionDigits: 3 })}/day today</div>`;
   }
 
@@ -730,7 +757,8 @@ const EmployeeTrainingTool = (() => {
   // The hand as the game shows it, with each card's value as a footer.
   function handCards(hand, best) {
     if (!hand.length) return '';
-    const rolls = new Map(hand.map(x => [x, rollGroups(x.outcomes)]));
+    const random = x => x.outcomes.length ? x.outcomes : x.spread || [];
+    const rolls = new Map(hand.map(x => [x, x.c.card === 'wildCard' && x.spread?.length ? polarityGroups(x.spread) : rollGroups(x.outcomes)]));
     const listed = x => rolls.get(x).length <= ROLLS_LISTED ? rolls.get(x) : [];
     const top = Math.max(0, ...hand.map(x => Math.max(x.value ?? 0, ...listed(x).map(g => g.value))));
     const pctOf = v => top > 0 ? Math.max(0, Math.min(100, v / top * 100)) : 0;
@@ -738,20 +766,21 @@ const EmployeeTrainingTool = (() => {
       const isBest = best && x.slot === best.slot;
       const daily = x.value === null ? null : perDayText(x.value, hand.days);
       const groups = listed(x);
-      const values = x.outcomes.map(o => o.value);
+      const values = random(x).map(o => o.value);
       const split = groups.length ? `<div class="tr-split">${groups.map(g =>
         `<span class="tr-arg-${g.arg}" style="flex:${g.p}" title="${escapeHtml(`${rollName(g.arg)}: ${signedPP(g.value)} PP, ${Math.round(g.p * 100)}% chance`)}">${g.p >= 0.2 ? signedPP(g.value) : ''}</span>`).join('')}</div>
         <div class="tr-gc-note">${groups.map(g => `${escapeHtml(rollName(g.arg))} ${Math.round(g.p * 100)}%`).join(' · ')}</div>`
-        : x.outcomes.length ? `<div class="tr-gc-note">Random: ${signedPP(Math.min(...values))} to ${signedPP(Math.max(...values))} PP</div>` : '';
+        : values.length ? `<div class="tr-gc-note">Random: ${signedPP(Math.min(...values))} to ${signedPP(Math.max(...values))} PP</div>` : '';
       const bar = `<div class="tr-gc-bar"><i style="width:${pctOf(x.value)}%"></i></div>`;
       return `<div class="tr-gc${isBest ? ' best' : ''}"${x.when ? ` title="${escapeHtml(x.when)}"` : ''}>
         ${isBest ? '<span class="tr-take">TAKE</span>' : ''}
         <div class="tr-gc-head" title="${RARITY_NAME[input.hand.rarity]}">${gameIcon(x.c.card, 'tr-gc-icon')}<span class="tr-gc-title">${escapeHtml(cardTitle(x.c))}</span></div>
         <div class="tr-gc-face">${cardFace(x.c, x.value)}${cardWage(x.c)}
-        ${x.c.card === 'mentoring' ? (x.c.to ? traitHelp(x.c.to, 'Trait effect') : '') : x.c.code ? traitHelp(x.c.code, 'Trait effect') : (x.c.codes || []).map(code => traitHelp(code)).join('')}</div>
+        ${x.c.card === 'mentoring' ? (x.c.to ? traitHelp(x.c.to, 'Trait effect') : '') : x.c.code ? traitHelp(x.c.code, 'Trait effect') : (x.c.codes || []).map(code => traitHelp(code)).join('')}
+        ${blockedText(x.blocks)}</div>
         <div class="tr-gc-value">
           ${x.value === null ? `<div class="tr-gc-pp muted">not priced</div><div class="tr-gc-note">${escapeHtml(x.note || 'depends on the trait')}</div>`
-            : `<div class="tr-gc-pp${x.value < 0 ? ' neg' : ''}"${x.detail ? ` title="${escapeHtml(x.detail)}"` : ''}><span class="tr-gc-num">${x.outcomes.length ? '≈ ' : ''}${daily || `${signedPP(x.value)} PP`}</span>${x.outcomes.length ? ' <em>avg</em>' : ''}</div>
+            : `<div class="tr-gc-pp${x.value < 0 ? ' neg' : ''}"${x.detail ? ` title="${escapeHtml(x.detail)}"` : ''}><span class="tr-gc-num">${values.length ? '≈ ' : ''}${daily || `${signedPP(x.value)} PP`}</span>${values.length ? ' <em>avg</em>' : ''}</div>
                ${daily ? `<div class="tr-gc-note">${signedPP(x.value)} PP</div>` : ''}
                ${gameDailyText(x.c)}
                ${split}${groups.length ? '' : bar}`}
@@ -761,7 +790,186 @@ const EmployeeTrainingTool = (() => {
     }).join('')}</div>`;
   }
 
+  // The planner worker, loading the same script versions as this page.
+  function plannerWorker() {
+    const tag = name => document.querySelector(`script[src*="js/${name}.js"]`)?.getAttribute('src')?.match(/[?&]v=([\w.-]+)/)?.[1] || '';
+    const url = document.getElementById('tr-assignments-body').dataset.worker;
+    return new Worker(`${url}&core=${tag('employee-core')}&planner=${tag('employee-planner')}&career=${tag('employee-career')}`);
+  }
+
+  /* ── Career simulation: every card in the hand, and taking nothing,
+   * played out over sampled careers in the planner worker. Each run adds
+   * three times the careers already done, merged into one estimate. ── */
+  const CAREER_FIRST = 64, CAREER_MAX = 16384, CAREER_SEED = 1729;
+  let careerJob = null, careerSeq = 0;
+  const careerRevision = () => JSON.stringify([input, objectId(team), objectId(market), assignments?.cardSettings(), taken.size]);
+  const careerLabel = c => `${cardTitle(c)}: ${effectText(c)}`;
+  function stopCareer(job) {
+    if (job?.worker) {
+      job.worker.postMessage({ kind: 'career:cancel' });
+      job.worker.terminate();
+      job.worker = null;
+    }
+    if (job) job.running = false;
+  }
+  function startCareer() {
+    const revision = careerRevision();
+    const previous = careerJob?.revision === revision ? careerJob : null;
+    stopCareer(careerJob);
+    const done = previous?.stats?.n || 0;
+    const count = done ? Math.min(CAREER_MAX - done, done * 3) : CAREER_FIRST;
+    if (count <= 0) return;
+    const job = careerJob = { ...previous, revision, id: ++careerSeq, start: done, count, completed: 0, running: true, error: null, worker: null, started: performance.now() };
+    try {
+      const prepared = EmployeeAssignments.snapshotOf(team, market, assignments.cardSettings());
+      if (prepared.errors.length) throw Error(prepared.errors[0]);
+      const worker = job.worker = plannerWorker();
+      worker.onmessage = ({ data }) => {
+        if (careerJob !== job || data.id !== job.id) return;
+        if (data.type === 'career:progress') {
+          job.completed = data.completed;
+          const el = $calc.querySelector('[data-career-progress]');
+          if (el) el.textContent = careerProgressText(job);
+          return;
+        }
+        if (data.type === 'career:done') {
+          job.stats = EmployeeCareer.merge(job.stats, data.result);
+          Object.assign(job, { arms: data.arms, skipped: data.skipped, horizon: data.horizon, computeMs: (job.computeMs || 0) + data.computeMs });
+        } else if (data.type === 'career:error') job.error = data.error || 'The simulation failed.';
+        else return;
+        stopCareer(job); renderResult();
+      };
+      worker.onerror = event => {
+        if (careerJob !== job) return;
+        job.error = event.message || 'The simulation worker failed.';
+        stopCareer(job); renderResult();
+      };
+      worker.postMessage({ kind: 'career', id: job.id, subjectId: input.pick, hand: (input.hand?.slots || []).map(slotCard),
+        snapshot: { ...prepared.snapshot, ppValue: market.ppValue },
+        options: { seed: CAREER_SEED, start: done, count, energyValue: energyCurve() } });
+    } catch (error) { job.error = error.message; stopCareer(job); }
+    renderResult();
+  }
+  const careerProgressText = job => `Simulating careers: ${(job.start + job.completed).toLocaleString()} of ${(job.start + job.count).toLocaleString()}…`;
+  // ±1.96 standard errors: the 95% sampling interval.
+  const careerRange = r => r.standardError === null ? '' : `± ${fmtPP(1.96 * r.standardError)}`;
+  const decisive = r => r.standardError !== null && Math.abs(r.mean) > 1.96 * r.standardError;
+
+  function careerPanel() {
+    const job = careerJob?.revision === careerRevision() ? careerJob : null;
+    const s = job?.stats, slots = input.hand?.slots || [];
+    let body = '';
+    if (s) {
+      const rows = job.arms.map((slot, i) => ({ i, slot, c: slot === null ? null : slotCard(slots[slot]) }))
+        .filter(r => r.c).map(r => ({ ...r, vs: EmployeeCareer.compare(s, r.i, 0) }));
+      const top = (list, not) => list.filter(r => r !== not).reduce((a, r) => !a || r.vs.mean > a.vs.mean ? r : a, null);
+      const best = top(rows), runnerUp = top(rows, best);
+      const settled = !runnerUp || decisive(EmployeeCareer.compare(s, best.i, runnerUp.i));
+      const lines = rows.filter(r => r.c.card === 'secondWind').map(w => {
+        const rival = top(rows, w);
+        if (!rival) return '';
+        const d = EmployeeCareer.compare(s, w.i, rival.i);
+        const a = `<strong>${escapeHtml(careerLabel(w.c))}</strong>`, b = escapeHtml(careerLabel(rival.c));
+        const text = !decisive(d) ? `${a} and ${b} are within sampling error of each other (difference ${signedPP(d.mean)} ${careerRange(d)} PP). Simulate more careers to separate them.`
+          : `${a} earns about ${fmtPP(Math.abs(d.mean))} PP ${d.mean > 0 ? 'more' : 'less'} over the career than ${b} (${careerRange(d)} PP).`;
+        return `<p class="tr-cs-verdict">${text}</p>`;
+      }).join('');
+      const table = `<div class="tr-cs-tablewrap"><table class="tr-cs-table"><thead><tr><th scope="col">Card</th><th scope="col">Career PP vs nothing</th><th scope="col">95% ±</th></tr></thead><tbody>
+        ${rows.map(r => `<tr${r === best ? ' class="best"' : ''}><td><span class="tr-cs-name"><i class="tr-cs-key tr-cs-${r.slot}" aria-hidden="true"></i><span>${escapeHtml(careerLabel(r.c))}${r === best ? ` <span class="tr-cs-best">${settled ? 'highest' : 'highest so far'}</span>` : ''}</span></span></td>
+          <td>${signedPP(r.vs.mean)}</td><td>${careerRange(r.vs)}</td></tr>`).join('')}
+        ${(job.skipped || []).map(slot => `<tr class="muted"><td>${escapeHtml(careerLabel(slotCard(slots[slot])))}</td><td colspan="2">can't be taken</td></tr>`).join('')}
+      </tbody></table></div>`;
+      body = `${lines}${careerChart(job, rows)}${table}
+        <p class="tr-gc-note">${s.n.toLocaleString()} sampled careers over ${fmtPP(job.horizon)} working days, in ${(job.computeMs / 1000).toFixed(1)} s.</p>`;
+    }
+    const more = (s?.n || 0) < CAREER_MAX;
+    const controls = job?.running
+      ? `<span data-career-progress role="status">${careerProgressText(job)}</span> <button type="button" data-career-cancel>Cancel</button>`
+      : more ? `<button type="button" data-career>${s ? `Simulate ${Math.min(CAREER_MAX - s.n, s.n * 3).toLocaleString()} more careers` : 'Simulate careers'}</button>`
+        : '<span class="tr-muted">Sample limit reached.</span>';
+    return `<div class="tr-career">
+      <h4>Career simulation ${help('How the simulation works', `Plays out the employee's whole working life from today for each card in this hand, and for taking nothing, on the same random draws. Each day is projected with their company and coworkers as placed now (no moves). Future trainings come as often as the employee's daily training allowance (Trainer coworkers raise it) whenever a +1 drill would earn more than the energy, which is valued as it is above. Each hand is dealt from the game's card pool at your Luck and Management odds, and the card with the highest career value is taken: Reroll when a fresh hand is worth more (at most ${EmployeeCareer.MAX_REROLLS} in a row), Wild Card at random over its outcomes. Second Wind's extra trainings are valued at a fresh hand's expected best card, in which a further Second Wind counts nothing, so chains stay finite. Random events, quitting and price changes are not included, and the 95% range covers sampling only.`)}</h4>
+      ${body}
+      <div class="tr-cs-controls">${controls}${job?.error ? ` <span class="tr-warn">${escapeHtml(job.error)}</span>` : ''}</div>
+    </div>`;
+  }
+
+  // Mean cumulative PP against taking nothing, by working day, a line per card.
+  function careerChart(job, rows) {
+    const s = job.stats, days = s.curve[0].length;
+    if (days < 1 || !rows.length) return '';
+    const series = rows.map(r => ({ ...r, values: [0, ...s.curve[r.i].map((v, d) => (v - s.curve[0][d]) / s.n)] }));
+    const all = series.flatMap(x => x.values);
+    const min = Math.min(0, ...all), max = Math.max(0, ...all);
+    // Drawn at the box's own width, so text stays at its CSS size on phones.
+    const W = Math.round(Math.max(300, Math.min(1200, ($calc.clientWidth || 640) - 26))), H = 220, L = 44, T = 10, B = 26;
+    const narrow = W < 480;
+    const short = c => c.card !== 'drill' ? cardTitle(c) : narrow ? effectText(c) : `${cardTitle(c)} ${effectText(c)}`;
+    // Room for the longest end label (about 6.2px a character at 11px).
+    const R = Math.min(Math.round(W * 0.4), 14 + Math.max(...series.map(sr => short(sr.c).length)) * 6.2);
+    const step = 10 ** Math.floor(Math.log10(Math.max(1e-9, (max - min) / 4)));
+    const tick = [1, 2, 5, 10].map(m => m * step).find(t => (max - min) / t <= 5) || step * 10;
+    // The axis runs from tick to tick, so every value sits inside the grid.
+    const lo = Math.floor(min / tick - 1e-9) * tick, hi = Math.max(lo + tick, Math.ceil(max / tick - 1e-9) * tick);
+    const x = d => L + d / days * (W - L - R), y = v => T + (hi - v) / (hi - lo) * (H - T - B);
+    const yTicks = [];
+    for (let v = lo; v <= hi + tick / 2; v += tick) yTicks.push(Math.abs(v) < tick / 2 ? 0 : v);
+    const tickText = v => v === 0 ? '0' : tick >= 1 ? `${v < 0 ? '−' : ''}${Math.round(Math.abs(v)).toLocaleString()}` : signedPP(v);
+    const dayStep = [1, 2, 5, 10, 20, 50].find(t => days / t <= (narrow ? 5 : 8)) || 100;
+    const xTicks = [];
+    for (let d = 0; d <= days; d += dayStep) xTicks.push(d);
+    // End labels, nudged apart so they never overlap.
+    const labels = series.map(sr => ({ sr, y: y(sr.values[days]) })).sort((a, b) => a.y - b.y);
+    for (let i = 1; i < labels.length; i++) labels[i].y = Math.max(labels[i].y, labels[i - 1].y + 13);
+    for (let i = labels.length - 1; i >= 0; i--) labels[i].y = Math.min(labels[i].y, i === labels.length - 1 ? H - B : labels[i + 1].y - 13);
+    job.chart = { series: series.map(sr => ({ label: careerLabel(sr.c), slot: sr.slot, values: sr.values })), days, x0: L, x1: W - R, width: W };
+    return `<div class="tr-cs-chart">
+      <div class="tr-gc-note">Average cumulative PP against taking nothing, by working day</div>
+      <div class="tr-cs-legend">${series.map(sr => `<span><i class="tr-cs-key tr-cs-${sr.slot}" aria-hidden="true"></i>${escapeHtml(careerLabel(sr.c))}</span>`).join('')}</div>
+      <div class="tr-cs-plot">
+      <svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="Average cumulative career PP against taking nothing, by working day, for each card. The table below lists the final values.">
+        ${yTicks.map(v => `<line class="grid${v === 0 ? ' zero' : ''}" x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}"/><text class="axis" x="${L - 6}" y="${y(v) + 4}" text-anchor="end">${tickText(v)}</text>`).join('')}
+        ${xTicks.map(d => `<text class="axis" x="${x(d)}" y="${H - 8}" text-anchor="middle">${d}</text>`).join('')}
+        <text class="axis" x="${W - R}" y="${H - 8}" text-anchor="start" dx="6">days</text>
+        ${series.map(sr => `<polyline class="tr-cs-line tr-cs-${sr.slot}" points="${sr.values.map((v, d) => `${x(d).toFixed(1)},${y(v).toFixed(1)}`).join(' ')}"/>`).join('')}
+        ${labels.map(l => `<text class="label" x="${W - R + 6}" y="${l.y + 4}">${escapeHtml(short(l.sr.c))}</text>`).join('')}
+        <line class="cross" data-career-cross x1="0" x2="0" y1="${T}" y2="${H - B}" hidden/>
+      </svg>
+      <div class="tr-cs-tip" data-career-tip hidden></div>
+      </div>
+    </div>`;
+  }
+  // The chart is drawn at its box's pixel width, so a resize redraws it.
+  let careerResizeTimer = 0;
+  function careerResize() {
+    clearTimeout(careerResizeTimer);
+    careerResizeTimer = setTimeout(() => {
+      const panel = $calc.querySelector('.tr-career');
+      if (panel && careerJob?.stats) panel.outerHTML = careerPanel();
+    }, 150);
+  }
+  function careerHover(ev) {
+    const plot = ev.target.closest?.('.tr-cs-plot'), chart = careerJob?.chart;
+    const tip = $calc.querySelector('[data-career-tip]'), cross = $calc.querySelector('[data-career-cross]');
+    if (!tip || !cross) return;
+    if (!plot || !chart) { tip.hidden = true; cross.setAttribute('hidden', ''); return; }
+    const box = plot.querySelector('svg').getBoundingClientRect(), scale = box.width / chart.width;
+    const px = (ev.clientX - box.left) / scale;
+    const day = Math.round(Math.max(0, Math.min(1, (px - chart.x0) / (chart.x1 - chart.x0))) * chart.days);
+    const cx = chart.x0 + day / chart.days * (chart.x1 - chart.x0);
+    cross.setAttribute('x1', cx); cross.setAttribute('x2', cx); cross.removeAttribute('hidden');
+    tip.innerHTML = `<strong>Day ${day}</strong>${chart.series.map(sr => `<div><i class="tr-cs-key tr-cs-${sr.slot}" aria-hidden="true"></i>${escapeHtml(sr.label)}: ${signedPP(sr.values[day])} PP</div>`).join('')}`;
+    tip.hidden = false;
+    // Beside the crosshair, on the side away from the end labels when it can.
+    const area = plot.getBoundingClientRect(), at = box.left - area.left + cx * scale;
+    // Kept inside the box: on narrow screens it may sit over the crosshair.
+    const w = tip.offsetWidth, before = at - 12 - w, after = at + 12;
+    const left = cx > (chart.x0 + chart.x1) / 2 ? (before >= 0 ? before : after) : (after + w <= area.width ? after : before);
+    tip.style.left = `${Math.max(0, Math.min(area.width - w, left))}px`;
+  }
+
   function renderResult() {
+    if (careerJob && careerJob.revision !== careerRevision()) { stopCareer(careerJob); careerJob = null; }
     if (!findEmployee(input.pick)) return;
     const t = taken.get(input.pick);
     if (t) {
@@ -791,7 +999,8 @@ const EmployeeTrainingTool = (() => {
       ${toolLine(hand)}
       ${v.html}
       ${hand.length ? `<div class="tr-hand-row">${handCards(hand, v.best)}
-        ${help('What the card values mean', `Each value is the extra profit per day the card adds, at the PP money value, averaged over the employee's remaining working days. Below it are the production points the card adds before retirement, counting coworkers and moves between your companies. ${escapeHtml(hand.scope)} Wild card averages every eligible trait equally, excluding held traits, conflicts, gender mismatches and partner traits, plus +${EC.CFG.wildCardStatGain} to each stat equally. Wages use hired and trained Production; Negotiation reduces wage expectation before Greedy or Modest applies. "Game" is the daily profit the game shows on the card: today's change only, at the market price, so it differs from the career average.`)}</div>` : ''}
+        ${help('What the card values mean', `Each value is the extra profit per day the card adds, at the PP money value, averaged over the employee's remaining working days. Below it are the production points the card adds before retirement, counting coworkers and moves between your companies. ${escapeHtml(hand.scope)} Wild card averages every eligible trait equally, excluding held traits, conflicts, gender mismatches and partner traits, plus +${EC.CFG.wildCardStatGain} to each stat equally. Wages use hired and trained Production; Negotiation reduces wage expectation before Greedy or Modest applies. "Game" is the daily profit the game shows on the card: today's change only, at the market price, so it differs from the career average.`)}</div>
+      ${careerPanel()}` : ''}
       ${warnings.length ? `<ul class="tr-facts">${warnings.map(w => `<li class="tr-warn">${w}</li>`).join('')}</ul>` : ''}`;
   }
 
@@ -949,9 +1158,11 @@ const EmployeeTrainingTool = (() => {
     return {
       age: emp.age, retireInDays: emp.retireInDays,
       nationality: emp.nationality,
+      // Whole hours, like tenure in productionPeer: these end up in card
+      // pricing batch keys, which must not change on every render.
       productionEvents: (emp.productionBonus?.contributions || [])
         .filter(c => c.source === 'event' && c.until)
-        .map(c => ({ delta: c.percent || 0, hours: Math.max(0, (Date.parse(c.until) - Date.now()) / 36e5) })),
+        .map(c => ({ delta: c.percent || 0, hours: Math.max(0, Math.round((Date.parse(c.until) - Date.now()) / 36e5)) })),
       production: hired,
       traitProduction,
       extraProduction: total - hired - traitProduction,
@@ -2523,9 +2734,11 @@ const EmployeeTrainingTool = (() => {
   }
 
   // A recorded choice confirmed from the game: the company's roster is read
-  // again until the employee's hand is gone and history holds a newer pick,
-  // or a Reroll replaces the hand. The fresh roster replaces the company's (a card can change
-  // coworkers too) and advice resumes once no choice is left unconfirmed.
+  // again until history holds a newer pick, or a Reroll replaces the hand.
+  // The history is what counts, not whether a hand is still waiting: once a
+  // pick lands the employee can be trained again at once, so a new hand may
+  // already be there. The fresh roster replaces the company's (a card can
+  // change coworkers too) and advice resumes once no choice is left unconfirmed.
   const CONFIRM_TRIES = 12, CONFIRM_EVERY_MS = 15000;
   let confirmed = null;   // { emp, text }: the last pick the game confirmed
   async function confirmTaken(empId, tries = CONFIRM_TRIES) {
@@ -2541,14 +2754,9 @@ const EmployeeTrainingTool = (() => {
         trpc('employee.getCompanyEstimate', { companyId: entry.company._id }, { fresh: true }).catch(() => entry.estimate),
       ]);
       const fresh = Array.isArray(roster) ? roster.find(x => x._id === empId) : null;
-      if (t.card === 'reroll') {
-        const recorded = fresh && newestPick(fresh, t.lastPick ?? '');
-        const newHand = fresh?.pendingTraining?.offers?.length &&
-          (JSON.stringify(fresh.pendingTraining) !== t.pending || recorded?.card === 'reroll');
-        pick = newHand ? { card: 'reroll' } : null;
-      } else {
-        pick = fresh && !fresh.pendingTraining?.offers?.length ? newestPick(fresh, t.lastPick ?? '') : null;
-      }
+      // A Reroll the history doesn't list shows as a different hand.
+      const rerolled = t.card === 'reroll' && fresh?.pendingTraining?.offers?.length && JSON.stringify(fresh.pendingTraining) !== t.pending;
+      pick = (fresh && newestPick(fresh, t.lastPick ?? '')) || (rerolled ? { card: 'reroll' } : null);
     } catch (err) { console.warn('[training] pick check failed', err); }
     t.checking = false;
     if (taken.get(empId) !== t || !findEmployee(empId)) return;   // reloaded meanwhile
@@ -2733,6 +2941,9 @@ const EmployeeTrainingTool = (() => {
     RecentPlayers.mount($recent, u => { if (!busy) { $username.value = u; runLoad(u); } });
     // Buttons anywhere in the tabs: Train opens an employee's Train tab,
     // a side roster row switches employee, and I took this applies a card.
+    $shell.addEventListener('pointermove', careerHover);
+    window.addEventListener('resize', careerResize);
+    $shell.addEventListener('pointerleave', careerHover);
     $shell.addEventListener('click', ev => {
       // A roster row opens that employee, wherever in the row it's clicked.
       const row = !ev.target.closest('a, button') && ev.target.closest('tr[data-emp]');
@@ -2758,6 +2969,8 @@ const EmployeeTrainingTool = (() => {
       }
       else if (b.dataset.planOpen !== undefined) { showTab('assignments', { reveal: true }); assignments.reveal(); }
       else if (b.dataset.sideEmp) selectFromSide(b.dataset.sideEmp);
+      else if (b.dataset.career !== undefined) startCareer();
+      else if (b.dataset.careerCancel !== undefined) { stopCareer(careerJob); renderResult(); }
       else if (b.dataset.took !== undefined) takeSlot(+b.dataset.took);
       else if (b.dataset.reload !== undefined && team) runLoad(team.username);
       else if (b.dataset.confirm !== undefined) confirmTaken(input.pick);
