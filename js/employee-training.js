@@ -204,7 +204,8 @@ const EmployeeTrainingTool = (() => {
       return [{ code, perPP, ratio: perPP / ppValue }];
     }).sort((a, b) => b.ratio - a.ratio);
     const types = Object.fromEntries(codes.map(c => [c, items[c].type]));
-    return { ppValue: ppValue > 0 ? ppValue : null, list, types, engineLevels: config?.upgradesConfig?.automatedEngine?.levels || {} };
+    const rarity = Object.fromEntries(codes.map(c => [c, items[c].rarity]));
+    return { ppValue: ppValue > 0 ? ppValue : null, list, types, rarity, engineLevels: config?.upgradesConfig?.automatedEngine?.levels || {} };
   }
   let marketPending = false;
   function refreshMarket() {
@@ -212,11 +213,12 @@ const EmployeeTrainingTool = (() => {
     marketPending = true;
     marketLoad = loadMarket()
       .then(m => { market = m; })
-      .catch(err => { console.warn('[training] product prices failed', err); market = { ppValue: null, list: [], types: {} }; })
+      .catch(err => { console.warn('[training] product prices failed', err); market = { ppValue: null, list: [], types: {}, rarity: {} }; })
       .finally(() => { marketPending = false; });
     return marketLoad;
   }
   const productFor = code => market?.list.find(p => p.code === code) || null;
+  const companyColour = company => rarityColour(market?.rarity?.[company.itemCode]);
 
   /* ── Calculator ──────────────────────────────────────────── */
   // The cards a hand of each rarity can hold, by kind. Trait kinds take one
@@ -1375,7 +1377,7 @@ const EmployeeTrainingTool = (() => {
       return `${base}${diff ? `<span class="${diff < 0 ? 'tr-neg' : 'tr-pos'}">${diff > 0 ? '+' : '−'}${Math.abs(diff)}</span>` : ''}`;
     };
     const pips = emp => `<span class="tr-emp-pips" title="${emp.potential || 0} used of ${emp.potentialMax || 0}">${Array.from({ length: emp.potentialMax || 0 }, (_, k) => `<i${k < (emp.potential || 0) ? ' class="used"' : ''}></i>`).join('')}</span>`;
-    const body = team.companies.filter(x => x.employees.length || x.estimate?.production).map((entry, i) => {
+    const body = team.companies.filter(x => x.employees.length || x.estimate?.production).map(entry => {
       const { company, employees, estimate } = entry;
       const p = productFor(company.itemCode);
       const cProfit = p && estimate ? (estimate.production || 0) * p.perPP - (estimate.wageCost || 0) - (estimate.managerCost || 0) : null;
@@ -1395,7 +1397,7 @@ const EmployeeTrainingTool = (() => {
       }).join('');
       // Phones hide three columns, so the heading spans fewer there.
       const head = `${companyLink(company)} <span class="tr-muted">${productIcon(company.itemCode)}${p ? ` (${p.ratio.toFixed(2)}×)` : ''} · ${employees.length} of ${headcountCap(company)}</span>`;
-      return `<tbody style="--co:var(--tr-co-${i % 8 + 1})"><tr class="tr-roster-co"><th colspan="5" scope="colgroup" class="tr-roster-wide">${head}</th>
+      return `<tbody style="--co:${companyColour(company)}"><tr class="tr-roster-co"><th colspan="5" scope="colgroup" class="tr-roster-wide">${head}</th>
           <th colspan="2" scope="colgroup" class="tr-roster-narrow">${head}</th>
           <td class="num${cProfit != null && cProfit < 0 ? ' tr-neg' : ''}">${dailyProfitFmt(cProfit)}</td></tr>${rows}</tbody>`;
     }).join('');
@@ -2217,7 +2219,6 @@ const EmployeeTrainingTool = (() => {
     const has = (emp, code) => (emp.traits || []).some(t => code === 'hidden' ? t.revealed === false : t.code === code && t.revealed !== false);
     const shown = rows.filter(r => (!empView.company || r.entry.company._id === empView.company) && (!empView.trait || has(r.emp, empView.trait)))
       .sort(empSorter(empView.sort, empView.flip));
-    const colour = new Map(team.companies.map((x, i) => [x, `var(--tr-co-${i % 8 + 1})`]));
     const select = (key, label, options) => `<label class="tr-field"><span>${label}</span><select data-emp-view="${key}">${options.map(([v, t]) =>
       `<option value="${escapeHtml(v)}"${v === empView[key] ? ' selected' : ''}>${escapeHtml(t)}</option>`).join('')}</select></label>`;
     const stat = (emp, k) => {
@@ -2227,7 +2228,7 @@ const EmployeeTrainingTool = (() => {
     const body = shown.map(({ emp, entry, next, profit, left }) => {
       const toRetire = EC.workingDays(emp);
       const status = pendingHand(emp) ? 'hand waiting' : doneToday(emp) ? 'trained today' : '';
-      return `<tr style="--co:${colour.get(entry)}">
+      return `<tr style="--co:${companyColour(entry.company)}">
         <td data-label="Employee"><strong>${gameLink(entry.company, emp.name)}</strong><small>${companyLabelHtml(entry.company)}</small>
           <span class="tr-badges">${flagsOf(emp, entry, verdicts, topTrain)}</span></td>
         <td data-label="Age" class="num">${emp.age}<small>${toRetire > 0 ? `${plural(toRetire, 'day')} left` : 'retiring'}</small></td>
@@ -2408,10 +2409,10 @@ const EmployeeTrainingTool = (() => {
   function renderSide() {
     const verdicts = new Map(keepRows().map(r => [r.emp._id, keepVerdict(r)]));
     const topTrain = new Set(feedRows().filter(r => r.kind === 'train' && r.ready).slice(0, 5).map(r => r.emp._id));
-    $side.innerHTML = team.companies.map((entry, i) => {
+    $side.innerHTML = team.companies.map(entry => {
       const { company, employees } = entry;
       if (!employees.length) return '';
-      const co = `--co:var(--tr-co-${i % 8 + 1})`;
+      const co = `--co:${companyColour(company)}`;
       return `<div class="tr-side-co" style="${co}">${companyLabelHtml(company)} <span class="tr-muted">${employees.length} of ${headcountCap(company)}</span></div>
         <ul>${employees.map(emp => {
           const left = Math.max(0, (emp.potentialMax || 0) - (emp.potential || 0));

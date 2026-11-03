@@ -1816,7 +1816,8 @@ input[type="password"]:focus { outline: none; border-color: #3a4350; }
 #pp-companies .pp-chip { padding: 1px 5px; }
 #pp-companies .dash-pill { white-space: normal; }
 #pp-companies .pp-mgr small { margin-top: 2px; }
-#pp-companies .pp-company-group-start { border-top: 2px solid var(--border); }
+/* The game's company colour: its product's rarity. */
+#pp-companies tbody td:first-child { border-left: 3px solid var(--co); background: linear-gradient(90deg, color-mix(in srgb, var(--co) 14%, transparent), transparent 80%); }
 
 .dp-assump { display: flex; flex-wrap: wrap; gap: 14px 22px; align-items: flex-start; }
 .dp-field { display: flex; flex-direction: column; gap: 4px; }
@@ -2786,16 +2787,12 @@ html[data-theme="light"] .idd-period-panel input { color-scheme: light; }
 /* ── Employee Training (#training) ───────────────────────────────── */
 /* One row of ranked cards per rarity; the rarity colour tops each card. */
 :root {
-  --tr-common: #8fa3ad; --tr-uncommon: #4ade80; --tr-rare: #60a5fa; --tr-epic: #c084fc; --tr-legendary: #fbbf24;
+  --tr-common: #8fa3ad; --tr-uncommon: #4ade80; --tr-rare: #60a5fa; --tr-epic: #c084fc; --tr-legendary: #fbbf24; --tr-mythic: #f87171;
   --tr-prod: #e0a458; --tr-resp: #c4a1f0; --tr-luck: #6fd39b;
-  --tr-co-1: #3987e5; --tr-co-2: #d95926; --tr-co-3: #199e70; --tr-co-4: #c98500;
-  --tr-co-5: #d55181; --tr-co-6: #008300; --tr-co-7: #9085e9; --tr-co-8: #e66767;
 }
 html[data-theme="light"] {
-  --tr-common: #64748b; --tr-uncommon: #16a34a; --tr-rare: #2563eb; --tr-epic: #9333ea; --tr-legendary: #b45309;
+  --tr-common: #64748b; --tr-uncommon: #16a34a; --tr-rare: #2563eb; --tr-epic: #9333ea; --tr-legendary: #b45309; --tr-mythic: #dc2626;
   --tr-prod: #b45309; --tr-resp: #7c3aed; --tr-luck: #15803d;
-  --tr-co-1: #2a78d6; --tr-co-2: #eb6834; --tr-co-3: #1baf7a; --tr-co-4: #eda100;
-  --tr-co-5: #e87ba4; --tr-co-6: #008300; --tr-co-7: #6250d6; --tr-co-8: #e34948;
 }
 .tr-stat-production { color: var(--tr-prod); }
 .tr-stat-responsibility { color: var(--tr-resp); }
@@ -2890,6 +2887,8 @@ html[data-theme="light"] {
 .tr-roster thead th { font-size: 11px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); }
 .tr-roster .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .tr-roster-co > * { background: var(--bg); font-weight: 600; }
+/* The game tints each company card with its product's rarity; a faint wash here. */
+.tr-roster-co > th, .tr-side-co { background: linear-gradient(90deg, color-mix(in srgb, var(--co) 16%, var(--bg)), var(--bg) 70%); }
 .tr-roster-co th { border-left: 3px solid var(--co); }
 .tr-roster-co .tr-muted { margin-left: 4px; font-size: 12px; }
 .tr-roster-emp { cursor: pointer; }

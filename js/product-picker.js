@@ -323,7 +323,7 @@ const ProductPickerTool = (() => {
     income: ['About projected income', '<p>Total per day and week includes engines and employees, minus wages and manager pay. It excludes self-work. Engines use their configured output; employee output and wages use the last full UTC day.</p><p>The estimate beneath Total adds one full energy bar spent on self-work at your best-margin owned product, using your Production stat. The weekly estimate assumes this each day. It assumes storage space and excludes energy regenerated while working.</p><p>Engine and employee inputs update income and product comparisons as you type, keeping their current product mix and costs. The self-work input starts at one full energy bar and affects the product comparison only. Company rows and Actual values keep the loaded figures.</p>'],
     best: ['About the highest margin', '<p>This product has the highest margin per production point at current market prices. Rankings change over time.</p><p>This is a price snapshot, not a recommendation to switch your workforce. Changing products affects employee specialisation and trait bonuses. For example, Labourer favours raw resources and penalises manufactured goods; Craftsman does the reverse. Company comparisons hold output fixed and do not include these changes.</p>'],
     products: ['About product margins', '<p>Margin per production point (PP) is the sale price after market tax, minus input costs, divided by the PP needed to make it. Inputs use market prices even when you make them yourself.</p><p>Prices average the latest 100 trades, weighted by quantity. Trades older than 24 hours are excluded. Products without recent prices are omitted. The game uses a slower price average and excludes market tax, so its profit figures can differ.</p><p>Max columns put all your output into that product. Without self-work adds engines and profitable employee output. With self-work adds Max self-work, using the PP input above. Both exclude employee output when it loses money. The default sort is Without self-work, highest first. Actual is what your companies making it earn now. Green rows are products you make. Click a heading to sort.</p><p>Employees pay off shows the highest wage expectation that earns a profit, using your Management and core-region bonus. Wages use the game’s PP value × wage expectation (70–130%). Bonuses increase output without increasing wages. This threshold excludes individual happiness, traits and specialisation.</p>'],
-    companies: ['About company profits and switching', '<p>Daily profit is output × the current product margin, minus wages and manager pay. Employee bonuses include your Management, the manager and a core region.</p><p>Gain per day compares the current product with the best product at the same output and costs. Switch cost is the concrete needed to change products. Companies start grouped by product, then ordered by company name. Click a column heading to sort; click again to reverse it.</p><p>Expand Specialisations to see each employee’s current bonus and saved progress on other products, capped at +20%. An unlisted product has no saved progress. Switching restores that product’s progress. Potential gains hold output fixed and exclude changes to specialisation and trait bonuses. Labourer favours raw resources and penalises manufactured goods; Craftsman does the reverse.</p>'],
+    companies: ['About company profits and switching', '<p>Daily profit is output × the current product margin, minus wages and manager pay. Employee bonuses include your Management, the manager and a core region.</p><p>Gain per day compares the current product with the best product at the same output and costs. Switch cost is the concrete needed to change products. Companies start in the game’s order. Click a column heading to sort; click again to reverse it.</p><p>Expand Specialisations to see each employee’s current bonus and saved progress on other products, capped at +20%. An unlisted product has no saved progress. Switching restores that product’s progress. Potential gains hold output fixed and exclude changes to specialisation and trait bonuses. Labourer favours raw resources and penalises manufactured goods; Craftsman does the reverse.</p>'],
   };
   const help = key => sectionHelp(...HELP[key]);
 
@@ -577,7 +577,6 @@ const ProductPickerTool = (() => {
   function companySortValue({ c, plan }, key) {
     const switching = plan.gain != null && !plan.isBest;
     switch (key) {
-      case 'company': return c.company.name || ITEMS[c.company.itemCode]?.name || c.company.itemCode;
       case 'bonus': return c.empPP ? employeeBonusPct(model, c) : null;
       case 'manager': return c.manager ? c.managerName || 'Unknown' : null;
       case 'engine': return c.aePP;
@@ -592,24 +591,20 @@ const ProductPickerTool = (() => {
   }
 
   function renderCompanies() {
-    const rows = model.companies.map(c => ({ c, plan: companyPlan(model, c) }));
-    const byProductAndName = (a, b, dir = 1) => {
-      const product = c => ITEMS[c.company.itemCode]?.name || c.company.itemCode;
-      return product(a.c).localeCompare(product(b.c)) * dir
-        || companySortValue(a, 'company').localeCompare(companySortValue(b, 'company'), undefined, { numeric: true, sensitivity: 'base' }) * dir;
-    };
+    // The company list comes in the game's order (most recently moved up first).
+    const rows = model.companies.map((c, order) => ({ c, order, plan: companyPlan(model, c) }));
+    const byGameOrder = (a, b, dir = 1) => (a.order - b.order) * dir;
     rows.sort((a, b) => companySort.key === 'company'
-      ? byProductAndName(a, b, companySort.dir)
-      : compareValues(companySortValue(a, companySort.key), companySortValue(b, companySort.key), companySort.dir) || byProductAndName(a, b));
+      ? byGameOrder(a, b, companySort.dir)
+      : compareValues(companySortValue(a, companySort.key), companySortValue(b, companySort.key), companySort.dir) || byGameOrder(a, b));
     $compTable.innerHTML = `
       ${sortableHead(COMPANY_COLS, companySort)}
-      <tbody>${rows.map(({ c, plan }, index) => {
+      <tbody>${rows.map(({ c, plan }) => {
         const { company } = c;
         const itemName = ITEMS[company.itemCode]?.name;
         const label = company.name && company.name !== itemName ? `<span class="dp-cat">${escapeHtml(company.name)}</span>` : '';
         const switching = plan.gain != null && !plan.isBest;
-        const groupStart = companySort.key === 'company' && index > 0 && rows[index - 1].c.company.itemCode !== company.itemCode;
-        return `<tr${groupStart ? ' class="pp-company-group-start"' : ''}>
+        return `<tr style="--co:${rarityColour(model.gameItems?.[company.itemCode]?.rarity)}">
           <td class="dp-l"><a href="${companyUrlFor(company._id)}" target="_blank" rel="noopener">${productCell(company.itemCode, label)}</a>${statusTags(c)}${specialisationsHtml(c)}</td>
           <td class="dp-l">${bonusChips(c)}</td>
           <td class="dp-l">${managerHtml(c)}</td>

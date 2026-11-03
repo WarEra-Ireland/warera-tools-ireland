@@ -51,6 +51,12 @@ const WORKER_BASE = (() => {
 const API_BASE         = `${WORKER_BASE}/trpc`;
 const GAME_BASE        = 'https://app.warera.io';
 
+// The game colours a company by its product's rarity (gameConfig
+// items[code].rarity): gray, green, blue, purple, yellow, red. The
+// --tr-<rarity> colours live in styles.css.
+const RARITY_TIERS = ['common', 'uncommon', 'rare', 'epic', 'legendary', 'mythic'];
+const rarityColour = rarity => RARITY_TIERS.includes(rarity) ? `var(--tr-${rarity})` : 'var(--muted)';
+
 // Canonical Ireland country ID. Shared by the MU tool's citizenship
 // filter and the Irish-only gate on personal tools (clockin, advisor).
 const IRELAND_COUNTRY_ID = '6813b6d446e731854c7ac7fe';
