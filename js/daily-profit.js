@@ -75,7 +75,6 @@ const DailyProfitTool = (() => {
       model = await ProfitCore.loadModel(user, { step: (n, state, info) => steps.setStep(n, state, info) });
       steps.fadeOut(300);
       renderAll();
-      rememberLoadedAccount(user.username);
     } catch (e) {
       steps.markActiveAsError(e.message);
       showStatus('error', escapeHtml(e.message));

@@ -98,47 +98,31 @@
     }
   }
 
-  // Account selection travels through URLs, so the two landing views do not
-  // need to read each other's private state. Read oldURL because tools can
-  // update their username with replaceState without firing hashchange.
-  const ACCOUNT_VIEWS = new Set(['dashboard', 'home']);
-  let selectedUsername = readLoadedAccount();
-  let resettingAccount = false;
-  const $brand = document.querySelector('.brand');
-  if ($brand) $brand.addEventListener('click', () => {
-    selectedUsername = '';
-    resettingAccount = true;
-  });
+  // The active player (the most recent in RecentPlayers) rides along into
+  // any view that takes a player but was opened without ?u=, so every tool
+  // shows the same player. Removing the active player leaves none active.
+  const PLAYER_VIEWS = new Set([
+    'dashboard', 'home', 'advisor', 'clockin', 'softcap', 'products', 'training',
+    'profit', 'profit-dev', 'wealth', 'buddy-finder',
+  ]);
+  function withActivePlayer(r) {
+    if (!PLAYER_VIEWS.has(r.view) || r.params.get('u')) return;
+    if (new URLSearchParams(location.search).get('u')) return;   // tools read ?u= before the hash too
+    const u = RecentPlayers.active();
+    if (!u) return;
+    r.params.set('u', u);
+    writeHash(r.view, r.params);
+  }
 
-  window.addEventListener('hashchange', event => {
-    if (!resettingAccount && event.oldURL) {
-      const previous = parseRoute(new URL(event.oldURL).hash);
-      if (ACCOUNT_VIEWS.has(previous.view) && previous.params.get('u')) {
-        selectedUsername = previous.params.get('u');
-      }
-    }
+  window.addEventListener('hashchange', () => {
     const r = parseRoute();
-    if (ACCOUNT_VIEWS.has(r.view)) {
-      if (r.params.get('u')) selectedUsername = r.params.get('u');
-      else if (selectedUsername) {
-        r.params.set('u', selectedUsername);
-        writeHash(r.view, r.params);
-      }
-    }
-    resettingAccount = false;
+    withActivePlayer(r);
     setView(r.view, { updateHash: false, params: r.params });
   });
 
   pauseViews();
 
   const initial = parseRoute();
-  if (ACCOUNT_VIEWS.has(initial.view)) {
-    const explicit = initial.params.get('u') || new URLSearchParams(location.search).get('u');
-    selectedUsername = explicit || selectedUsername;
-    if (selectedUsername && !initial.params.get('u')) {
-      initial.params.set('u', selectedUsername);
-      writeHash(initial.view, initial.params);
-    }
-  }
+  withActivePlayer(initial);
   setView(initial.view, { updateHash: false, params: initial.params });
 })();

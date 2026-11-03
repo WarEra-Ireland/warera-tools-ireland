@@ -730,7 +730,6 @@ const GearSoftcapTool = (() => {
     steps.reset();
     try {
       lastResult = await analyse(username);
-      rememberLoadedAccount(lastResult.username);
       RecentPlayers.remember(lastResult.username);
       steps.fadeOut(400);
       render();

@@ -229,7 +229,6 @@ const ClockInTool = (() => {
     state = null;
     try {
       await analyse(u);
-      rememberLoadedAccount(state?.ownerUsername);
       RecentPlayers.remember(state?.ownerUsername);
       // If the resolved name differs in case, rewrite the hash with the
       // canonical form so refresh-by-URL stays stable. Same param-preserving

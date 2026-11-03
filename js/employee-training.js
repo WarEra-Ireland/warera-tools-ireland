@@ -2348,7 +2348,6 @@ const EmployeeTrainingTool = (() => {
       setStatus('');
       $username.value = team.username;
       RecentPlayers.remember(team.username);
-      rememberLoadedAccount(team.username);
       renderTeam();
       renderRecruitForm();
       renderFire();
@@ -2780,8 +2779,8 @@ const EmployeeTrainingTool = (() => {
       const u = params?.get('u') || '';
       view.tab = TABS.includes(params?.get('tab')) ? params.get('tab') : 'overview';
       const emp = params?.get('emp') || null;
-      // Load the account from the link, or the last one loaded on this site.
-      const who = u || readLoadedAccount();
+      // The router puts the active player in the link when there is one.
+      const who = u;
       if (!$username.value) $username.value = who;
       if (who && who.toLowerCase() !== team?.username?.toLowerCase()) { view.emp = emp; runLoad(who); return; }
       if (!team) return;

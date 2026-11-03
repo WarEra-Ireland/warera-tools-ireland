@@ -130,9 +130,16 @@ function escapeHtml(s) {
  *  names behind a "+N more" toggle; Clear all appears once the whole list is
  *  showing and asks for a second click. Every mounted row re-renders when the
  *  list changes, in this tab or another. Storage failures degrade to no chips.
+ *
+ *  The list is the only record of players: its first name is the active
+ *  player, which the router loads into a tool opened without ?u=. Removing
+ *  the active player (or Clear all) marks nobody active until the next load,
+ *  drops ?u= from the URL and reloads, so every tool comes back empty.
  */
 const RecentPlayers = (() => {
   const KEY = 'warera:recent-players';
+  // Set when the active player is removed; the next remember() clears it.
+  const NONE_KEY = 'warera:recent-players:none-active';
   const SHOWN = 5;
   // Per-tool lists from before the list was shared; merged once, then dropped.
   const LEGACY = ['stg', 'dash', 'wm', 'dp', 'dpd', 'tr'].map(p => `${p}:recent-usernames`);
@@ -156,6 +163,7 @@ const RecentPlayers = (() => {
       const merged = dedupe(LEGACY.flatMap(k => parse(localStorage.getItem(k))));
       write(merged);
       LEGACY.forEach(k => localStorage.removeItem(k));
+      localStorage.removeItem('warera:last-loaded-account');   // replaced by active()
       return merged;
     } catch { return []; }
   }
@@ -180,14 +188,40 @@ const RecentPlayers = (() => {
     const u = (name || '').trim();
     if (!u) return;
     write([u, ...read().filter(x => x.toLowerCase() !== u.toLowerCase())]);
+    try { localStorage.removeItem(NONE_KEY); } catch { /* storage off */ }
     refresh();
+  }
+  /** The active player: the most recent one, unless it was removed since. */
+  function active() {
+    try { if (localStorage.getItem(NONE_KEY)) return ''; } catch { /* storage off */ }
+    return read()[0] || '';
+  }
+  const urlPlayer = () => hashParams().get('u') || new URLSearchParams(location.search).get('u') || '';
+  // Mark nobody active, take ?u= out of the URL and reload: every tool then
+  // starts empty, without each needing its own way to unload a player.
+  function unload() {
+    try { localStorage.setItem(NONE_KEY, '1'); } catch { /* storage off */ }
+    const [view, hq = ''] = location.hash.split('?');
+    const hp = new URLSearchParams(hq);
+    const sp = new URLSearchParams(location.search);
+    hp.delete('u');
+    sp.delete('u');
+    const search = sp.toString() ? `?${sp}` : '';
+    const hash = view + (hp.toString() ? `?${hp}` : '');
+    history.replaceState(history.state, '', location.pathname + search + hash);
+    location.reload();
   }
   function forget(name) {
-    write(read().filter(x => x.toLowerCase() !== name.toLowerCase()));
-    refresh();
+    const match = u => u.toLowerCase() === name.toLowerCase();
+    // Showing in this page means loaded: the active one, or the one in the URL.
+    const loaded = match(active()) || match(urlPlayer());
+    write(read().filter(x => !match(x)));
+    if (loaded) unload(); else refresh();
   }
   function clear() {
+    const loaded = active() || urlPlayer();
     write([]);
+    if (loaded) { unload(); return; }
     mounts.forEach(state => { state.expanded = false; });
     refresh();
   }
@@ -221,7 +255,7 @@ const RecentPlayers = (() => {
     render(el);
   }
   window.addEventListener('storage', e => { if (e.key === KEY || e.key === null) refresh(); });
-  return { remember, forget, clear, mount, refresh };
+  return { remember, forget, clear, mount, refresh, active };
 })();
 
 function fmtNum(v) {
@@ -1247,16 +1281,6 @@ function computeProductionBonus(country, region, itemCode) {
     depositEndsAt: hasDeposit ? region.deposit.endsAt : null,
     depositInfo,
   };
-}
-
-// Shared account preference, saved only after a tool successfully loads it.
-function rememberLoadedAccount(username) {
-  if (typeof username !== 'string' || !username.trim()) return;
-  try { localStorage.setItem('warera:last-loaded-account', username.trim()); } catch {}
-}
-function readLoadedAccount() {
-  try { return (localStorage.getItem('warera:last-loaded-account') || '').trim(); }
-  catch { return ''; }
 }
 
 // Keep every monthly boundary anchored to the same date, including month ends.

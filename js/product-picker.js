@@ -772,7 +772,6 @@ const ProductPickerTool = (() => {
       overrides = {};
       sort = { key: 'totalWithoutSelf', dir: -1 };
       companySort = { key: 'company', dir: 1 };
-      rememberLoadedAccount(model.username);
       RecentPlayers.remember(model.username);
       steps.fadeOut(400);
       render();

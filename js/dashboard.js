@@ -932,7 +932,6 @@ const DashboardTool = (() => {
       try { writeHash('dashboard', new URLSearchParams({ u: full.username })); } catch {}
       RecentPlayers.remember(full.username);   // verified canonical name → recent chips
       renderScaffold(full.username);
-      rememberLoadedAccount(full.username);
 
       // The economy card still depends on the removed worker API.
       fillClockin(full);

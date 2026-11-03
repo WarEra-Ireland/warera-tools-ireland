@@ -215,7 +215,6 @@ const BuddyFinderTool = (() => {
       steps.fadeOut(400);
       rosterStore = { roster, me, mine };
       renderRoster();
-      rememberLoadedAccount(me.username);
       RecentPlayers.remember(me.username);
     } catch (e) {
       if (version !== loadVersion) return;
