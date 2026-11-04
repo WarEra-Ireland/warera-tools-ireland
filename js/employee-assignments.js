@@ -19,7 +19,12 @@ const EmployeeAssignments = (() => {
   // seenEquipped: by game item ID, each tool's capacity when last seen
   // equipped, which it keeps once unequipped. gone: spares marked as no longer
   // owned, for losses the transaction log does not show.
-  const defaults = () => ({ horizon: 'career', equippedHours: {}, pinned: [], seenEquipped: {}, gone: [], toolboxValue: 0, dailyTrainings: null, recruiting: [] });
+  // minMax: hidden, no UI yet. True turns off the planner's minimum gain
+  // (EmployeePlanner.CHURN) and recommends the pure maximum. To turn it on,
+  // edit the saved settings in the browser console, then reload:
+  //   k = Object.keys(localStorage).find(k => k.startsWith('tr-assignments-v1:'));
+  //   localStorage[k] = JSON.stringify({ ...JSON.parse(localStorage[k]), minMax: true })
+  const defaults = () => ({ horizon: 'career', equippedHours: {}, pinned: [], seenEquipped: {}, gone: [], toolboxValue: 0, dailyTrainings: null, recruiting: [], minMax: false });
 
   /* Saved settings are untrusted: rebuild them field by field and say what
    * was dropped, rather than failing later on a malformed value. */
@@ -37,6 +42,7 @@ const EmployeeAssignments = (() => {
     for (const key of ['toolboxValue', 'dailyTrainings']) {
       if (raw[key] != null && raw[key] !== '' && Number.isFinite(Number(raw[key])) && Number(raw[key]) >= 0 && Number(raw[key]) <= 100000) settings[key] = Number(raw[key]);
     }
+    if (raw.minMax === true) settings.minMax = true;
     if (Array.isArray(raw.recruiting)) settings.recruiting = [...new Set(raw.recruiting.filter(id => typeof id === 'string' && ITEM_ID.test(id)))];
     const object = v => v && typeof v === 'object' && !Array.isArray(v);
     if (object(raw.equippedHours)) {
@@ -215,7 +221,7 @@ const EmployeeAssignments = (() => {
       c.recruitmentValues = [first.best, ...[4, 5, 6].map(slots => EC.freshSetValue(groups, { slots, rate: first.rate }).best)].map(value => value * market.ppValue);
     }
     const days = settings.horizon === 'career' ? careerDays(employees.filter(e => !excluded.has(e.company))) : Number(settings.horizon);
-    return { errors, snapshot: { companies, employees, tools, days, toolboxValue: settings.toolboxValue || 0, trainingQuota, management: team.management || 0 } };
+    return { errors, snapshot: { companies, employees, tools, days, toolboxValue: settings.toolboxValue || 0, trainingQuota, management: team.management || 0, minMax: settings.minMax } };
   }
 
   /* ── Rendering ─────────────────────────────────────────────── */
@@ -232,6 +238,56 @@ const EmployeeAssignments = (() => {
   // Tool types use the game's own item art; the rest are line glyphs.
   const icon = k => ICON[k] ? `<svg class="tr-asg-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICON[k]}</svg>`
     : `<img class="tr-asg-icon" src="images/${EP.TOOL_TYPES[k] ? k : 'hammer'}.png" alt="" aria-hidden="true">`;
+
+  /* Break-even margin ratio of a move or swap from product `up`'s company to
+   * `down`'s or back (planner-churn ticket 03). Gain is linear in margins:
+   * with `byProduct` = margin x change in production points, x for `up` and
+   * y for `down`, the gain hits zero when up's margin falls by gain / x or
+   * down's rises by gain / -y. Of the two ratios this gives, the higher
+   * (sooner reached) one is `ratio`. Null unless the change trades `down`'s
+   * output for `up`'s (x > 0 > y, choosing `up` that way round) and ratio is
+   * at least `NOTE_SHARE` of today's: a change that survives a 30% shift
+   * in relative margins is not flagged.
+   * `margins`: margin per PP by product. */
+  const NOTE_SHARE = 0.7;
+  function breakEven(byProduct, gain, margins, pair) {
+    let [up, down] = pair, x = byProduct?.[up] || 0, y = byProduct?.[down] || 0;
+    if (x < 0) [up, down, x, y] = [down, up, y, x];
+    if (!(gain > 0) || up === down || !(x > 0 && y < 0) || !(margins[up] > 0 && margins[down] > 0)) return null;
+    const now = margins[up] / margins[down], ratio = Math.max((1 - gain / x) * now, now / (1 - gain / y));
+    return ratio >= NOTE_SHARE * now ? { up, down, ratio, now } : null;
+  }
+
+  /* The plan's cards: one per move or swap, carrying the tool changes made
+   * together with it (an accepted change that also involves a step's people,
+   * such as a tool passing to someone joining the company), then one per
+   * other changed employee. A move or swap card has `price`, its break-even
+   * margin ratio, from the accepted changes behind it. */
+  function planCards(result, snapshot) {
+    const emp = new Map(snapshot.employees.map(e => [e.id, e]));
+    const changed = result.arrangement.filter(a => a.company !== emp.get(a.employee).company || a.tool !== (emp.get(a.employee).equipped?.id || null));
+    const changedIds = new Set(changed.map(a => a.employee)), accepted = result.search.accepted || [];
+    const cards = result.steps.map(s => ({ ...s, people: [...s.employees], entries: [] }));
+    const cardOf = new Map(cards.flatMap(c => c.employees.map(id => [id, c])));
+    for (let grew = true; grew;) {
+      grew = false;
+      for (const a of accepted) {
+        const ids = a.changes.map(c => c[0]), card = ids.map(id => cardOf.get(id)).find(Boolean);
+        if (card) for (const id of ids) if (!cardOf.has(id) && changedIds.has(id)) { card.people.push(id); cardOf.set(id, card); grew = true; }
+      }
+    }
+    for (const a of accepted) a.changes.map(c => cardOf.get(c[0])).find(Boolean)?.entries.push(a);
+    const margins = Object.fromEntries(snapshot.companies.map(c => [c.product, c.margin]));
+    const product = id => snapshot.companies.find(c => c.id === id).product;
+    for (const card of cards) {
+      const from = emp.get(card.employees[0]).company, to = card.kind === 'move' ? card.to : emp.get(card.employees[1]).company;
+      const sum = {};
+      for (const a of card.entries) for (const [k, v] of Object.entries(a.byProduct || {})) sum[k] = (sum[k] || 0) + v;
+      card.price = breakEven(sum, card.entries.reduce((v, a) => v + a.gain, 0), margins, [product(from), product(to)]);
+      delete card.entries;
+    }
+    return [...cards, ...changed.filter(a => !cardOf.has(a.employee)).map(a => ({ kind: 'tool', employees: [a.employee], people: [a.employee], price: null }))];
+  }
 
   // Short reason tags for an employee's change.
   function reasons(e, from, to, before, after, productName) {
@@ -413,7 +469,7 @@ const EmployeeAssignments = (() => {
             <section class="tr-asg-box" aria-labelledby="plan-pins-heading"><h4 id="plan-pins-heading">Keep in place</h4>
               <p class="tr-muted">Selected employees stay in their company. They can still get a tool.</p>
               <div class="tr-asg-pins">${people.map(({ e, company }) => `<button type="button" class="tr-asg-pin" data-plan-pin="${esc(e._id)}" aria-pressed="${settings.pinned.includes(e._id)}" title="${esc(companyName(company._id) || company.name || '')}">${productIcon(company.itemCode)}${esc(e.name)}</button>`).join('')}</div></section>
-            <details class="tr-more"><summary>What the comparison includes</summary><p class="tr-calc-sub">The planner scores whole company rosters: Craftsman on manufactured goods and weapons, Laborer on raw resources, Handy and Improviser, coworker traits, company bonuses and taxes, happiness, saved specialization, tenure and retirement. Moving an employee between your companies costs no happiness, but Creature of Habit loses 30 bonus points for three days. Company tenure restarts; the same product keeps its specialization, and another product restores that product's saved progress. Tools stop when their capacity runs out and are not replaced. A disabled company's employees don't work, train or get paid there, so moving them out to a working company can pay; nobody is moved into a disabled company.</p><p class="tr-calc-sub">Careers value every change until the last planned employee retires at ${EC.CFG.retireAge}, one year older per day worked or trained. A retired employee's place stays empty: hiring a replacement is not valued. A shorter window ignores everything after it, so it favours quick wins over moves that pay back later.</p><p class="tr-calc-sub">This is a bounded search for a better arrangement, not a guarantee of the best one. Each employee moves at most once. A company with a hidden or unknown trait, or whose current numbers the planner cannot reproduce, is left exactly as it is and is not part of the totals. Toolboxes use your entered value. Trainer and coworker Luck use a bounded training estimate and your daily budget. Recruiter is valued only for a planned candidate set. Earnings assume employees stay; quitting probabilities and future price changes are not modeled. Equipped tools can be reassigned to any compatible employee. Nothing is changed in the game.</p></details>
+            <details class="tr-more"><summary>What the comparison includes</summary><p class="tr-calc-sub">The planner scores whole company rosters: Craftsman on manufactured goods and weapons, Laborer on raw resources, Handy and Improviser, coworker traits, company bonuses and taxes, happiness, saved specialization, tenure and retirement. Moving an employee between your companies costs no happiness, but Creature of Habit loses 30 bonus points for three days. Company tenure restarts; the same product keeps its specialization, and another product restores that product's saved progress. Tools are a pool: when a tool runs out, its holder gets the best free compatible tool, and a retiring employee's tool passes on with its hours left. Tool hours go where they raise output most, so a plan may take a tool off someone to save its hours for a better use later. Spares replace only tools that ran out. Handoffs are assumed: a step notes the tool someone gets later, but they are not steps of their own. Prices are recent trades and every change takes effort, so a change is recommended only above a minimum gain: ${100 * EP.CHURN.priceUncertainty}% of the output whose value depends on prices comes off first (a swap between two products carries both products' output; a tool inside one company only its extra output), and what is left must reach ${100 * EP.CHURN.floorShare}% of the planned companies' profit over the horizon, ${EP.CHURN.recentFactor} times that for anyone moved in the last ${EP.CHURN.recentHours / 24} days. A disabled company's employees don't work, train or get paid there, so moving them out to a working company can pay; nobody is moved into a disabled company.</p><p class="tr-calc-sub">Careers value every change until the last planned employee retires at ${EC.CFG.retireAge}, one year older per day worked or trained. A retired employee's place stays empty: hiring a replacement is not valued. A shorter window ignores everything after it, so it favours quick wins over moves that pay back later.</p><p class="tr-calc-sub">This is a bounded search for a better arrangement, not a guarantee of the best one. Each employee moves at most once. A company with a hidden or unknown trait, or whose current numbers the planner cannot reproduce, is left exactly as it is and is not part of the totals. Toolboxes use your entered value. Trainer and coworker Luck use a bounded training estimate and your daily budget. Recruiter is valued only for a planned candidate set. Earnings assume employees stay; quitting probabilities and future price changes are not modeled. Equipped tools can be reassigned to any compatible employee. Nothing is changed in the game.</p></details>
           </div>
         </div>`;
       if (focus) root.querySelector(focus)?.focus();
@@ -525,36 +581,50 @@ const EmployeeAssignments = (() => {
       const toolText = t => `${esc(cap(t.type))} +${esc(num(t.bonus, 0))}%`;
       const toolLife = t => `${num(t.hours, 0)} h of use`;
 
-      // One step per move or swap, carrying the tools its people then get; tool-only changes follow.
-      const inSteps = new Set(result.steps.flatMap(s => s.employees));
-      const items = [...result.steps, ...changed.filter(a => !inSteps.has(a.employee)).map(a => ({ kind: 'tool', employees: [a.employee] }))];
+      /* One card per move or swap, with the tool changes that go with it;
+       * other tool-only changes follow. The card shows what to do in the game:
+       * a row per person (from → to, the tool to give or remove, their value
+       * when the card has several people). Reasons and notes the player does
+       * not act on (a tool going back to inventory, tool hours, later
+       * handoffs) fold into "Why and details". */
+      const items = planCards(result, snapshot);
+      const ratioText = (v, other) => `${num(v * 100, Math.round(v * 100) === Math.round(other * 100) ? 1 : 0)}%`;
+      const priceLine = ({ price: b }) => b ? `<span>Price-sensitive: loses money if ${esc(productName(b.up))} earns less than ${ratioText(b.ratio, b.now)} of ${esc(productName(b.down))} per PP (now ${ratioText(b.now, b.ratio)}).</span>` : '';
       const tags = id => {
         const e = emp(id), list = reasons(e, co(e.company), co(final.get(id).company), row(baseline, id), row(proposed, id), productName);
         return list.map(r => `<span class="tr-asg-tag${r.tone ? ` is-${r.tone}` : ''}"${r.hint ? ` title="${esc(r.hint)}"` : ''}>${esc(r.text)}</span>`).join('');
       };
       // A tool that does not fit the new company returns to inventory by itself.
-      const equip = id => {
-        const t = newTool(id), back = EP.returnsTool(emp(id), final.get(id), snapshot.tools, snapshot.companies);
-        return `${back ? `<span class="tr-muted">${esc(emp(id).name)}'s ${toolText(back)} goes back to inventory</span>` : ''}${t ? `<span>then give ${esc(emp(id).name)} the <b>${toolText(t)}</b> · ${toolLife(t)}</span>`
-          : !back && emp(id).equipped && !final.get(id).tool ? `<span>Remove ${esc(emp(id).name)}'s current tool</span>` : ''}`;
+      const back = id => EP.returnsTool(emp(id), final.get(id), snapshot.tools, snapshot.companies);
+      const removes = id => !newTool(id) && !back(id) && emp(id).equipped && !final.get(id).tool;
+      const action = id => {
+        const e = emp(id), to = final.get(id).company, t = newTool(id);
+        const where = to !== e.company ? `${place(e.company)}<span class="tr-muted">→</span>${place(to)}` : `in ${place(to)}`;
+        const tl = t ? `· give ${icon(t.type)}<b>${toolText(t)}</b>` : removes(id) ? `· remove ${icon(e.equipped.type)}<b>${toolText(e.equipped)}</b>` : '';
+        return `<span class="tr-asg-line">${where}</span>${tl ? `<span class="tr-asg-line">${tl}</span>` : ''}`;
+      };
+      const notes = item => {
+        const out = item.kind === 'swap' ? ["Use the game's Swap option."] : [];
+        for (const id of item.people) {
+          const name = esc(emp(id).name), t = newTool(id), b = back(id), h = row(proposed, id)?.handoffs?.[0];
+          if (b) out.push(`${name}'s ${toolText(b)} goes back to inventory by itself.`);
+          if (t) out.push(`${name}'s new ${toolText(t)} has ${toolLife(t)} left.`);
+          if (h) out.push(`${name} gets the ${toolText(tool(h.tool))} on day ${Math.floor(h.from / 24) + 1}.`);
+        }
+        return out;
       };
       const stepHtml = (item, i) => {
-        const [a, b] = item.employees.map(emp), value = item.employees.reduce((v, id) => v + delta(id), 0);
-        let glyph, head, detail;
-        if (item.kind === 'swap') {
-          glyph = icon('swap'); head = `Swap ${esc(a.name)} ↔ ${esc(b.name)}`;
-          detail = `<span>${esc(a.name)}: ${place(a.company)} <span class="tr-muted">→</span> ${place(b.company)}</span><span>${esc(b.name)}: ${place(b.company)} <span class="tr-muted">→</span> ${place(a.company)}</span><span class="tr-muted">Use the game's Swap option</span>${equip(a.id)}${equip(b.id)}`;
-        } else if (item.kind === 'move') {
-          glyph = icon('move'); head = `Move ${esc(a.name)}`;
-          detail = `<span>${place(a.company)} <span class="tr-muted">→</span> ${place(item.to)}</span>${equip(a.id)}`;
-        } else {
-          const t = newTool(a.id);
-          glyph = icon(t?.type || 'move'); head = t ? `Give ${esc(a.name)} the ${toolText(t)}` : `Remove ${esc(a.name)}'s current tool`;
-          detail = `<span>in ${place(final.get(a.id).company)}</span>${t ? `<span class="tr-muted">${toolLife(t)}</span>` : ''}`;
-        }
-        return `<li class="tr-asg-step" data-emps="${esc(item.employees.join(' '))}"><span class="tr-asg-n" aria-hidden="true">${i + 1}</span><span class="tr-asg-glyph">${glyph}</span>
-          <div><div class="tr-asg-step-head">${head}</div><div class="tr-asg-step-detail">${detail}</div>${item.employees.map(id => `<div class="tr-asg-tags">${item.employees.length > 1 ? `<b>${esc(emp(id).name)}</b>` : ''}${tags(id)}</div>`).join('')}</div>
-          <div class="tr-asg-value${value < 0 ? ' is-neg' : ''}">${signed(value)}<small>${signed(value / days, 2)}/day</small></div></li>`;
+        const a = emp(item.employees[0]), value = item.people.reduce((v, id) => v + delta(id), 0), many = item.people.length > 1;
+        const t = item.kind === 'tool' && newTool(a.id);
+        const kind = item.kind === 'swap' ? 'Swap' : item.kind === 'move' ? 'Move' : t ? 'Give a tool' : 'Remove a tool';
+        const glyph = icon(item.kind === 'tool' ? t?.type || a.equipped?.type || 'move' : item.kind);
+        const rows = item.people.map(id => `<span class="tr-asg-who">${esc(emp(id).name)}</span><span class="tr-asg-what">${action(id)}</span>
+          <span class="tr-asg-own${delta(id) < 0 ? ' is-neg' : ''}">${many ? signed(delta(id)) : ''}</span>`).join('');
+        const why = item.people.map(id => `<div class="tr-asg-tags">${many ? `<b>${esc(emp(id).name)}</b>` : ''}${tags(id)}</div>`).join('') + notes(item).map(n => `<p>${n}</p>`).join('');
+        return `<li class="tr-asg-step" data-emps="${esc(item.people.join(' '))}"><span class="tr-asg-n" aria-hidden="true">${i + 1}</span><span class="tr-asg-glyph">${glyph}</span>
+          <div><div class="tr-asg-step-head"><span>${kind}</span><span class="tr-asg-value${value < 0 ? ' is-neg' : ''}">${signed(value)}<small>${signed(value / days, 2)}/day</small></span></div>
+          <div class="tr-asg-rows">${rows}</div>
+          <div class="tr-asg-foot">${priceLine(item)}<details class="tr-asg-why"><summary>Why and details</summary><div>${why}</div></details></div></div></li>`;
       };
 
       const coworkers = proposed.employees.filter(r => !changedIds.has(r.id)).map(r => ({ r, b: row(baseline, r.id) }))
@@ -579,10 +649,13 @@ const EmployeeAssignments = (() => {
       const last = plannedPeople.reduce((a, e) => !a || EC.workingDays(e) > EC.workingDays(a) ? e : a, null);
       const pinned = plannedPeople.filter(e => e.locked).length;
       const good = result.gain > 1e-7;
+      // Changes the minimum gain left out (EmployeePlanner.CHURN).
+      const dropped = result.search.dropped?.count ? result.search.dropped : null, bar = result.search.threshold;
+      const left = dropped && `${plural(dropped.count, 'smaller or price-dependent change')} worth at most ${signed(dropped.best)} left out`;
       const tile = (k, v, s, cls = '') => `<div class="tr-asg-tile${cls}"><div class="tr-asg-k">${k}</div><div class="tr-asg-v">${v}</div><div class="tr-asg-s">${s}</div></div>`;
       hero.innerHTML = `<div class="tr-asg-hero">
         ${tile(`Extra profit · ${settings.horizon === 'career' ? 'over their careers' : `next ${plural(days, 'day')}`}`, good ? signed(result.gain) : 'Keep as is',
-          good ? `≈ ${signed(result.gain / days)} a day · game money after wages, at today's prices` : 'No more profitable arrangement found', good ? ' is-big' : ' is-big is-flat')}
+          good ? `≈ ${signed(result.gain / days)} a day · game money after wages, at today's prices` : dropped ? `Within noise of the best found: ${left}` : 'No more profitable arrangement found', good ? ' is-big' : ' is-big is-flat')}
         ${tile('Moves', moved.length, moved.length ? (payback > 1 ? `pays back by day ${payback}` : 'pays off from day 1') : 'none worth it')}
         ${tile('Tools used', `${used}<span class="tr-muted"> / ${manual.length}</span>`, !manual.length ? 'none available' : used < manual.length ? `${manual.length - used} left unused` : 'all in use')}
         ${tile('Horizon', `${days} d`, settings.horizon === 'career' ? (last ? `${esc(last.name)} retires last, after ${EC.workingDays(last)} working days` : 'until retirement') : 'fixed window')}
@@ -600,7 +673,8 @@ const EmployeeAssignments = (() => {
       const head = cancelled ? '<p class="tr-warn">Search cancelled. This is the best arrangement found before cancelling: every step is valid, but a finished search may find more.</p>' : '';
       out.innerHTML = `${head}<details class="tr-more"><summary>Valuation coverage and assumptions</summary><ul>${(result.coverage || []).map(note => `<li>${esc(note)}</li>`).join('')}</ul></details>${drawn ? `<section class="tr-asg-box">${drawn.html}</section>` : ''}
         <section class="tr-asg-box" aria-labelledby="plan-steps-heading"><h4 id="plan-steps-heading">${items.length ? 'Recommended moves and tool assignments <span class="tr-muted">· then reload employees</span>' : 'No changes'}</h4>
-          ${items.length ? `<ol class="tr-asg-steps">${items.map(stepHtml).join('')}</ol>` : `<p class="tr-muted">No profitable change found ${over(days)}. Tools can remain unused.</p>`}
+          ${items.length ? `<ol class="tr-asg-steps">${items.map(stepHtml).join('')}</ol>` : `<p class="tr-muted">${dropped ? `No change clears the minimum gain ${over(days)}` : `No profitable change found ${over(days)}`}. Tools can remain unused.</p>`}
+          ${dropped ? `<p class="tr-muted">${esc(left[0].toUpperCase() + left.slice(1))}: a change must gain at least ${signed(bar.floor)}, or ${signed(bar.recentFactor * bar.floor)} for someone moved in the last ${bar.recentHours / 24} days, after a margin for price changes.</p>` : ''}
           ${coworkers.length ? `<details class="tr-more"><summary>${plural(coworkers.length, 'coworker')} ${coworkers.length === 1 ? 'is' : 'are'} affected <em>· ${signed(coworkers.reduce((v, { r, b }) => v + r.value - b.value, 0))}, included above</em></summary>
             <p class="tr-muted">They stay where they are, but who joins or leaves changes their traits, happiness or pay comparisons.</p><ul class="tr-asg-coworkers">${coworkers.map(coworkerHtml).join('')}</ul></details>` : ''}
         </section>
@@ -849,6 +923,6 @@ const EmployeeAssignments = (() => {
     return { reset, request, reprioritize, cancel, get generation() { return generation; },
       dispose() { generation++; stopAll(); batches.clear(); } };
   }
-  return { mount, sanitize, fieldErrors, snapshotOf, careerDays, createCardPricer, toolLogOf, sparesOf, observeEquipped };
+  return { mount, sanitize, fieldErrors, snapshotOf, careerDays, createCardPricer, toolLogOf, sparesOf, observeEquipped, breakEven, planCards };
 })();
 if (typeof module !== 'undefined') module.exports = EmployeeAssignments;

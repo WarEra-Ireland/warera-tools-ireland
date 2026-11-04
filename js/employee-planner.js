@@ -33,6 +33,88 @@ const EmployeePlanner = (() => {
   };
   const initial = s => s.employees.map(e => ({ employee: e.id, company: e.company, tool: e.equipped?.id || null }));
 
+  /* Tools are a pool that outlives any one holder. When a tool runs out,
+   * its holder can get a free compatible tool (a spare, or one freed by a
+   * retirement); a retiring holder's tool returns to the pool with its hours
+   * left, for anyone compatible without a working tool. Spares go only to
+   * those whose tool ran out: someone the plan leaves without a tool gets
+   * none until a retirement frees one.
+   * Tool-hours go by value, not by who asks first: the pair (employee in
+   * need, free tool) that raises output most per hour is settled first, at
+   * the later of the need and the tool's return, and so on. Output is
+   * today's: Production / 4 x margin x (tool bonus + Handy - Improviser). A
+   * tool wears only while held, so one handed on at hour 300 with 200 hours
+   * left runs to hour 500. Disabled companies take no part.
+   * `groups` is [{ company, members: [{ e, tool }] }]; returns a timeline
+   * [{ tool, from, to }] (hours) per employee id. */
+  const TOOL_TRAITS = { handy: 40, improviser: -25 };
+  // Per employee: hours to retirement, output per point of margin, and the
+  // trait points a tool adds. Records do not change during a search.
+  const toolNeeds = new WeakMap();
+  const needsOf = e => {
+    let n = toolNeeds.get(e);
+    if (!n) toolNeeds.set(e, n = { retire: EC.workingDays(e) * 24, output: (e.production + (e.traitProduction || 0)) / 4,
+      extra: e.traits.reduce((v, t) => v + (TOOL_TRAITS[t.code] || 0), 0) });
+    return n;
+  };
+  function handoffs(s, groups, spares) {
+    const end = s.days * 24, lines = new Map(), waiting = [], pool = [];
+    for (const t of spares) if (t.hours > 0) pool.push({ tool: t, at: 0, left: t.hours, freed: false });
+    // After a segment: wait for the next tool, or hand this one back.
+    const settle = p => {
+      const seg = p.seg;
+      if (seg.to < p.retire - EPS) {
+        if (seg.to < end - EPS) { p.need = seg.to; p.ranOut = true; return true; }
+      } else if (seg.to > p.retire + EPS && p.retire < end - EPS) {
+        pool.push({ tool: seg.tool, at: p.retire, left: seg.to - p.retire, freed: true });
+        seg.to = p.retire;
+      }
+      return false;
+    };
+    for (const { company, members } of groups) for (const { e, tool } of members) {
+      const seg = tool ? { tool, from: 0, to: tool.hours } : null, line = seg ? [seg] : [];
+      lines.set(e.id, line);
+      if (company.disabled) continue;
+      const n = needsOf(e);
+      const p = { e, company, line, seg, need: 0, retire: n.retire, worth: n.output * company.margin, extra: n.extra, ranOut: false };
+      if (!seg || settle(p)) waiting.push(p);
+    }
+    while (pool.length && waiting.length) {
+      let best = null, bestGain = EPS, bestStart = 0;
+      for (const q of pool) for (const p of waiting) {
+        if (!(q.freed || p.ranOut) || !compatible(q.tool, p.company)) continue;
+        const start = Math.max(p.need, q.at);
+        if (!(start < Math.min(p.retire, end) - EPS)) continue;
+        const gain = p.worth * (q.tool.bonus + p.extra);
+        if (gain > bestGain + 1e-12 || (best && Math.abs(gain - bestGain) <= 1e-12 && (start < bestStart - EPS
+          || Math.abs(start - bestStart) <= EPS && (q.left > best.q.left + EPS
+          || Math.abs(q.left - best.q.left) <= EPS && (q.tool.id + '/' + p.e.id) < (best.q.tool.id + '/' + best.p.e.id))))) { best = { q, p }; bestGain = gain; bestStart = start; }
+      }
+      if (!best) break;
+      const { q, p } = best;
+      pool.splice(pool.indexOf(q), 1);
+      p.line.push(p.seg = { tool: q.tool, from: bestStart, to: bestStart + q.left });
+      if (!settle(p)) waiting.splice(waiting.indexOf(p), 1);
+    }
+    return lines;
+  }
+  // The tool a member holds at `hour`: their timeline's, or the one tool
+  // held from hour 0 until it runs out.
+  const toolAt = (m, hour) => {
+    if (!m.timeline) return m.tool && hour < m.tool.hours ? m.tool : null;
+    for (const x of m.timeline) if (x.from <= hour && hour < x.to) return x.tool;
+    return null;
+  };
+  // A timeline's first segment, from hour 0, follows from the employee and
+  // tool alone; later ones carry their hours.
+  const memberKey = m => {
+    const line = m.timeline;
+    if (!line) return `${m.e.id}/${m.tool?.id || ''}`;
+    let key = m.e.id + '/';
+    for (let i = 0; i < line.length; i++) key += line[i].from ? `+${line[i].tool.id}@${line[i].from}-${line[i].to}` : line[i].tool.id;
+    return key;
+  };
+
   // Effects the planner cannot reproduce. Their company stays as it is.
   function uncertainty(e) {
     for (const t of e.traits) {
@@ -191,8 +273,8 @@ const EmployeePlanner = (() => {
       const key = roster.map(e => e.id).join(',');
       roster = rosters.get(key) || (rosters.set(key, roster), roster);
     }
-    const rows = members.filter(({ e }) => roster.includes(e)).map(({ e, tool }) => {
-      const heldTool = tool && hour < tool.hours ? tool : null;
+    const rows = members.filter(({ e }) => roster.includes(e)).map(m => {
+      const e = m.e, heldTool = toolAt(m, hour);
       const activeTool = heldTool && compatible(heldTool, company) ? heldTool : null;
       return { e, tool: activeTool, fx: effects(e, company, roster, hour, heldTool, flagsOf(e).hourly) };
     });
@@ -268,6 +350,9 @@ const EmployeePlanner = (() => {
   // specialization moves: instant's arithmetic in the same order.
   const profitOn = (c, d, margin) =>
     c.production / 4 * Math.max(0, 1 + (c.pre + Math.min(20, c.saved + d * c.rate) + c.mood - 50 + c.tool + c.anchor) / 100) * margin + c.engine * margin - c.wage + c.loot;
+  // The production points behind profitOn: its output and engine terms.
+  const ppOn = (c, d) =>
+    c.production / 4 * Math.max(0, 1 + (c.pre + Math.min(20, c.saved + d * c.rate) + c.mood - 50 + c.tool + c.anchor) / 100) + c.engine;
   // Traits whose effect steps with age (a year a day, in decades).
   const AGE_TRAITS = new Set(['lateBloomer', 'earlyBloomer', 'wornOut']);
 
@@ -304,9 +389,10 @@ const EmployeePlanner = (() => {
     // Effects are worked out afresh only where something other than
     // specialization can change; days in between reuse them (profitOn).
     const boundaries = new Set([0, end]);
-    for (const { e, tool } of members) {
-      const moved = e.company !== company.id;
-      for (const h of [tool?.hours, EC.workingDays(e) * 24, ...e.happiness.map(x => x.hours), ...(e.productionEvents || []).map(x => x.hours), ...traitHours(e, moved, end)]) {
+    for (const m of members) {
+      const { e } = m, moved = e.company !== company.id;
+      if (m.timeline) for (const x of m.timeline) { if (x.from > 0) boundaries.add(x.from); if (x.to < end) boundaries.add(x.to); }
+      for (const h of [m.timeline ? 0 : m.tool?.hours, EC.workingDays(e) * 24, ...e.happiness.map(x => x.hours), ...(e.productionEvents || []).map(x => x.hours), ...traitHours(e, moved, end)]) {
         if (h > 0 && h < end) boundaries.add(h);
       }
       if (e.traits.some(t => AGE_TRAITS.has(t.code))) {
@@ -319,7 +405,8 @@ const EmployeePlanner = (() => {
     const totals = members.map(() => 0), trainingProgress = members.map(() => 0), trainingValues = members.map(() => 0);
     const minHappiness = members.map(() => 100);
     const daily = new Array(days).fill(0);
-    let value = 0;
+    // pp: production points made (output + engine) x hours, for price exposure.
+    let value = 0, pp = 0;
     const rosters = new Map(), flags = flagsFor(members);
     let first = null;
     for (let i = 0; i < hours.length - 1; i++) {
@@ -357,6 +444,7 @@ const EmployeePlanner = (() => {
         const day = Math.floor(h / 24), next = Math.min(hours[i + 1], (day + 1) * 24);
         for (let r = 0; r < rows.length; r++) {
           const row = rows[r], gain = (day === start ? row.profit : profitOn(rows.calc[r], day, company.margin)) * (next - h);
+          pp += (day === start ? row.output + row.engineOutput : ppOn(rows.calc[r], day)) * (next - h);
           value += gain; daily[day] += gain; totals[at[r]] += gain;
           if (row.happiness < minHappiness[at[r]]) minHappiness[at[r]] = row.happiness;
         }
@@ -369,17 +457,17 @@ const EmployeePlanner = (() => {
       value += benefit; daily[0] += benefit;
       for (const { e } of recruiters) totals[slot.get(e.id)] += benefit / recruiters.length;
     }
-    return { value, daily, employees: (first || instant(s, company, members, 0, rosters, flags)).map(r => ({ ...r, value: totals[slot.get(r.id)], trainingValue: trainingValues[slot.get(r.id)], minHappiness: minHappiness[slot.get(r.id)] })) };
+    return { value, pp, daily, employees: (first || instant(s, company, members, 0, rosters, flags)).map(r => ({ ...r, value: totals[slot.get(r.id)], trainingValue: trainingValues[slot.get(r.id)], minHappiness: minHappiness[slot.get(r.id)] })) };
   }
 
-  // Projections are cached per (company, roster, tools); `misses` counts the
-  // projections actually run, which is what the search budget limits.
+  // Projections are cached per (company, roster, tool timelines); `misses`
+  // counts the projections actually run, which is what the search budget limits.
   function projector(s) {
     const cache = new Map();
     const p = { misses: 0 };
-    p.project = (company, members) => {
-      members = [...members].sort((a, b) => byId(a.e, b.e));
-      const key = company.id + ':' + members.map(m => `${m.e.id}/${m.tool?.id || ''}`).join(',');
+    p.key = (company, members) => company.id + ':' + members.map(memberKey).join(',');
+    p.project = (company, members, key) => {
+      if (!key) { members = [...members].sort((a, b) => byId(a.e, b.e)); key = p.key(company, members); }
       let r = cache.get(key);
       if (!r) { p.misses++; r = projectCompany(s, company, members); cache.set(key, r); }
       return r;
@@ -387,11 +475,39 @@ const EmployeePlanner = (() => {
     return p;
   }
 
-  // Projects an assignment over the companies being planned.
+  const indexes = new WeakMap();
+  function indexOf(s) {
+    let x = indexes.get(s);
+    if (!x) indexes.set(s, x = { employees: [...s.employees].sort(byId), tools: new Map(s.tools.map(t => [t.id, t])),
+      planned: s.companies.filter(c => !c.excluded).sort(byId) });
+    return x;
+  }
+  const toolTypeOf = product => Object.keys(TOOL_TYPES).find(k => TOOL_TYPES[k].includes(product)) || null;
+  // The planned companies' rosters under an assignment (Map id -> { company,
+  // tool }), members sorted by id, each with its tool timeline. Every tool
+  // the assignment leaves unheld is a spare.
+  function arrange(s, assign) {
+    const { employees, tools, planned } = indexOf(s);
+    const at = new Map(planned.map(c => [c.id, []])), held = new Set();
+    for (const e of employees) {
+      const a = assign.get(e.id);
+      if (a.tool) held.add(a.tool);
+      at.get(a.company)?.push({ e, tool: tools.get(a.tool) || null });
+    }
+    const groups = planned.map(company => ({ company, members: at.get(company.id) }));
+    const lines = handoffs(s, groups, s.tools.filter(t => !held.has(t.id)));
+    for (const g of groups) for (const m of g.members) m.timeline = lines.get(m.e.id);
+    groups.lines = lines;
+    return groups;
+  }
+
+  // Projects an assignment over the companies being planned. Each row also
+  // lists the tools its employee gets later (`handoffs`).
   function totals(s, P, assign) {
-    const employees = new Map(s.employees.map(e => [e.id, e])), tools = new Map(s.tools.map(t => [t.id, t]));
-    const groups = s.companies.filter(c => !c.excluded).sort(byId).map(c => P.project(c, [...assign]
-      .filter(([, a]) => a.company === c.id).map(([id, a]) => ({ e: employees.get(id), tool: tools.get(a.tool) }))));
+    const groups = arrange(s, assign).map(g => {
+      const r = P.project(g.company, g.members), later = new Map(g.members.map(m => [m.e.id, m.timeline.slice(m.timeline[0]?.from === 0 ? 1 : 0)]));
+      return { ...r, employees: r.employees.map(row => ({ ...row, handoffs: later.get(row.id).map(x => ({ tool: x.tool.id, from: x.from, to: x.to })) })) };
+    });
     const daily = new Array(s.days).fill(0);
     for (const g of groups) g.daily.forEach((v, i) => { daily[i] += v; });
     return { value: groups.reduce((a, g) => a + g.value, 0), daily, employees: groups.flatMap(g => g.employees) };
@@ -399,8 +515,10 @@ const EmployeePlanner = (() => {
 
   const excludedList = s => s.companies.filter(c => c.excluded).map(c => ({ company: c.id, name: c.name, reason: c.excluded }));
 
-  function coverage(s) {
+  function coverage(s, threshold = null) {
     const notes = ['Earnings assume employees stay. Quit probabilities and future price changes are not valued.'];
+    if (threshold) notes.push(`Minimum gain: prices are recent trades, so a change is recommended only if it still gains ${threshold.floor.toFixed(2)} (${100 * threshold.floorShare}% of the planned companies' profit over the horizon) after ${100 * threshold.priceUncertainty}% of the output whose value depends on prices comes off, netted by product. A move or swap of someone moved in the last ${threshold.recentHours / 24} days needs ${threshold.recentFactor} times as much.`);
+    if (s.tools.length) notes.push("Tools are a pool: a tool that runs out is replaced by the best free compatible tool, and a retiring employee's tool passes on with its hours left, to whoever it raises output most. Spares replace only tools that ran out.");
     if (!s.toolboxValue) notes.push('Toolbox income is excluded: set a toolbox value to include Luck, Scavenger and Salvager loot benefits.');
     if (!s.trainingQuota) notes.push('Trainer and coworker Luck training benefits are excluded: set a daily training budget.');
     else notes.push('Trainer and coworker Luck use a bounded numeric-card estimate, fixed current training values and an equal share of the daily energy budget.');
@@ -466,9 +584,15 @@ const EmployeePlanner = (() => {
       const company = s.companies.find(c => c.id === e?.company);
       const reason = errors[0] || !e && 'Employee not loaded.' || company?.excluded;
       if (reason) return { valid: false, reason };
-      const members = s.employees.filter(x => x.company === company.id).map(e => ({ e, tool: tools.get(e.equipped?.id) }));
+      const members = s.employees.filter(x => x.company === company.id).map(e => ({ e, tool: tools.get(e.equipped?.id) || null }));
       const days = Math.min(47, Math.max(1, ...members.map(({ e }) => Math.ceil(EC.workingDays(e)))));
-      const project = rows => projectCompany({ ...s, days }, company, rows);
+      // Handoffs within this company, with the spares and, without the
+      // employee, their tool back in inventory.
+      const project = rows => {
+        const sd = { ...s, days }, held = new Set(rows.map(m => m.tool?.id));
+        const lines = handoffs(sd, [{ company, members: rows }], s.tools.filter(t => (!t.holder || t.holder === id) && !held.has(t.id)));
+        return projectCompany(sd, company, rows.map(m => ({ ...m, timeline: lines.get(m.e.id) })));
+      };
       if (!cache.has(company.id)) cache.set(company.id, project(members));
       const baseline = cache.get(company.id);
       const without = project(members.filter(m => m.e.id !== id));
@@ -483,12 +607,30 @@ const EmployeePlanner = (() => {
     return { price };
   }
 
+  /* Minimum gain. Prices are recent trades held flat for the horizon, so a
+   * gain that hinges on them, or one too small to be worth the effort of
+   * making it, is not recommended (planner-churn ticket 02).
+   * - Price exposure: a change's value is linear in margins, gain =
+   *   sum over products of margin x change in production points, plus wages,
+   *   loot and training. Netted by product, `priceUncertainty` of that sum
+   *   comes off the gain: a cross-product swap carries both products' output,
+   *   a tool change inside a company only its extra output.
+   * - Churn floor: what is left must reach `floorShare` of the planned
+   *   companies' baseline profit over the horizon, and at least `floorMin`.
+   * - A move or swap of someone moved within `recentHours` needs
+   *   `recentFactor` x the floor. Records carry no earlier company, so a move
+   *   back is caught only while it is this recent.
+   * `minMax` (or a snapshot's `minMax`) turns all of it off: the search then
+   * takes any gain, the pure maximum. */
+  const CHURN = { priceUncertainty: 0.05, floorShare: 0.002, floorMin: 1, recentHours: 72, recentFactor: 3 };
+
   /* Best-improvement local search over moves, direct swaps and tool changes.
    * Every round scores each employee's options, interleaved so a budget cut
-   * falls evenly on the workforce, and accepts the single best change. Ties
-   * break on a canonical key, so input order does not change the result.
-   * Identical available tools (same type, bonus and hours) are one option. */
-  function recommend(snapshot, { maxProjections = 60000, allowMoves = true, onProgress = null, compareOutputOnly = true } = {}) {
+   * falls evenly on the workforce, and accepts the single best change (by
+   * gain less price exposure, among those clearing the floor). Ties break on
+   * a canonical key, so input order does not change the result. Identical
+   * available tools (same type, bonus and hours) are one option. */
+  function recommend(snapshot, { maxProjections = 60000, allowMoves = true, onProgress = null, compareOutputOnly = true, minMax = !!snapshot.minMax, floorAt = null } = {}) {
     let errors = validate(snapshot, initial(snapshot));
     if (errors.length) return { valid: false, errors };
     const s = withExclusions(snapshot);
@@ -507,11 +649,42 @@ const EmployeePlanner = (() => {
     const holder = new Map([...assign].filter(([, a]) => a.tool).map(([id, a]) => [a.tool, id]));
     const freeUnit = key => manual.find(t => classOf(t) === key && !holder.has(t.id)) || null;
     const roster = new Map(planned.map(c => [c.id, people.filter(e => e.company === c.id).map(e => e.id)]));
-    const value = new Map(planned.map(c => [c.id, P.project(c, roster.get(c.id).map(id => ({ e: employees.get(id), tool: tools.get(assign.get(id).tool) }))).value]));
+    // Each planned company's current projection key and value. A change can
+    // move tools on to other companies (handoffs), so every company whose
+    // key changes is re-projected, not just those the change touches.
+    // `money`: margin x production points, the price-exposed part.
+    const keys = new Map(), value = new Map(), money = new Map();
+    let lines = new Map();
+    const refresh = () => {
+      const groups = arrange(s, assign);
+      for (const g of groups) {
+        const key = P.key(g.company, g.members);
+        if (keys.get(g.company.id) !== key) {
+          const r = P.project(g.company, g.members, key);
+          keys.set(g.company.id, key); value.set(g.company.id, r.value); money.set(g.company.id, g.company.margin * r.pp);
+        }
+      }
+      lines = groups.lines;
+      for (const g of groups) { current.set(g.company.id, g.members); heldTypes.set(g.company.id, [...new Set(g.members.flatMap(m => m.tool ? [m.tool.type] : []))]); }
+    };
+    // Tools only go to compatible companies, so handoffs split by tool type:
+    // a candidate reschedules only the companies its tool types reach (a
+    // tool held outside its type's companies links two types).
+    const typeOf = new Map(planned.map(c => [c.id, toolTypeOf(c.product)]));
+    const heldTypes = new Map(), current = new Map(), toolsOfType = new Map();
+    for (const t of s.tools) { if (!toolsOfType.has(t.type)) toolsOfType.set(t.type, []); toolsOfType.get(t.type).push(t); }
+    refresh();
+    const sameLine = (a, b) => a.length === b.length && a.every((x, i) => x.tool === b[i].tool && x.from === b[i].from && x.to === b[i].to);
     const baseline = totals(s, P, assign);
+    // floorAt: the output-only comparison search keeps the full model's floor.
+    const floor = minMax ? 0 : floorAt ?? Math.max(CHURN.floorMin, CHURN.floorShare * baseline.value);
+    // The floor a candidate must clear: higher if it moves someone moved lately.
+    const floorFor = changes => changes.some(([id, company]) => company !== assign.get(id).company && employees.get(id).moveAgeHours < CHURN.recentHours)
+      ? CHURN.recentFactor * floor : floor;
     const steps = [], moved = new Set();
     const movable = e => allowMoves && !e.locked && !moved.has(e.id);
-    const search = { rounds: 0, candidates: 0, projections: 0, maxProjections, limited: false, stopped: 'converged' };
+    const search = { rounds: 0, candidates: 0, projections: 0, maxProjections, limited: false, stopped: 'converged',
+      threshold: minMax ? null : { floor, ...CHURN }, dropped: null, accepted: [] };
 
     const toolFor = (tool, company) => tool && compatible(tool, company) ? tool.id : null;
     function candidatesFor(e, partners) {
@@ -560,36 +733,82 @@ const EmployeePlanner = (() => {
       return out;
     }
 
-    // Gain of a candidate: only the companies it touches are re-projected.
+    // Gain of a candidate: companies whose rosters or tool timelines it
+    // changes are re-projected. Leaves its price exposure, the change in
+    // margin x production points netted by product, in `exposure`, and that
+    // change per product in `byProduct`.
+    let exposure = 0, byProduct = new Map();
     function score(candidate) {
-      const next = new Map(candidate.changes.map(([id, company, tool]) => [id, { company, tool }]));
-      const touched = new Set(candidate.changes.flatMap(([id, company]) => [assign.get(id).company, company]));
-      let gain = 0;
-      for (const id of [...touched].sort()) {
-        const c = companies.get(id);
-        const members = [...roster.get(id).filter(x => !next.has(x) || next.get(x).company === id),
-          ...[...next].filter(([x, a]) => a.company === id && assign.get(x).company !== id).map(([x]) => x)];
-        if (members.length > c.capacity) return null;
-        gain += P.project(c, members.map(x => ({ e: employees.get(x), tool: tools.get((next.get(x) || assign.get(x)).tool) }))).value - value.get(id);
+      const over = new Map(), touched = new Set(), types = new Set(), taken = new Set();
+      // A type with no tools has nothing to hand on.
+      const note = x => { if (toolsOfType.has(x)) types.add(x); };
+      for (const [id, company, tool] of candidate.changes) {
+        const was = assign.get(id);
+        over.set(id, { company, tool }); touched.add(was.company).add(company);
+        if (tool) taken.add(tool);
+        note(typeOf.get(was.company)); note(typeOf.get(company)); note(tools.get(was.tool)?.type); note(tools.get(tool)?.type);
       }
+      const membersOf = c => {
+        const ids = roster.get(c).filter(x => !over.has(x) || over.get(x).company === c);
+        for (const [x, a] of over) if (a.company === c && assign.get(x).company !== c) ids.push(x);
+        return ids.sort().map(x => ({ e: employees.get(x), tool: tools.get((over.get(x) || assign.get(x)).tool) || null }));
+      };
+      const groups = [], held = new Map();
+      for (const id of touched) {
+        const members = membersOf(id), company = companies.get(id);
+        if (members.length > company.capacity) return null;
+        groups.push({ company, members });
+        held.set(id, members.flatMap(m => m.tool ? [m.tool.type] : []));
+      }
+      for (const g of groups) for (const t of held.get(g.company.id)) note(t);
+      for (let grew = types.size > 0; grew;) {
+        grew = false;
+        for (const c of planned) {
+          if (touched.has(c.id) || held.has(c.id)) continue;
+          const own = heldTypes.get(c.id);
+          if (!types.has(typeOf.get(c.id)) && !own.some(t => types.has(t))) continue;
+          held.set(c.id, own); groups.push({ company: c, members: current.get(c.id), same: true });
+          note(typeOf.get(c.id)); for (const t of own) note(t);
+          grew = true;
+        }
+      }
+      const spares = [];
+      for (const type of types) for (const t of toolsOfType.get(type) || []) {
+        const h = holder.get(t.id);
+        if (!taken.has(t.id) && !(h && !over.has(h))) spares.push(t);
+      }
+      groups.sort((a, b) => byId(a.company, b.company));
+      // Without tool types in play, nobody holds or gets a tool.
+      const next = types.size ? handoffs(s, groups, spares) : { get: () => [] };
+      let gain = 0;
+      byProduct = new Map();
+      for (const g of groups) {
+        if (g.same) {
+          if (g.members.every(m => sameLine(next.get(m.e.id), m.timeline))) continue;
+          g.members = g.members.map(m => ({ e: m.e, tool: m.tool }));
+        }
+        for (const m of g.members) m.timeline = next.get(m.e.id);
+        const key = P.key(g.company, g.members);
+        if (key === keys.get(g.company.id)) continue;
+        const r = P.project(g.company, g.members, key), c = g.company;
+        gain += r.value - value.get(c.id);
+        byProduct.set(c.product, (byProduct.get(c.product) || 0) + c.margin * r.pp - money.get(c.id));
+      }
+      exposure = 0;
+      for (const x of byProduct.values()) exposure += Math.abs(x);
       return gain;
     }
 
     function apply({ changes, step }) {
-      const touched = new Set();
       for (const [id, company, tool] of changes) {
         const was = assign.get(id);
-        touched.add(was.company).add(company);
         if (was.tool) holder.delete(was.tool);
         roster.set(was.company, roster.get(was.company).filter(x => x !== id));
         roster.get(company).push(id);
         assign.set(id, { company, tool });
       }
       for (const [id, , tool] of changes) if (tool) holder.set(tool, id);
-      for (const id of touched) {
-        const c = companies.get(id);
-        value.set(id, P.project(c, roster.get(id).map(x => ({ e: employees.get(x), tool: tools.get(assign.get(x).tool) }))).value);
-      }
+      refresh();
       if (step) { steps.push(step); step.employees.forEach(id => moved.add(id)); }
     }
 
@@ -597,7 +816,7 @@ const EmployeePlanner = (() => {
       const proposed = totals(s, P, assign);
       const warnings = riskWarnings(s, proposed.employees);
       return { valid: true, partial, baseline, proposed, gain: proposed.value - baseline.value,
-        coverage: coverage(s), arrangement: s.employees.map(e => ({ employee: e.id, ...assign.get(e.id) })), steps: [...steps], warnings,
+        coverage: coverage(s, search.threshold), arrangement: s.employees.map(e => ({ employee: e.id, ...assign.get(e.id) })), steps: [...steps], warnings,
         unused: manual.filter(t => !holder.has(t.id)).map(t => t.id), excluded: excludedList(s),
         search: { ...search, projections: P.misses } };
     }
@@ -610,13 +829,13 @@ const EmployeePlanner = (() => {
       // optimum. Keep the output-only candidate, scored with the full model.
       const alternative = recommend({ ...s, toolboxValue: 0, trainingQuota: 0,
         companies: s.companies.map(c => ({ ...c, recruitmentValues: null })) },
-        { maxProjections: remaining, allowMoves, compareOutputOnly: false });
+        { maxProjections: remaining, allowMoves, compareOutputOnly: false, minMax, floorAt: floor });
       const scored = evaluate(s, alternative.arrangement);
       const search = { ...primary.search, projections: primary.search.projections + alternative.search.projections + planned.length,
         alternativeProjections: alternative.search.projections, selectedOutputOnly: scored.value > primary.proposed.value + 1e-7 };
       if (!search.selectedOutputOnly) return { ...primary, search };
       return { ...primary, proposed: scored, gain: scored.value - baseline.value, arrangement: alternative.arrangement,
-        steps: alternative.steps, unused: alternative.unused, warnings: scored.warnings, search };
+        steps: alternative.steps, unused: alternative.unused, warnings: scored.warnings, search: { ...search, accepted: alternative.search.accepted } };
     }
 
     const maxRounds = 2 * people.length + manual.length + 10;
@@ -631,20 +850,43 @@ const EmployeePlanner = (() => {
       }
       const queues = lists.map(({ e, partners }) => candidatesFor(e, partners));
       const start = search.rounds % Math.max(1, queues.length);
-      let best = null, bestGain = 1e-7;
+      let best = null, bestGain = 1e-7, bestProducts = null;
+      // Gains left out by the threshold this round, best per set of people.
+      const dropped = new Map();
       outer: for (let depth = 0; queues.some(q => depth < q.length); depth++) {
         for (let n = 0; n < queues.length; n++) {
           const candidate = queues[(start + n) % queues.length][depth];
           if (!candidate) continue;
           if (P.misses >= maxProjections) { search.limited = true; search.stopped = 'budget'; break outer; }
-          const gain = score(candidate);
+          let gain = score(candidate);
           search.candidates++;
           if (gain == null) continue;
-          if (gain > bestGain + 1e-9 || (best && Math.abs(gain - bestGain) <= 1e-9 && candidate.key < best.key)) { best = candidate; bestGain = gain; }
+          if (!minMax) {
+            const robust = gain - CHURN.priceUncertainty * exposure, need = floorFor(candidate.changes);
+            if (robust < need) {
+              if (gain > 1e-7) {
+                const who = [...new Set(candidate.changes.map(c => c[0]))].sort().join();
+                const was = dropped.get(who);
+                if (!was || gain > was.gain) dropped.set(who, { gain, robust, need, changes: candidate.changes });
+              }
+              continue;
+            }
+            candidate.priced = { gain, exposure, need };
+            gain = robust;
+          }
+          if (gain > bestGain + 1e-9 || (best && Math.abs(gain - bestGain) <= 1e-9 && candidate.key < best.key)) { best = candidate; bestGain = gain; bestProducts = byProduct; }
         }
       }
       search.rounds++;
+      if (!minMax) {
+        const left = [...dropped.values()].sort((x, y) => y.gain - x.gain);
+        search.dropped = { count: left.length, best: left[0]?.gain || 0, top: left.slice(0, 5) };
+      }
       if (!best) return finish();
+      // Each accepted change, with its gain, price exposure, floor, and
+      // margin x production points change per product (also under minMax).
+      search.accepted.push({ key: best.key, changes: best.changes, gain: best.priced?.gain ?? bestGain, exposure: best.priced?.exposure ?? null, need: best.priced?.need ?? 0,
+        byProduct: Object.fromEntries(bestProducts) });
       apply(best);
       if (search.limited) return finish();
       onProgress?.(result(true));
@@ -793,10 +1035,14 @@ const EmployeePlanner = (() => {
         const stay = plan === state.plans[0] ? null : layoutOf(state.plans[0]);
         const changed = new Map(plan.changes);
         const toolIn = x => tools.get(plan.equipment[x.id]) || null;
-        const part = m => (m.tool ? `@${m.tool.id}:${m.tool.hours}` : '');
-        layout = companies.map(c => {
-          const members = s.employees.filter(x => (changed.get(x.id) || x.company) === c.id)
-            .map(x => ({ e: x, tool: toolIn(x) })).sort((a, b) => byId(a.e, b.e));
+        const part = m => m.timeline.map(x => `@${x.tool.id}:${x.from}-${x.to}`).join('');
+        // Handoffs follow the current subject; a card's variant keeps them.
+        const groups = companies.map(c => ({ company: c, members: s.employees.filter(x => (changed.get(x.id) || x.company) === c.id)
+          .map(x => ({ e: x, tool: toolIn(x) })).sort((a, b) => byId(a.e, b.e)) }));
+        const held = new Set(Object.values(plan.equipment));
+        const lines = handoffs(s, groups, s.tools.filter(t => !held.has(t.id) && (!t.holder || people.has(t.holder) && companies.some(c => c.id === people.get(t.holder).company))));
+        layout = groups.map(({ company: c, members }) => {
+          for (const m of members) m.timeline = lines.get(m.e.id);
           const at = members.findIndex(m => m.e.id === subjectId);
           const keys = members.map((m, i) => (i === at ? '' : fingerprint(m.e)) + part(m));
           const head = c.id + ':' + (at < 0 ? keys.join('|') : keys.slice(0, at).map(k => k + '|').join(''));
@@ -836,7 +1082,7 @@ const EmployeePlanner = (() => {
         const g = layout[layout.sub];
         let r = g.variants?.get(variant);
         if (!r) {
-          r = projectGroup(g, g.members.map((m, i) => i === g.at ? { e: variant, tool: m.tool } : m), `${g.key}/${fingerprint(variant)}`);
+          r = projectGroup(g, g.members.map((m, i) => i === g.at ? { ...m, e: variant } : m), `${g.key}/${fingerprint(variant)}`);
           (g.variants ||= new WeakMap()).set(variant, r);
         }
         let value = layout.sub ? layout.before + r.value : r.value;
@@ -1130,6 +1376,6 @@ const EmployeePlanner = (() => {
     return { employee, arms, skipped, seed, start, count, rules, horizon };
   }
 
-  return { careerOptions, TOOL_TYPES, returnsTool, evaluate, recommend, cardSession, retentionSession, CARD_PLAN_CAP };
+  return { careerOptions, TOOL_TYPES, CHURN, returnsTool, evaluate, recommend, cardSession, retentionSession, CARD_PLAN_CAP };
 })();
 if (typeof module !== 'undefined') module.exports = EmployeePlanner;
