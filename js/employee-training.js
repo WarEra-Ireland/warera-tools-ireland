@@ -743,7 +743,7 @@ const EmployeeTrainingTool = (() => {
     const v = EC.gameDailyProfit({ ...employee(), ...(Number.isFinite(wage) ? { wage } : {}) }, c, context(), market?.gameMargin?.[input.product], market?.ppValue);
     // The game shows two decimals and hides a change that rounds to nothing.
     if (v == null || Math.abs(v) < 0.005) return '';
-    return `<div class="tr-gc-note" title="The daily profit the game shows on this card: today's extra output at the game's own price, with no market tax, minus the wage change, over 24 hours. The game's price is a slow average, so it can differ from the market price the value above uses. That value also counts specialization growth, aging, coworkers and future trainings.">Game: ${v < 0 ? '−' : '+'}₿${Math.abs(v).toLocaleString('en', { maximumFractionDigits: 3 })}/day today</div>`;
+    return `<div class="tr-gc-note" title="The daily profit the game shows on this card: today's extra output at the game's own price, with no market tax, minus the wage change, over 24 hours. The game's price is a slow average, so it can differ from the market price the value above uses. That value also counts specialization growth, aging, coworkers and future trainings.">Game: ${v < 0 ? '−' : '+'}₿${Math.abs(v).toLocaleString('en', { maximumFractionDigits: 3 })}/day</div>`;
   }
 
   // A card value as average profit per day over the employee's working days, or
