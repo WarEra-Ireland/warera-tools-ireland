@@ -176,17 +176,22 @@ const EmployeeCore = (() => {
     if (!Number.isFinite(e.wage) && !(ppValue > 0)) return null;
     if (c.card === 'negotiation' && !canNegotiate(e, c)) return null;
     const wage = x => Number.isFinite(e.wage) ? x.wage : paidPph(x) * x.wageExpectation * ppValue;
+    const s = { ...DEFAULT_SITUATION, ...ctx?.situation };
+    // Rival and Mentor, the employee's and their coworkers', as the card
+    // shifts the standing they compare (peerSelfProduction).
+    const peerMoney = next => (peerSelfProduction(next, s) - peerSelfProduction(e, s)) / CFG.outputDivisor * (1 + e.bonus) * margin;
     if (GAME_TRAIT_CARDS.has(c.card)) {
       const outcomes = cardOutcomes(e, c, ctx);
       if (!outcomes.length) return null;
-      const s = { ...DEFAULT_SITUATION, ...ctx?.situation };
       const codes = traits => new Set((traits || []).map(t => t.code));
       const before = codes(e.traits);
+      // With the coworkers known, peerMoney prices Rival and Mentor instead.
+      const own = t => !(s.peers && ['rival', 'mentor'].includes(t.code));
       return outcomes.reduce((sum, { p, employee: next }) => {
         const after = codes(next.traits);
-        let money = 0;   // per hour
-        for (const t of next.traits) if (!before.has(t.code)) money += traitOutputToday(t, next, s, margin, false);
-        for (const t of e.traits || []) if (!after.has(t.code)) money -= traitOutputToday(t, e, s, margin, true);
+        let money = peerMoney(next);   // per hour
+        for (const t of next.traits) if (!before.has(t.code) && own(t)) money += traitOutputToday(t, next, s, margin, false);
+        for (const t of e.traits || []) if (!after.has(t.code) && own(t)) money -= traitOutputToday(t, e, s, margin, true);
         return sum + p * 24 * (money - (wage(next) - wage(e)));
       }, 0);
     }
@@ -194,7 +199,21 @@ const EmployeeCore = (() => {
     if (c.card === 'drill' && c.stat === 'production') output = c.delta / CFG.outputDivisor * (1 + e.bonus);
     if (c.card === 'drill' && c.stat === 'responsibility') output = pph(e) * happyGain(CFG.respHappiness * c.delta, e.happiness) * 0.01;
     const next = cardOutcomes(e, c, ctx)[0]?.employee || e;
-    return 24 * (output * margin - (wage(next) - wage(e)));
+    return 24 * (output * margin + peerMoney(next) - (wage(next) - wage(e)));
+  }
+  // The Production Rival, Mentor and coworkers' Mentor give the employee
+  // today, on the frozen comparison the game uses (peerProduction); 0 while
+  // the coworkers are unknown. A card that lifts the employee past a Mentor
+  // coworker loses his +2, which the game's card profit counts.
+  function peerSelfProduction(e, s) {
+    if (!s.peers?.length) return 0;
+    const row = (model, situation, production) => ({
+      production: model ? ordinaryProduction(model, situation) : production,
+      rival: model?.traits?.some(t => t.code === 'rival') || false,
+      mentor: model?.traits?.some(t => t.code === 'mentor') || false,
+    });
+    const rows = [row(e, s), ...s.peers.map(p => row(p.model, p.situation, p.production))];
+    return peerProduction(rows)[0] - Math.max(1, rows[0].production);
   }
   // What a held trait `t` ({ code, arg }) adds to this employee's own output
   // per hour today, in money at `margin` per PP: the part of the game's
