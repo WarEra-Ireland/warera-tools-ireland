@@ -262,7 +262,10 @@ const EmployeeAssignments = (() => {
    * together with it (an accepted change that also involves a step's people,
    * such as a tool passing to someone joining the company), then one per
    * other changed employee. A move or swap card has `price`, its break-even
-   * margin ratio, from the accepted changes behind it. */
+   * margin ratio, from the accepted changes behind it. `heldFor` lists the
+   * tools a card's people give up that go to an unchanged employee later,
+   * when that employee's own tool runs out ([{ tool, employee, from, to }],
+   * hours); that employee's gain belongs to the card. */
   function planCards(result, snapshot) {
     const emp = new Map(snapshot.employees.map(e => [e.id, e]));
     const changed = result.arrangement.filter(a => a.company !== emp.get(a.employee).company || a.tool !== (emp.get(a.employee).equipped?.id || null));
@@ -286,7 +289,23 @@ const EmployeeAssignments = (() => {
       card.price = breakEven(sum, card.entries.reduce((v, a) => v + a.gain, 0), margins, [product(from), product(to)]);
       delete card.entries;
     }
-    return [...cards, ...changed.filter(a => !cardOf.has(a.employee)).map(a => ({ kind: 'tool', employees: [a.employee], people: [a.employee], price: null }))];
+    const all = [...cards, ...changed.filter(a => !cardOf.has(a.employee)).map(a => ({ kind: 'tool', employees: [a.employee], people: [a.employee], price: null }))];
+    const rows = list => new Map((list?.employees || []).map(r => [r.id, r]));
+    const before = rows(result.baseline), after = rows(result.proposed);
+    const final = new Map(result.arrangement.map(a => [a.employee, a]));
+    for (const card of all) {
+      card.heldFor = [];
+      for (const id of card.people) {
+        const tool = emp.get(id).equipped?.id;
+        if (!tool || final.get(id)?.tool === tool) continue;
+        for (const [other, r] of after) {
+          if (changedIds.has(other)) continue;
+          const h = (r.handoffs || []).find(x => x.tool === tool);
+          if (h && !(before.get(other)?.handoffs || []).some(x => x.tool === tool)) card.heldFor.push({ tool, employee: other, from: h.from, to: h.to });
+        }
+      }
+    }
+    return all;
   }
 
   // Short reason tags for an employee's change.
@@ -588,6 +607,7 @@ const EmployeeAssignments = (() => {
        * not act on (a tool going back to inventory, tool hours, later
        * handoffs) fold into "Why and details". */
       const items = planCards(result, snapshot);
+      const held = new Map(items.flatMap(c => c.heldFor.map(x => [x.tool, x])));
       const ratioText = (v, other) => `${num(v * 100, Math.round(v * 100) === Math.round(other * 100) ? 1 : 0)}%`;
       const priceLine = ({ price: b }) => b ? `<span>Price-sensitive: loses money if ${esc(productName(b.up))} earns less than ${ratioText(b.ratio, b.now)} of ${esc(productName(b.down))} per PP (now ${ratioText(b.now, b.ratio)}).</span>` : '';
       const tags = id => {
@@ -600,34 +620,51 @@ const EmployeeAssignments = (() => {
       const action = id => {
         const e = emp(id), to = final.get(id).company, t = newTool(id);
         const where = to !== e.company ? `${place(e.company)}<span class="tr-muted">→</span>${place(to)}` : `in ${place(to)}`;
-        const tl = t ? `· give ${icon(t.type)}<b>${toolText(t)}</b>` : removes(id) ? `· remove ${icon(e.equipped.type)}<b>${toolText(e.equipped)}</b>` : '';
+        const keep = held.get(e.equipped?.id), until = keep && ` · keep it for ${esc(emp(keep.employee).name)}`;
+        const tl = t ? `· give ${icon(t.type)}<b>${toolText(t)}</b>` : removes(id) ? `· remove ${icon(e.equipped.type)}<b>${toolText(e.equipped)}</b>${until || ''}` : '';
         return `<span class="tr-asg-line">${where}</span>${tl ? `<span class="tr-asg-line">${tl}</span>` : ''}`;
+      };
+      // A tool given up now and handed on later: to whom, when, and why.
+      const dayOf = h => Math.floor(h / 24) + 1;
+      const heldText = (x, giver) => {
+        const e = emp(x.employee), own = e.equipped, held = tool(x.tool), retires = x.to >= EC.workingDays(e) * 24 - 1e-6;
+        const handy = e.traits.some(t => t.code === 'handy') ? ' and keeps Handy\'s +40% going' : '';
+        const gone = held.hours <= x.from ? ` If ${esc(giver)} keeps it, it wears out on day ${dayOf(held.hours)}, before then.` : '';
+        return `Held for ${esc(e.name)}: their ${own ? toolText(own) : 'tool'} runs out on day ${dayOf(x.from)}. The ${toolText(held)} then lasts ${retires ? 'until they retire' : `until day ${dayOf(x.to)}`}${handy}, worth more than its +${esc(num(held.bonus, 0))}% to ${esc(giver)} now.${gone}`;
+      };
+      const heldRow = x => {
+        const e = emp(x.employee), t = tool(x.tool);
+        return `<span class="tr-asg-who">${esc(e.name)}</span><span class="tr-asg-what"><span class="tr-asg-line">in ${place(e.company)}</span><span class="tr-asg-line">· on day ${dayOf(x.from)}, give ${icon(t.type)}<b>${toolText(t)}</b></span></span>
+          <span class="tr-asg-own${delta(x.employee) < 0 ? ' is-neg' : ''}">${signed(delta(x.employee))}</span>`;
       };
       const notes = item => {
         const out = item.kind === 'swap' ? ["Use the game's Swap option."] : [];
+        for (const x of item.heldFor) out.push(heldText(x, emp(item.people.find(id => emp(id).equipped?.id === x.tool)).name));
         for (const id of item.people) {
           const name = esc(emp(id).name), t = newTool(id), b = back(id), h = row(proposed, id)?.handoffs?.[0];
-          if (b) out.push(`${name}'s ${toolText(b)} goes back to inventory by itself.`);
+          if (b && !item.heldFor.some(x => x.tool === emp(id).equipped?.id)) out.push(`${name}'s ${toolText(b)} goes back to inventory by itself.`);
           if (t) out.push(`${name}'s new ${toolText(t)} has ${toolLife(t)} left.`);
           if (h) out.push(`${name} gets the ${toolText(tool(h.tool))} on day ${Math.floor(h.from / 24) + 1}.`);
         }
         return out;
       };
       const stepHtml = (item, i) => {
-        const a = emp(item.employees[0]), value = item.people.reduce((v, id) => v + delta(id), 0), many = item.people.length > 1;
+        const a = emp(item.employees[0]), many = item.people.length + item.heldFor.length > 1;
+        const value = item.people.reduce((v, id) => v + delta(id), 0) + item.heldFor.reduce((v, x) => v + delta(x.employee), 0);
         const t = item.kind === 'tool' && newTool(a.id);
-        const kind = item.kind === 'swap' ? 'Swap' : item.kind === 'move' ? 'Move' : t ? 'Give a tool' : 'Remove a tool';
+        const kind = item.kind === 'swap' ? 'Swap' : item.kind === 'move' ? 'Move' : t ? 'Give a tool' : item.heldFor.length ? 'Hold back a tool' : 'Remove a tool';
         const glyph = icon(item.kind === 'tool' ? t?.type || a.equipped?.type || 'move' : item.kind);
         const rows = item.people.map(id => `<span class="tr-asg-who">${esc(emp(id).name)}</span><span class="tr-asg-what">${action(id)}</span>
-          <span class="tr-asg-own${delta(id) < 0 ? ' is-neg' : ''}">${many ? signed(delta(id)) : ''}</span>`).join('');
+          <span class="tr-asg-own${delta(id) < 0 ? ' is-neg' : ''}">${many ? signed(delta(id)) : ''}</span>`).join('') + item.heldFor.map(heldRow).join('');
         const why = item.people.map(id => `<div class="tr-asg-tags">${many ? `<b>${esc(emp(id).name)}</b>` : ''}${tags(id)}</div>`).join('') + notes(item).map(n => `<p>${n}</p>`).join('');
-        return `<li class="tr-asg-step" data-emps="${esc(item.people.join(' '))}"><span class="tr-asg-n" aria-hidden="true">${i + 1}</span><span class="tr-asg-glyph">${glyph}</span>
+        return `<li class="tr-asg-step" data-emps="${esc([...item.people, ...item.heldFor.map(x => x.employee)].join(' '))}"><span class="tr-asg-n" aria-hidden="true">${i + 1}</span><span class="tr-asg-glyph">${glyph}</span>
           <div><div class="tr-asg-step-head"><span>${kind}</span><span class="tr-asg-value${value < 0 ? ' is-neg' : ''}">${signed(value)}<small>${signed(value / days, 2)}/day</small></span></div>
           <div class="tr-asg-rows">${rows}</div>
           <div class="tr-asg-foot">${priceLine(item)}<details class="tr-asg-why"><summary>Why and details</summary><div>${why}</div></details></div></div></li>`;
       };
 
-      const coworkers = proposed.employees.filter(r => !changedIds.has(r.id)).map(r => ({ r, b: row(baseline, r.id) }))
+      const onCards = new Set([...changedIds, ...[...held.values()].map(x => x.employee)]);
+      const coworkers = proposed.employees.filter(r => !onCards.has(r.id)).map(r => ({ r, b: row(baseline, r.id) }))
         .filter(({ r, b }) => Math.abs(r.value - b.value) > 0.005);
       const coworkerHtml = ({ r, b }) => {
         const e = emp(r.id), bits = [];
