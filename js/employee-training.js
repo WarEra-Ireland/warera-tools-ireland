@@ -769,7 +769,7 @@ const EmployeeTrainingTool = (() => {
       const values = random(x).map(o => o.value);
       const split = groups.length ? `<div class="tr-split">${groups.map(g =>
         `<span class="tr-arg-${g.arg}" style="flex:${g.p}" title="${escapeHtml(`${rollName(g.arg)}: ${signedPP(g.value)} PP, ${Math.round(g.p * 100)}% chance`)}">${g.p >= 0.2 ? signedPP(g.value) : ''}</span>`).join('')}</div>
-        <div class="tr-gc-note">${groups.map(g => `${escapeHtml(rollName(g.arg))} ${Math.round(g.p * 100)}%`).join(' · ')}</div>`
+        ${x.c.card === 'wildCard' ? '' : `<div class="tr-gc-note">${groups.map(g => `${escapeHtml(rollName(g.arg))} ${Math.round(g.p * 100)}%`).join(' · ')}</div>`}`
         : values.length ? `<div class="tr-gc-note">Random: ${signedPP(Math.min(...values))} to ${signedPP(Math.max(...values))} PP</div>` : '';
       const bar = `<div class="tr-gc-bar"><i style="width:${pctOf(x.value)}%"></i></div>`;
       return `<div class="tr-gc${isBest ? ' best' : ''}"${x.when ? ` title="${escapeHtml(x.when)}"` : ''}>
