@@ -199,8 +199,10 @@ const ProductPickerTool = (() => {
         employees: Array.isArray(rosters[i]) ? rosters[i] : null,
         manager,
         managerName: manager ? managerName[manager.user] || null : null,
-        managerPct: manager?.productionBonusPercent || 0,
-        managerDay: manager ? (manager.hourlyWage || 0) * 24 : 0,
+        // An inactive manager (offline 3 days) gives no bonus and accrues no
+        // pay, though the contract still reports both.
+        managerPct: manager && !manager.isInactive ? manager.productionBonusPercent || 0 : 0,
+        managerDay: manager && !manager.isInactive ? (manager.hourlyWage || 0) * 24 : 0,
         offer: offers[i]?._id ? offers[i] : null,
       };
     });
@@ -366,7 +368,7 @@ const ProductPickerTool = (() => {
     if (!c.statsMissing && c.total === 0) tags.push(['warn', 'Idle', 'No output on the last full day.']);
     else if ((profitAt(model, c, c.company.itemCode) ?? 0) < 0) tags.push(['loss', 'Losing money', 'Wages and the manager cost more than the output is worth.']);
     if ((margin(model, c.company.itemCode)?.perPP ?? 0) < 0) tags.push(['loss', 'Inputs cost more', 'The inputs cost more than the product sells for.']);
-    if (c.manager?.isInactive) tags.push(['warn', 'Manager inactive', 'The manager is inactive, so their bonus may not apply.']);
+    if (c.manager?.isInactive) tags.push(['warn', 'Manager inactive', 'Offline 3 days or more: no bonus and no pay until they log in.']);
     if (!c.manager && c.empPP > 0) tags.push(['info', c.offer ? 'Hiring a manager' : 'No manager', 'A manager adds +2% per point to every employee.']);
     if (!tags.length) return '';
     return `<div class="pp-tags">${tags.map(([kind, label, tip]) => `<span class="dash-pill ${kind}" title="${escapeHtml(tip)}">${label}</span>`).join('')}</div>`;
@@ -377,7 +379,7 @@ const ProductPickerTool = (() => {
     if (mgr) {
       const lock = new Date(mgr.canEndAt || mgr.lockedUntil);
       return `<span class="pp-mgr"><strong>${escapeHtml(c.managerName || 'Unknown')}</strong>${mgr.isInactive ? ' ' + pill('inactive', 'warn') : ''}
-        <small>+${num(mgr.productionBonusPercent, 0)}% · ₿${num(mgr.hourlyWage, 3)}/h (${money(c.managerDay)}/day)</small>
+        <small>${mgr.isInactive ? `+${num(mgr.productionBonusPercent, 0)}% · ₿${num(mgr.hourlyWage, 3)}/h, nothing while inactive` : `+${num(mgr.productionBonusPercent, 0)}% · ₿${num(mgr.hourlyWage, 3)}/h (${money(c.managerDay)}/day)`}</small>
         <small>${lock > new Date() ? `locked until ${lock.toUTCString().slice(5, 22)} UTC` : 'can be ended'}</small></span>`;
     }
     if (c.offer) return `<span class="pp-mgr"><strong class="dp-muted">Hiring</strong><small>up to ₿${num(c.offer.maxHourlyWage, 3)}/h</small></span>`;

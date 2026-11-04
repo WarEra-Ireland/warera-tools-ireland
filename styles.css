@@ -2991,6 +2991,8 @@ html[data-theme="light"] {
 .tr-emps td small { display: block; color: var(--muted); font-size: 12px; }
 .tr-emps td .tr-badges { margin-top: 4px; }
 .tr-emps-traits { min-width: 220px; }
+.tr-mgrs td .tr-badges { display: flex; margin-top: 4px; }
+.tr-badge-buddy { background: none; border: 1px solid var(--accent); color: var(--accent); }
 .tr-emps-happy { min-width: 190px; }
 .tr-emps-open { white-space: nowrap; }
 .tr-emps-open .tr-use { display: block; width: 100%; margin-bottom: 4px; }
@@ -3019,6 +3021,9 @@ html[data-theme="light"] {
   .tr-emps tbody td.num { text-align: left; }
   .tr-emps td:first-child, .tr-emps-traits, .tr-emps-happy, .tr-emps-open { grid-column: 1 / -1; }
   .tr-emps td[data-label="Trainings"] { grid-column: span 2; }
+  .tr-mgrs tr { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .tr-mgrs td[data-label="Manager"] { grid-column: 1 / -1; }
+  .tr-mgrs td[data-label="Profit / day"] { grid-column: span 2; }
   .tr-emps td:first-child strong { font-size: 14px; }
   .tr-emps-open { display: flex !important; gap: 6px; }
   .tr-emps-open .tr-use { flex: 1; margin: 0; min-height: 36px; }

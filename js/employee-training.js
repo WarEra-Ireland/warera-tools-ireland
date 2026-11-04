@@ -140,9 +140,11 @@ const EmployeeTrainingTool = (() => {
   // The loaded player: { username, management, companies: [{ company, employees, estimate }] }.
   let team = null;
   let nextActionsExpanded = false;
+  // Free Irish managers (Buddy Finder's pool), loaded on demand: null, 'loading', { roster } or { error }.
+  let irishPool = null;
   let busy = false;
   let assignments = null;
-  const TABS = ['overview', 'employees', 'train', 'keep', 'hire', 'assignments'];
+  const TABS = ['overview', 'employees', 'train', 'keep', 'hire', 'assignments', 'managers'];
   // Tabs about one employee, under the shared picker.
   const EMP_TABS = ['train', 'keep'];
   // The open tab; emp is an employee asked for by the link, until the team loads.
@@ -155,11 +157,12 @@ const EmployeeTrainingTool = (() => {
 
   /* ── Market: product margins over the PP value ───────────── */
   async function loadMarket() {
-    const [ppValue, config, country, gameValues] = await Promise.all([
+    const [ppValue, config, country, gameValues, wageStats] = await Promise.all([
       trpc('gameStat.getPpMoneyValue', null, { retry: true, fresh: true }),
       trpc('gameConfig.getGameConfig', {}, { retry: true, fresh: true }),
       trpc('country.getCountryById', { countryId: IRELAND }, { retry: true, fresh: true }).catch(() => null),
       trpc('gameStat.getPpMoneyValueByItem', null, { retry: true, fresh: true }).catch(() => null),
+      trpc('managerOffer.getWageStats', {}, { retry: true, fresh: true }).catch(() => null),
     ]);
     const items = config?.items || {};
     const codes = Object.keys(items).filter(c => items[c]?.productionPoints);
@@ -191,7 +194,9 @@ const EmployeeTrainingTool = (() => {
     const rarity = Object.fromEntries(codes.map(c => [c, items[c].rarity]));
     // The game's own prices, only for the "Game:" line that repeats its card profit.
     const gameMargin = gameValues && ppValue > 0 ? EC.gameMargins(items, gameValues, ppValue) : {};
-    return { ppValue: ppValue > 0 ? ppValue : null, list, types, rarity, gameMargin, engineLevels: config?.upgradesConfig?.automatedEngine?.levels || {} };
+    return { ppValue: ppValue > 0 ? ppValue : null, list, types, rarity, gameMargin, engineLevels: config?.upgradesConfig?.automatedEngine?.levels || {},
+      // Manager pricing: Management levels → points, and the market's rate band per point.
+      managementLevels: config?.skills?.management?.levels || null, managerRates: ManagerCore.rateBand(wageStats) };
   }
   let marketPending = false;
   function refreshMarket() {
@@ -1072,6 +1077,17 @@ const EmployeeTrainingTool = (() => {
     return { owned: EmployeeAssignments.toolLogOf(userId, rows), complete };
   }
 
+  // Buddies whose company you manage in return: buddy ID → your contract there.
+  async function loadReciprocal(me, buddyIds) {
+    if (!buddyIds.length) return {};
+    const lists = await trpcManyValues('company.getCompanies', buddyIds.map(userId => ({ userId, perPage: 100 })));
+    const owned = buddyIds.flatMap((id, i) => (lists[i]?.items || []).map(companyId => ({ id, companyId })));
+    const contracts = await trpcManyValues('manager.getByCompanyId', owned.map(({ companyId }) => ({ companyId })));
+    const out = {};
+    owned.forEach(({ id, companyId }, i) => { if (contracts[i]?.user === me) out[id] = { ...contracts[i], companyId }; });
+    return out;
+  }
+
   async function loadTeam(username) {
     steps.setStep(1, 'active', { sub: `Searching for "${username}"` });
     const lite = await resolveUser(username);
@@ -1094,13 +1110,17 @@ const EmployeeTrainingTool = (() => {
     const by = companies.map(c => ({ companyId: c._id }));
     const regionIds = [...new Set(companies.map(c => c.region).filter(Boolean))];
     const toolLog = loadToolLog(user._id).catch(err => { console.warn('[training] tool history failed', err); return null; });
-    const [rosters, estimates, regions, managers, totalProfit] = await Promise.all([
+    const [rosters, estimates, regions, managers, offers, pointValues, totalProfit] = await Promise.all([
       trpcManyValues('employee.getCompanyEmployees', by, {
         onProgress: (done, total) => steps.setStep(3, 'active', { count: `${done}/${total} rosters` }),
       }),
       trpcManyValues('employee.getCompanyEstimate', by),
       trpcManyValues('region.getById', regionIds.map(regionId => ({ regionId }))),
       trpcMany('manager.getByCompanyId', by),
+      // An open manager position, if any (public).
+      trpcMany('managerOffer.getByCompanyId', by),
+      // PP per hour one Management point adds in each company (needs a token: proxy).
+      trpcManyValues('employee.getManagerPointValue', by),
       ProductPickerTool.loadModel(user, (_n, state, detail) => {
         if (state === 'active') steps.setStep(4, 'active', detail);
       }).then(m => {
@@ -1115,12 +1135,22 @@ const EmployeeTrainingTool = (() => {
     ]);
     const regionById = Object.fromEntries(regionIds.map((id, i) => [id, regions[i]]));
     const countryIds = [...new Set(regions.filter(Boolean).map(r => r.country).filter(Boolean))];
-    const taxes = await trpcManyValues('country.getCountryById', countryIds.map(countryId => ({ countryId })));
+    // Managers' names and citizenship: an Irish manager is a buddy.
+    const contractOf = i => managers[i]?.status === 'fulfilled' ? managers[i].value || null : undefined;
+    const managerIds = [...new Set(companies.map((_, i) => contractOf(i)?.user).filter(Boolean))];
+    const [taxes, managerProfiles] = await Promise.all([
+      trpcManyValues('country.getCountryById', countryIds.map(countryId => ({ countryId }))),
+      trpcManyValues('user.getUserLite', managerIds.map(userId => ({ userId }))),
+    ]);
+    const managerUser = Object.fromEntries(managerIds.map((id, i) => [id, managerProfiles[i]]));
+    const reciprocal = await loadReciprocal(user._id, managerProfiles.filter(u => u?.country === IRELAND).map(u => u._id))
+      .catch(err => { console.warn('[training] reciprocal managers failed', err); return {}; });
     const incomeTax = Object.fromEntries(countryIds.map((id, i) => [id, taxes[i]?.taxes?.income]));
     steps.setStep(3, 'done', { sub: '', count: `${rosters.reduce((n, roster) => n + (roster?.length || 0), 0)} employees` });
     steps.setStep(4, 'done', { sub: profitSub, count: '' });
     return {
       userId: user._id,
+      reciprocal,
       toolLog: await toolLog,
       totalProfit,
       username: user.username,
@@ -1134,7 +1164,12 @@ const EmployeeTrainingTool = (() => {
         estimate: estimates[i] || null, region: regionById[company.region] || null,
         engineBonus: (computeProductionBonus(taxes[countryIds.indexOf(regionById[company.region]?.country)], regionById[company.region], company.itemCode)?.total || 0) / 100,
         incomeTax: incomeTax[regionById[company.region]?.country],
-        managerPct: managers[i]?.status === 'fulfilled' ? managers[i].value?.productionBonusPercent || 0 : null })),
+        // An inactive manager (offline 3 days) gives no bonus, whatever the contract says.
+        managerPct: contractOf(i) === undefined ? null : contractOf(i)?.isInactive ? 0 : contractOf(i)?.productionBonusPercent || 0,
+        manager: contractOf(i),
+        managerUser: managerUser[contractOf(i)?.user] || null,
+        managerOffer: offers[i]?.status === 'fulfilled' ? offers[i].value || null : undefined,
+        productionPerPoint: pointValues[i]?.productionPerPoint ?? null })),
     };
   }
 
@@ -2527,10 +2562,267 @@ const EmployeeTrainingTool = (() => {
   const dailyProfitFmt = hourly => `${moneyFmt(hourly == null ? null : hourly * 24)}/day`;
   const moneyFmt = v => v == null ? '—' : (v < 0 ? '−' : '') + Math.abs(v).toFixed(3);
 
+  const tile = (label, value, sub = '', id = '', tone = '') => `<div class="tr-tile"${id ? ` id="${id}"` : ''}><span>${label}</span><strong${tone ? ` class="${tone}"` : ''}>${value}</strong>${sub ? `<em>${sub}</em>` : ''}</div>`;
+  // Money a day in the game's currency, signed and coloured: green coming in, red going out.
+  const perDay = v => `${v < 0 ? '−' : '+'}₿${Math.abs(v).toFixed(3)}/day`;
+  const tone = v => v < 0 ? 'tr-neg' : 'tr-pos';
+
+  /* ── Managers ────────────────────────────────────────────── */
+  // Each company's manager priced per day (ManagerCore.companyValue) at our
+  // order-book margin; the game's margin repeats it as a check. A buddy (an
+  // Irish manager) also gets Ireland's view, where their pay stays home.
+  // A vacant company gets hiring advice and a check of its open offer; a
+  // hired manager gets keep, cut, replace or fire (never fire or replace
+  // for a buddy).
+  function managerRows() {
+    const rows = team.companies.map(entry => {
+      const { company, manager: contract, productionPerPoint } = entry;
+      const known = contract !== undefined && productionPerPoint != null;
+      const args = { productionPerPoint, contract, enabled: !company.disabledAt, levels: market?.managementLevels || undefined };
+      const price = margin => known && margin != null ? ManagerCore.companyValue({ ...args, marginPerPP: margin }) : null;
+      const buddy = !!contract && entry.managerUser?.country === IRELAND;
+      const row = price(productFor(company.itemCode)?.perPP);
+      const band = market?.managerRates;
+      const advice = contract === null && row ? ManagerCore.hireAdvice({ breakEvenRate: row.breakEvenRate, band }) : null;
+      const offer = contract === null && row && entry.managerOffer
+        ? ManagerCore.offerCheck({ offer: entry.managerOffer, breakEvenRate: row.breakEvenRate, band, levels: args.levels }) : null;
+      const action = contract && row ? ManagerCore.managerAdvice({ row, contract, band, buddy }) : null;
+      return { entry, contract, buddy, row, advice, offer, action, move: null, afterMove: null, game: price(market?.gameMargin?.[company.itemCode]), ireland: row && ManagerCore.irelandView(row, buddy) };
+    });
+    placeManagers(rows);
+    return rows;
+  }
+  // Moves and swaps between your companies (ManagerCore.placementAdvice).
+  // A move wins over a replace or fire (or a buddy's note) when it gains
+  // at least as much; a cut still applies alongside it.
+  const SUPERSEDED = ['replace', 'fire', 'note'];
+  function placeManagers(rows) {
+    const placeable = rows.filter(r => r.row && !r.contract?.isInactive);
+    const companies = placeable.map(r => ({ id: r.entry.company._id, breakEvenRate: r.row.breakEvenRate }));
+    const managers = placeable.filter(r => r.contract).map(r => ({ id: r.contract.user, points: r.row.points, rate: r.contract.rateManagement, company: r.entry.company._id }));
+    const byManager = new Map(rows.filter(r => r.contract).map(r => [r.contract.user, r]));
+    for (const group of ManagerCore.placementAdvice({ managers, companies })) {
+      if (!group.worth) continue;
+      const members = group.managers.map(id => byManager.get(id));
+      const instead = members.reduce((a, r) => a + (['replace', 'fire'].includes(r.action?.verdict) ? r.action[r.action.verdict].gain : 0), 0);
+      if (group.gain >= instead) for (const r of members) r.move = group;
+    }
+    // A company a move leaves empty gets hiring advice, as a vacancy would.
+    const filled = new Set(rows.flatMap(r => r.move ? Object.values(r.move.to) : []));
+    for (const r of rows) {
+      if (r.move && !filled.has(r.entry.company._id)) r.afterMove = ManagerCore.hireAdvice({ breakEvenRate: r.row.breakEvenRate, band: market?.managerRates });
+    }
+  }
+  // Changes that still stand: a superseded verdict gives way to the move.
+  const ownChange = r => ['cut', 'replace', 'fire'].includes(r.action?.verdict) && !(r.move && SUPERSEDED.includes(r.action.verdict));
+  const losing = r => r.row?.profitDay < 0;
+  const acting = r => losing(r) || ownChange(r) || !!r.move;
+  const rateFmt = v => `₿${v.toFixed(4)}`;
+  // A rate to type into the offer form: every decimal it has, 4 at least.
+  const rateExact = v => `₿${Math.round(v * 1e4) === v * 1e4 ? v.toFixed(4) : String(Math.round(v * 1e6) / 1e6)}`;
+
+  const HIRE_BADGE = {
+    hire: '<span class="tr-badge tr-badge-train" title="Break-even is above the top offer: post at the top and it fills first">Hire</span>',
+    slow: '<span class="tr-badge tr-badge-close" title="Only a rate under the top offer pays here, so offers above yours fill first">Hire, slow fill</span>',
+    lose: '<span class="tr-badge tr-badge-fire" title="Break-even is under the lowest rate the market allows">Would lose money</span>',
+    idle: '<span class="tr-badge tr-badge-fire" title="Your employees produce nothing right now, so a manager would add nothing">Would add nothing</span>',
+  };
+  const OFFER_BADGE = {
+    loses: '<span class="tr-badge tr-badge-fire" title="Its rate is at or above break-even: whoever takes it loses you money">Offer loses money</span>',
+    unfillable: '<span class="tr-badge tr-badge-fire" title="Its rate is under the market band: it won\'t fill">Offer won\'t fill</span>',
+    slow: '<span class="tr-badge tr-badge-close" title="Offers at a higher rate are listed first">Offer under top</span>',
+    ok: '',
+  };
+  const pts = n => `${n} point${n === 1 ? '' : 's'}`;
+  // A vacant company: the open offer if there is one, else hiring advice.
+  function vacancyNote({ advice, offer }) {
+    if (offer) {
+      const low = offer.lowMin ? `<span class="tr-badge tr-badge-close" title="A manager with fewer points can take it first, and earns you less">Low minimum</span>` : '';
+      return `<small>Offer open: ${rateExact(offer.rate)}, min ${pts(offer.minPoints)}${offer.citizenship === IRELAND ? ', Irish only' : ''}</small><span class="tr-badges">${OFFER_BADGE[offer.status]}${low}</span>`;
+    }
+    if (!advice) return '';
+    if (advice.rate != null && !advice.worth) return `<span class="tr-badges">${SMALL_BADGE}</span>`;
+    return `<span class="tr-badges">${HIRE_BADGE[advice.verdict]}</span>${advice.rate != null
+      ? `<small>Post ${rateExact(advice.rate)}, min ${pts(advice.minPoints)}</small>` : ''}`;
+  }
+  const SMALL_BADGE = `<span class="tr-badge" title="It would earn under ₿${ManagerCore.CHURN.minGain}/day once prices move ${ManagerCore.CHURN.priceU * 100}%">Not worth posting</span>`;
+
+  // A hired manager: what to change, if anything clears the floor.
+  const after = at => at ? ` from ${escapeHtml(utcDay(at))}` : '';
+  function actionNote(r) {
+    const { action, move } = r;
+    if (!action) return '';
+    const moved = move ? moveNote(move) + afterMoveNote(r) : '';
+    if (move && SUPERSEDED.includes(action.verdict)) return moved;
+    return moved + verdictNote(r);
+  }
+  // A move or swap, in the game's words, with the whole group's gain.
+  const managerName = id => escapeHtml(team.companies.find(x => x.manager?.user === id)?.managerUser?.username || 'Unknown');
+  function moveNote(group) {
+    const where = id => escapeHtml(companyName(team.companies.find(x => x.company._id === id).company));
+    const text = group.steps.map(s => s.action === 'swap' ? `Swap ${managerName(s.a)} and ${managerName(s.b)}` : `Move ${managerName(s.manager)} to ${where(s.to)}`);
+    const swap = group.steps.every(s => s.action === 'swap');
+    return `<span class="tr-badges"><span class="tr-badge tr-badge-train" title="Each keeps their own pay. A move works during the 24 h lock, and anyone moved can resign straight afterwards">${swap ? 'Swap' : 'Move'}</span></span>
+      <small>${text.join(', then ')}: ${perDay(group.gain)}</small>`;
+  }
+  // What to do with the company the move leaves empty.
+  function afterMoveNote({ afterMove: a }) {
+    if (!a) return '';
+    if (a.rate != null && a.worth) return `<small>Then post ${rateExact(a.rate)}, min ${pts(a.minPoints)} here: ${perDay(a.profitMin)}</small>`;
+    return `<small>Then leave it empty: ${a.verdict === 'lose' ? 'a hire here would lose money' : a.verdict === 'idle' ? 'a manager would add nothing' : 'a hire here would earn too little to be worth posting'}</small>`;
+  }
+  function verdictNote({ action, row }) {
+    const { verdict, cut, replace, fire } = action;
+    if (verdict === 'cut') return `<span class="tr-badges"><span class="tr-badge tr-badge-close" title="Change the rate in the game. The manager has to accept, and may quit instead">Cut pay</span></span>
+      <small>Ask ${rateExact(cut.rate)}: ${perDay(cut.gain)}. They may refuse or quit.</small>`;
+    if (verdict === 'replace') return `<span class="tr-badges"><span class="tr-badge tr-badge-replace" title="A market hire at ${pts(replace.minPoints)} earns ${perDay(replace.profit)}, against ${perDay(row.profitDay)} now. Assumes the slot sits empty about ${replace.gapHours} h while the offer fills">Replace</span></span>
+      <small>Post ${rateExact(replace.rate)}, min ${pts(replace.minPoints)}${after(replace.availableAt)}: ${perDay(replace.gain)}, ~${replace.gapHours} h empty</small>`;
+    if (verdict === 'fire') return `<span class="tr-badges"><span class="tr-badge tr-badge-fire" title="No rate the market allows makes a manager pay here">Fire</span></span><small>Saves ${perDay(fire.gain).slice(1)}${after(fire.availableAt)}</small>`;
+    if (verdict === 'note') return `<small>Costs you ${perDay(row.profitDay).slice(1)}, free for Ireland (${perDay(action.irelandGain)})</small>`;
+    return '';
+  }
+
+  function managerFlags({ contract, row, buddy }) {
+    if (!contract) return '';
+    const locked = Date.parse(contract.lockedUntil) > Date.now();
+    return [
+      row && losing({ row }) ? '<span class="tr-badge tr-badge-fire">Loses money</span>' : '',
+      buddy ? '<span class="tr-badge tr-badge-buddy" title="Irish manager: their pay stays in Ireland">🇮🇪 Buddy</span>' : '',
+      reciprocalBadge(contract, row),
+      contract.isInactive ? '<span class="tr-badge tr-badge-replace" title="Offline 3 days or more: no bonus and no pay until they log in">Inactive</span>' : '',
+      contract.unpaidHours > 0 ? `<span class="tr-badge tr-badge-close" title="Hours of pay not yet paid">${contract.unpaidHours} h unpaid</span>` : '',
+      contract.hasPendingRateReduction ? '<span class="tr-badge tr-badge-close" title="Waiting for the manager to accept or reject">Pay cut pending</span>' : '',
+      locked ? `<span class="tr-badge" title="Can't be fired before then">Locked to ${escapeHtml(utcDay(contract.lockedUntil))}</span>` : '',
+    ].join('');
+  }
+
+  // A buddy who manages your company while you manage theirs: the wages roughly cancel.
+  function reciprocalBadge(contract, row) {
+    const mine = team.reciprocal?.[contract.user];
+    if (!mine) return '';
+    const theirs = row ? row.costDay : 24 * (contract.hourlyWage || 0);
+    const yours = 24 * (mine.hourlyWage || 0);
+    return `<a class="tr-badge tr-badge-buddy" href="${GAME_BASE}/company/${encodeURIComponent(mine.companyId)}" target="_blank" rel="noopener" title="You manage their company. You pay them ₿${theirs.toFixed(3)}/day and they pay you ₿${yours.toFixed(3)}/day: net ${perDay(yours - theirs)}">⇄ You manage theirs</a>`;
+  }
+
+  // Free Irish managers for the slots you'd fill from the market: worth-posting
+  // vacancies and replacements, at the rate you'd post. A company a move
+  // fills isn't a slot.
+  function irishSlots(rows) {
+    const filled = new Set(rows.flatMap(r => r.move ? Object.values(r.move.to) : []));
+    return rows.flatMap(r => {
+      if (filled.has(r.entry.company._id)) return [];
+      if (r.afterMove?.worth && r.afterMove.rate != null) return [{ id: r.entry.company._id, breakEvenRate: r.row.breakEvenRate, rate: r.afterMove.rate, now: 0 }];
+      if (r.advice?.worth && r.advice.rate != null) return [{ id: r.entry.company._id, breakEvenRate: r.row.breakEvenRate, rate: r.advice.rate, now: 0 }];
+      if (r.action?.verdict === 'replace' && ownChange(r)) return [{ id: r.entry.company._id, breakEvenRate: r.row.breakEvenRate, rate: r.action.replace.rate, now: r.row.profitDay }];
+      return [];
+    });
+  }
+  const profileLink = user => `<a href="${GAME_BASE}/user/${encodeURIComponent(user._id)}" target="_blank" rel="noopener">${escapeHtml(user.username)}</a>`;
+  function irishPicks(rows) {
+    if (!irishPool?.roster) return null;
+    const exclude = [team.userId, ...rows.map(r => r.contract?.user).filter(Boolean)];
+    return ManagerCore.irishPicks({ roster: irishPool.roster, slots: irishSlots(rows), exclude });
+  }
+  const irishLine = (picks, r) => {
+    const p = picks?.bySlot.get(r.entry.company._id);
+    return p ? `<small>🇮🇪 Pick ${profileLink(p.user)}, ${pts(p.points)}: ${perDay(p.profit)}</small>` : '';
+  };
+  function irishSection(rows, picks) {
+    const intro = '<h3 class="tr-pane-title">Free Irish managers</h3>';
+    if (!irishPool) return `${intro}<p class="tr-muted">Irish players at level 10 or above with no manager job, matched to your vacancies and replacements. <button type="button" class="tr-link" data-irish-picks>Find free Irish managers</button> (scans every Irish citizen, so it takes a while).</p>`;
+    if (irishPool === 'loading') return `${intro}<p class="tr-muted">Scanning every Irish citizen's companies and managers…</p>`;
+    if (irishPool.error) return `${intro}<p class="tr-warn">${escapeHtml(irishPool.error)} <button type="button" class="tr-link" data-irish-picks>Try again</button>.</p>`;
+    if (!picks.players.length) return `${intro}<p class="tr-muted">No Irish player is free to manage right now.</p>`;
+    const slots = irishSlots(rows);
+    const companyOf = id => rows.find(r => r.entry.company._id === id).entry.company;
+    const body = picks.players.map(p => `<tr>
+      <td data-label="Player">${profileLink(p.user)}</td>
+      <td data-label="Points" class="num">${p.points}</td>
+      <td data-label="Best slot">${p.slot ? companyLink(companyOf(p.slot)) : '<span class="tr-muted">—</span>'}</td>
+      <td data-label="Profit / day" class="num">${p.profit != null ? `<span class="${tone(p.profit)}">${perDay(p.profit)}</span>${slots.find(s => s.id === p.slot)?.now ? `<small>${perDay(p.profit - slots.find(s => s.id === p.slot).now)} vs now</small>` : ''}` : '<span class="tr-muted">—</span>'}</td>
+    </tr>`).join('');
+    return `${intro}<p class="tr-muted">${plural(picks.players.length, 'player')} free to manage, most points first. The most points go to the slot with the widest margin, at the rate you'd post. Message them in game, then post the offer with Required citizenship Ireland. <button type="button" class="tr-link" data-irish-picks>Scan again</button>.</p>
+      <div class="tr-emps-wrap"><table class="tr-emps tr-mgrs tr-irish"><thead><tr><th scope="col">Player</th><th scope="col" class="num">Points</th><th scope="col">Best slot</th><th scope="col" class="num">Profit / day</th></tr></thead><tbody>${body}</tbody></table></div>`;
+  }
+  async function loadIrishPool() {
+    if (irishPool === 'loading' || !team) return;
+    const forTeam = team;
+    irishPool = 'loading';
+    renderManagers();
+    try {
+      const { roster } = await BuddyFinderTool.loadBuddyPool({ _id: forTeam.userId });
+      if (team === forTeam) irishPool = { roster };
+    } catch (err) {
+      if (team === forTeam) irishPool = { error: err.message || 'The Irish scan failed.' };
+    }
+    if (team === forTeam) renderManagers();
+  }
+
+  function renderManagers() {
+    if (!team) return;
+    const rows = managerRows();
+    tabCount('managers', rows.filter(acting).length);
+    if (paneHidden('managers')) { stalePanes.add('managers'); return; }
+    stalePanes.delete('managers');
+    const $body = document.getElementById('tr-managers-body');
+    if (!market) { $body.innerHTML = '<p class="tr-muted">Loading prices…</p>'; return; }
+    const hired = rows.filter(r => r.contract);
+    const sum = (key, view = 'row') => hired.reduce((a, r) => a + (r[view]?.[key] || 0), 0);
+    const unpriced = rows.filter(r => r.entry.productionPerPoint == null || r.contract === undefined);
+    const band = market.managerRates;
+    const dash = '<span class="tr-muted">—</span>';
+    const picks = irishPicks(rows);
+    const body = rows.map(r => {
+      const { entry, contract, row, game, ireland, buddy, offer } = r;
+      const vacancy = offer || r.advice;
+      const who = contract === undefined ? '<span class="tr-muted">Couldn\'t load</span>'
+        : !contract ? `<span class="tr-muted">No manager</span>${vacancyNote(r)}${irishLine(picks, r)}`
+          : `<strong>${escapeHtml(entry.managerUser?.username || 'Unknown')}</strong><small>${row?.points ?? ManagerCore.pointsFromLevel(contract.managementLevel, market.managementLevels || undefined)} points · +${contract.productionBonusPercent}%</small>${actionNote(r)}${irishLine(picks, r)}`;
+      const money = (v, cls = '') => row && contract ? `<span class="${cls}">${perDay(v)}</span>` : dash;
+      return `<tr style="--co:${companyColour(entry.company)}">
+        <td data-label="Company"><strong>${companyLink(entry.company)}</strong><small>${productIcon(entry.company.itemCode)} ${escapeHtml(productName(entry.company.itemCode || '?'))}</small></td>
+        <td data-label="Manager">${who}<span class="tr-badges">${managerFlags(r)}</span></td>
+        <td data-label="Rate / point" class="num">${contract ? `<span title="₿${contract.rateManagement} per point per hour">${rateFmt(contract.rateManagement)}</span>`
+          : vacancy?.rate != null ? `<span class="tr-muted" title="${offer ? 'The open offer\'s rate' : 'Suggested rate'}">${rateExact(vacancy.rate)}</span>` : dash}</td>
+        <td data-label="Value / day" class="num">${money(row?.valueDay)}</td>
+        <td data-label="Pay / day" class="num">${money(-row?.costDay, row?.costDay ? 'tr-neg' : '')}</td>
+        <td data-label="Profit / day" class="num">${vacancy?.profitMin != null
+          ? `<span class="${tone(vacancy.profitMin)}" title="If a manager with ${pts(vacancy.minPoints)} takes it">${perDay(vacancy.profitMin)}</span><small>at ${pts(vacancy.minPoints)}${vacancy.minPoints < 11 ? `; 11: ${perDay(vacancy.profitMax)}` : ''}</small>`
+          : money(row?.profitDay, row ? tone(row.profitDay) : '')}${row && contract && game ? `<small>Game: ${perDay(game.profitDay)}</small>` : ''}${row && buddy ? `<small>Ireland: ${perDay(ireland.profitDay)}</small>` : ''}</td>
+        <td data-label="Break-even" class="num">${row ? rateFmt(row.breakEvenRate) : dash}${game ? `<small>Game: ${rateFmt(game.breakEvenRate)}</small>` : ''}</td>
+      </tr>`;
+    }).join('');
+    const vacated = rows.filter(r => r.afterMove);
+    const vacant = rows.filter(r => r.advice), worth = [...vacant.filter(r => r.advice.worth && r.offer?.status !== 'ok'), ...vacated.filter(r => r.afterMove.worth)];
+    const changes = rows.filter(ownChange);
+    const moves = [...new Set(rows.map(r => r.move).filter(Boolean))];
+    const changeGain = changes.reduce((a, r) => a + r.action[r.action.verdict].gain, 0) + moves.reduce((a, g) => a + g.gain, 0);
+    const net = sum('profitDay'), buddies = hired.filter(r => r.buddy).length, inactive = hired.filter(r => r.contract.isInactive).length;
+    $body.innerHTML = `
+      <div class="tr-section-heading"><h3 class="tr-pane-title">Managers</h3>${help('How manager profit is calculated', `<p><strong>Value</strong> is the production a manager adds: each point gives every employee +2%, engines nothing. <strong>Pay</strong> is rate × points, every hour.</p><p><strong>Break-even</strong> is what a point earns here per hour. Below it, a manager of any level makes money. Above it, every point loses.</p>${profitPricingHelp}<p><strong>Game</strong> repeats the figure at the game's prices.</p><p>A <strong>buddy</strong> is an Irish manager. Ireland's view counts their pay as zero, as it stays in Ireland.</p><p>An <strong>inactive</strong> manager (offline 3 days) adds and costs nothing.</p><p><strong>Hiring:</strong> the first player who meets your offer gets the job. You don't pick. Offers are listed by rate, highest first. Post at the top offer's rate when that's under break-even. Otherwise post just under break-even and expect a slow fill. Ask for at least ${ManagerCore.SUGGESTED_MIN_POINTS} points: a third of recent hires had 1 point, and a manager earns you money per point. Set Required citizenship to Ireland to keep the pay in Ireland.</p><p><strong>Cut pay</strong> asks a manager for the highest rate that still pays: just under break-even, and no more than the top offer. They have to accept, and they may quit instead.</p><p><strong>Replace</strong> compares a market hire at the suggested rate and minimum with what the manager earns now. It can start once the 24 h lock ends. It assumes the slot sits empty about ${ManagerCore.GAP_HOURS.hire} h for an offer at the top and ${ManagerCore.GAP_HOURS.slow} h under it (the median age of open offers), and the gain must pay that back within ${ManagerCore.PAYBACK_DAYS} days.</p><p><strong>Fire</strong> only when a manager loses money and no allowed rate would pay. A buddy is never fired or replaced: a move, a cut, or a note of what they cost you.</p><p><strong>Move</strong> and <strong>Swap</strong> place your managers where their points are worth most: the most points on the highest break-even. Each keeps their own pay. The game allows a move during the 24 h lock, but anyone moved can resign straight afterwards. Each manager moved must gain ₿${ManagerCore.CHURN.minGain}/day, and a move beats a replace or fire only when it gains more.</p><p><strong>⇄ You manage theirs:</strong> a buddy manages your company while you manage theirs, so the wages roughly cancel.</p><p><strong>Free Irish managers</strong> lists Irish players at level 10 or above with no manager job, matched to your vacancies and replacements at the rate you'd post. The first player who meets an offer gets it, so message them first.</p><p>A change, or a vacancy, must gain at least ₿${ManagerCore.CHURN.minGain}/day after allowing for prices moving ${ManagerCore.CHURN.priceU * 100}%.</p>`)}</div>
+      ${unpriced.length ? `<p class="tr-warn">Couldn't load the manager or the value of a point for ${unpriced.map(r => escapeHtml(companyName(r.entry.company))).join(', ')}. <button type="button" class="tr-link" data-reload>Retry</button>.</p>` : ''}
+      <div class="tr-tiles">
+        ${tile('Manager pay', perDay(-sum('costDay')), `${plural(hired.length, 'manager')}${inactive ? `, ${inactive} inactive` : ''}`, '', 'tr-neg')}
+        ${tile('Value added', perDay(sum('valueDay')), 'from managers', '', 'tr-pos')}
+        ${tile('Net', perDay(net), `Game: ${perDay(sum('profitDay', 'game'))}`, '', tone(net))}
+        ${tile('Net for Ireland', perDay(sum('profitDay', 'ireland')), buddies ? `${buddies === 1 ? '1 buddy\'s' : `${buddies} buddies'`} pay stays home` : 'no buddies', '', tone(sum('profitDay', 'ireland')))}
+        ${tile('Changes', `${changes.length + moves.length} suggested`, changes.length + moves.length ? perDay(changeGain) : 'all managers worth keeping')}
+        ${vacant.length + vacated.length ? tile('Vacancies', `${worth.length} to post`, `of ${plural(vacant.length, 'company', 'companies')} without a manager${vacated.length ? `, ${vacated.length} after moves` : ''}`) : ''}
+        ${band ? tile('Market rate', `${rateFmt(band.min)}–${rateFmt(band.max).slice(1)}`, 'per point per hour') : ''}
+      </div>
+      <div class="tr-emps-wrap"><table class="tr-emps tr-mgrs">
+        <thead><tr><th scope="col">Company</th><th scope="col">Manager</th><th scope="col" class="num">Rate / point</th><th scope="col" class="num">Value / day</th>
+          <th scope="col" class="num">Pay / day</th><th scope="col" class="num">Profit / day</th><th scope="col" class="num">Break-even</th></tr></thead>
+        <tbody>${body}</tbody></table></div>
+      ${irishSection(rows, picks)}`;
+  }
+
   // Overview: the team's totals, Next actions and the roster; then the
   // Employees tab.
   function renderTeam() {
     if (!team) return;
+    renderManagers();
     const all = team.companies.flatMap(x => x.employees);
     let prod = 0, wage = 0, mgr = 0, boxes = 0, profit = 0, priced = true;
     for (const { company, estimate } of team.companies) {
@@ -2540,10 +2832,6 @@ const EmployeeTrainingTool = (() => {
       if (p) profit += (estimate.production || 0) * p.perPP - (estimate.wageCost || 0) - (estimate.managerCost || 0);
       else if (estimate.production) priced = false;
     }
-    const tile = (label, value, sub = '', id = '', tone = '') => `<div class="tr-tile"${id ? ` id="${id}"` : ''}><span>${label}</span><strong${tone ? ` class="${tone}"` : ''}>${value}</strong>${sub ? `<em>${sub}</em>` : ''}</div>`;
-    // Money a day in the game's currency, signed and coloured: green coming in, red going out.
-    const perDay = v => `${v < 0 ? '−' : '+'}₿${Math.abs(v).toFixed(3)}/day`;
-    const tone = v => v < 0 ? 'tr-neg' : 'tr-pos';
     // The planner's steps, as in Next actions; blank while it searches.
     tabCount('assignments', plan?.gain > 1e-7 ? plan.changes : 0);
     const energy = energyNow(), bar = team.energyBar;
@@ -2605,6 +2893,7 @@ const EmployeeTrainingTool = (() => {
       steps.setStep(5, 'active', { sub: 'Finishing prices and preparing recommendations' });
       await marketLoad;
       team = loaded;
+      irishPool = null;
       nextActionsExpanded = false;
       for (const t of taken.values()) clearTimeout(t.timer);
       taken.clear();
@@ -2831,7 +3120,7 @@ const EmployeeTrainingTool = (() => {
     }
     for (const p of $shell.querySelectorAll('[data-pane]')) p.hidden = p.dataset.pane !== view.tab;
     rankPricing();
-    if (stalePanes.has(view.tab)) ({ overview: renderTeam, employees: renderEmployees, keep: renderFire })[view.tab]();
+    if (stalePanes.has(view.tab)) ({ overview: renderTeam, employees: renderEmployees, keep: renderFire, managers: renderManagers })[view.tab]();
     renderPicker();
     writeState();
     // Opened from further down the page: bring the tabs back into view.
@@ -2983,6 +3272,7 @@ const EmployeeTrainingTool = (() => {
       else if (b.dataset.careerCancel !== undefined) { stopCareer(careerJob); renderResult(); }
       else if (b.dataset.took !== undefined) takeSlot(+b.dataset.took);
       else if (b.dataset.reload !== undefined && team) runLoad(team.username);
+      else if (b.dataset.irishPicks !== undefined) loadIrishPool();
       else if (b.dataset.confirm !== undefined) confirmTaken(input.pick);
       else if (b.classList.contains('tr-use') && b.dataset.id) selectEmployee(b.dataset.id, 'train');
       else if (b.dataset.step) {
