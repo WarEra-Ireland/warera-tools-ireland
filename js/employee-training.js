@@ -1585,7 +1585,6 @@ const EmployeeTrainingTool = (() => {
         what: `${where(entry)} is disabled: ${plural(idle.length, 'employee')} idle`,
         sub: `${escapeHtml(idle.map(emp => emp.name).join(', '))} won't work, age or train there · the planner can move them to a working company` });
     }
-    if (plan?.coverage?.length) groups.check.push({ icon: 'ⓘ', go: { tab: 'assignments' }, what: 'Review valuation assumptions', sub: `Earnings assume employees stay. ${plan.excluded?.length || 0} companies excluded; toolbox, training and recruiting assumptions are in Assignments.` });
     for (const { emp, entry } of all) {
       const m = mismatchOf(emp, entry.company);
       if (!m || moved.has(emp._id)) continue;

@@ -39,11 +39,7 @@ const EmployeeAssignments = (() => {
     }
     // Spare tools were typed in before they came from the transaction log.
     if (Array.isArray(raw.inventory) && raw.inventory.length) notices.push('Spare tools now come from your toolbox history, so the tools entered by hand were removed.');
-    for (const key of ['toolboxValue', 'dailyTrainings']) {
-      if (raw[key] != null && raw[key] !== '' && Number.isFinite(Number(raw[key])) && Number(raw[key]) >= 0 && Number(raw[key]) <= 100000) settings[key] = Number(raw[key]);
-    }
     if (raw.minMax === true) settings.minMax = true;
-    if (Array.isArray(raw.recruiting)) settings.recruiting = [...new Set(raw.recruiting.filter(id => typeof id === 'string' && ITEM_ID.test(id)))];
     const object = v => v && typeof v === 'object' && !Array.isArray(v);
     if (object(raw.equippedHours)) {
       for (const [id, v] of Object.entries(raw.equippedHours)) {
@@ -470,13 +466,6 @@ const EmployeeAssignments = (() => {
             <span class="tr-plan-actions"><button type="button" class="btn-primary" data-plan-run>Compare again</button><button type="button" data-plan-cancel hidden>Cancel</button></span>
           </div>
         </div>
-        <details class="tr-more"><summary>Valuation assumptions</summary>
-          <label>Value per toolbox, in money <input type="number" min="0" max="100000" step="any" data-plan-value="toolboxValue" value="${settings.toolboxValue}"></label>
-          <label>Trainings budget per day <input type="number" min="0" max="100000" step="any" data-plan-value="dailyTrainings" value="${settings.dailyTrainings ?? Math.floor((team.energy || 0) / 10)}"></label>
-          <p class="tr-muted">Zero toolbox value excludes loot income. The training budget defaults to one full energy bar a day, shared equally among employees with potential. Training benefits use a bounded numeric-card estimate; they do not simulate future trait choices.</p>
-          <p>Value Recruiter for one planned candidate set in:</p>${team.companies.map(({ company: c }) => `<label><input type="checkbox" data-plan-recruit="${esc(c._id)}" ${settings.recruiting.includes(c._id) ? 'checked' : ''}>${esc(companyName(c._id) || c.name || c.itemCode)}</label>`).join('')}
-          <p class="tr-muted">Recruiter estimates compare extra candidates in one set at the current product margin. They exclude future rerolls and coworker effects of the eventual hire.</p>
-        </details>
         <div data-plan-status role="status" aria-live="polite"></div>
         <div data-plan-hero></div>
         <div class="tr-asg-grid">
@@ -708,7 +697,7 @@ const EmployeeAssignments = (() => {
       const drawn = days > 1 ? chart(baseline, proposed, days, events) : null;
       chartData = drawn?.data || null;
       const head = cancelled ? '<p class="tr-warn">Search cancelled. This is the best arrangement found before cancelling: every step is valid, but a finished search may find more.</p>' : '';
-      out.innerHTML = `${head}<details class="tr-more"><summary>Valuation coverage and assumptions</summary><ul>${(result.coverage || []).map(note => `<li>${esc(note)}</li>`).join('')}</ul></details>${drawn ? `<section class="tr-asg-box">${drawn.html}</section>` : ''}
+      out.innerHTML = `${head}${drawn ? `<section class="tr-asg-box">${drawn.html}</section>` : ''}
         <section class="tr-asg-box" aria-labelledby="plan-steps-heading"><h4 id="plan-steps-heading">${items.length ? 'Recommended moves and tool assignments <span class="tr-muted">· then reload employees</span>' : 'No changes'}</h4>
           ${items.length ? `<ol class="tr-asg-steps">${items.map(stepHtml).join('')}</ol>` : `<p class="tr-muted">${dropped ? `No change clears the minimum gain ${over(days)}` : `No profitable change found ${over(days)}`}. Tools can remain unused.</p>`}
           ${dropped ? `<p class="tr-muted">${esc(left[0].toUpperCase() + left.slice(1))}: a change must gain at least ${signed(bar.floor)}, or ${signed(bar.recentFactor * bar.floor)} for someone moved in the last ${bar.recentHours / 24} days, after a margin for price changes.</p>` : ''}
@@ -811,17 +800,6 @@ const EmployeeAssignments = (() => {
       $('[data-plan-run]').focus();
     }
 
-    root.addEventListener('change', ev => {
-      const el = ev.target;
-      if (el.dataset.planValue) {
-        if (!el.checkValidity() || el.value === '') { el.reportValidity(); return; }
-        settings[el.dataset.planValue] = Number(el.value);
-      } else if (el.dataset.planRecruit) {
-        const id = el.dataset.planRecruit;
-        settings.recruiting = el.checked ? [...new Set([...settings.recruiting, id])] : settings.recruiting.filter(x => x !== id);
-      } else return;
-      save(); stale();
-    });
     root.addEventListener('click', ev => {
       const b = ev.target.closest('button'); if (!b || b.disabled) return;
       if (b.dataset.spare) openSpare(b.dataset.spare);
