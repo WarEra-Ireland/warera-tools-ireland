@@ -402,12 +402,12 @@ const EmployeeAssignments = (() => {
     }
 
     /* Tool cards. `holders` maps a tool ID to the employee who gets it. */
-    function shelf(team, { holders = null, unusedWhy = () => '' } = {}) {
+    function shelf(team, { holders = null, unusedWhy = () => ({ text: '' }) } = {}) {
       const invalid = new Set(fieldErrors(settings, equippedIds(team)).map(([id]) => id.replace(/^plan-equipped-/, '')));
       const life = hours => `<span class="tr-asg-life" title="About ${esc(num(Number(hours) || 0, 0))} of ${TOOL_HOURS} working hours left"><span style="width:${Math.max(0, Math.min(100, (Number(hours) || 0) / TOOL_HOURS * 100))}%"></span></span>`;
       const spare = t => {
         const got = holders?.get(`spare:${t.id}`);
-        const who = !holders ? '' : got ? `<small class="tr-asg-who">→ <b>${esc(got)}</b></small>` : `<small class="tr-asg-who is-warn">${esc(unusedWhy(t))}</small>`;
+        const who = !holders ? '' : got ? `<small class="tr-asg-who">→ <b>${esc(got)}</b></small>` : (why => `<small class="tr-asg-who is-warn"${why.title ? ` title="${esc(why.title)}"` : ''}>${esc(why.text)}</small>`)(unusedWhy(t));
         return `<button type="button" class="tr-asg-tool" data-spare="${esc(t.id)}" aria-label="${esc(cap(t.type))} +${esc(num(t.bonus, 0))}%, spare: details">
           <span class="tr-asg-tool-top">${icon(t.type)}<span><b>+${esc(num(t.bonus, 0))}%</b><small>${esc(cap(t.type))} · spare</small></span></span>
           ${life(t.hours)}<small>${esc(toPct(t.hours))}% left${t.seen ? '' : ' · unused'} · <span class="tr-asg-products">${products(t.type)}</span></small>${who}</button>`;
@@ -722,7 +722,7 @@ const EmployeeAssignments = (() => {
       // Tool cards learn who gets each tool, or why it stays unused.
       const holders = new Map(result.arrangement.filter(a => a.tool).map(a => [a.tool, emp(a.employee).name]));
       const fits = type => planned.some(c => EP.TOOL_TYPES[type]?.includes(c.product));
-      const unusedWhy = r => fits(r.type) ? 'No gain found' : `None of your planned companies makes ${EP.TOOL_TYPES[r.type].map(productName).join(', ')}`;
+      const unusedWhy = r => fits(r.type) ? { text: 'No gain found' } : { text: 'No planned company uses it', title: `None of your planned companies makes ${EP.TOOL_TYPES[r.type].map(productName).join(', ')}` };
       $('[data-plan-shelf]').innerHTML = shelf(getTeam(), { holders, unusedWhy });
     }
 
