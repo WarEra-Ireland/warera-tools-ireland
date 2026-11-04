@@ -213,7 +213,7 @@ const EmployeePlanner = (() => {
     // hour, which projectCompany adds as a boundary. Age, for Early Bloomer,
     // Late Bloomer and Worn Out, steps at the daily boundaries.
     const tenure = (moved ? 0 : e.tenure) + hour / 24 + EPS;
-    const fx = { engine: 0, production: 0, responsibility: 0, luck: 0, bonus: 0, happiness: [], teamHappiness: [], teamProduction: 0, teamResponsibility: 0 };
+    const fx = { engine: 0, production: 0, responsibility: 0, luck: 0, bonus: 0, happiness: [], teamHappiness: [], teamProduction: 0 };
     if (!hourly || !e.traits.length) return fx;
     // Pay as reported: a move's change to own-trait Production isn't in it.
     const own = wageAt(e, hour) + 1e-9;
@@ -229,7 +229,7 @@ const EmployeePlanner = (() => {
         prod: n => add('production', n), pct: n => add('bonus', n), happy: n => { sc.fx.happiness.push(n); return 0; },
         resp: n => add('responsibility', n), luck: n => add('luck', n), boxes: () => 0, wage: () => 0,
         teamHappy: n => { sc.fx.teamHappiness.push(n); return 0; },
-        teamProd: n => add('teamProduction', n), teamResp: n => add('teamResponsibility', n), quickStudy: 0, arg: undefined,
+        teamProd: n => add('teamProduction', n), quickStudy: 0, arg: undefined,
       };
       x.stat = (stat, n) => stat === 'production' ? x.prod(n) : stat === 'responsibility' ? x.resp(n) : x.luck(n);
     }
@@ -288,11 +288,10 @@ const EmployeePlanner = (() => {
       const f = flagsOf(e);
       // Sums run in the order the effects were once collected in: own
       // effects, the first coworker Comic, then coworkers in roster order.
-      let comic = null, teamResponsibility = fx.responsibility, coworkerLuck = 0, trainers = 0;
+      let comic = null, coworkerLuck = 0, trainers = 0;
       for (const other of rows) {
         if (other.e.id === e.id) continue;
         if (comic === null && other.fx.comicHappiness) comic = other.fx.comicHappiness;
-        teamResponsibility += other.fx.teamResponsibility;
         const g = flagsOf(other.e);
         coworkerLuck = coworkerLuck + (g.luckyCharm ? 3 : 0) - (g.jinx ? 2 : 0);
         if (g.trainer) trainers++;
@@ -312,7 +311,7 @@ const EmployeePlanner = (() => {
       let loot = toolboxes * (s.toolboxValue || 0);
       const trainingsPerDay = Number.isFinite(o.trainingsPerDay) ? o.trainingsPerDay : 1 + 2 * trainers;
       let trainingRate = Math.min(s.trainingQuota || 0, trainingsPerDay);
-      const responsibility = Math.max(1, e.responsibility + teamResponsibility);
+      const responsibility = Math.max(1, e.responsibility + fx.responsibility);
       // Responsibility adds 3 happiness a point; Loyal halves every loss.
       const lossFactor = f.loyal ? 0.5 : 1;
       let felt = 0;

@@ -214,7 +214,7 @@ const EmployeeCore = (() => {
       pct: p => output * p / 100 * margin,
       happy: h => output * gain(h, e.happiness) / 100 * margin,
       resp: d => output * gain(CFG.respHappiness * d, e.happiness) / 100 * margin,
-      engine: none, luck: none, boxes: none, wage: none, raise: none, teamHappy: none, teamProd: none, teamResp: none, quickStudy: 0 };
+      engine: none, luck: none, boxes: none, wage: none, raise: none, teamHappy: none, teamProd: none, quickStudy: 0 };
     x.stat = (stat, k) => stat === 'production' ? x.prod(k) : stat === 'responsibility' ? x.resp(k) : 0;
     return def.hourly(x);
   }
@@ -520,7 +520,7 @@ const EmployeeCore = (() => {
   const TRAITS = [
     ['handy', 'Handy', 'positive', 5, '+40% output while holding a tool', x => x.s.hasTool ? x.pct(40) : 0],
     ['improviser', 'Improviser', 'positive', 5, '+25% output without a tool', x => x.s.hasTool ? 0 : x.pct(25)],
-    ['nationalist', 'Nationalist', 'positive', 10, '+6 and +5 happiness with a coworker of the same nationality', x => (x.s.sameNationalityCoworkers ?? (x.s.coworkers && !x.s.otherNationalities)) ? x.resp(2) + x.happy(5) : 0],
+    ['nationalist', 'Nationalist', 'positive', 10, '+10 happiness with a coworker of the same nationality', x => (x.s.sameNationalityCoworkers ?? (x.s.coworkers && !x.s.otherNationalities)) ? x.happy(10) : 0],
     ['xenophobe', 'Xenophobe', 'negative', 10, '−2 Production and −5 happiness with a coworker of another nationality', x => x.s.otherNationalities ? x.prod(-2) + x.happy(-5) : 0],
     ['cosmopolitan', 'Cosmopolitan', 'positive', 10, '+2 Prod per other nationality, cap +4', x => x.prod(per(x.s.otherNationalities, 2, 4))],
     ['talksToMachines', 'Talks to Machines', 'positive', 5, 'Doubles Automated Engine output while the holder is the only employee', x => x.s.coworkers === 0 ? x.engine() : 0],
@@ -528,7 +528,7 @@ const EmployeeCore = (() => {
     ['sociable', 'Sociable', 'mixed', 10, '+25% output per coworker, capped at +50%; −10 happiness alone', x => x.s.coworkers ? x.pct(per(x.s.coworkers, 25, 50)) : x.happy(-10)],
     ['comic', 'Comic', 'mixed', 10, '−1 Prod, coworkers +10 happiness; multiple Comics do not stack', x => x.s.coworkers ? x.prod(-1) + x.teamHappy(10) : 0],
     ['mentor', 'Mentor', 'mixed', 2, 'a coworker with lower Production before peer effects gains +2 Production; self −1 Production', x => x.s.weakerCoworker ? x.teamProd(2) + x.prod(-1) : 0],
-    ['foreman', 'Foreman', 'positive', 5, 'coworkers +9 happiness', x => x.s.coworkers ? x.teamResp(3) : 0],
+    ['foreman', 'Foreman', 'positive', 5, 'coworkers +9 happiness', x => x.s.coworkers ? x.teamHappy(9) : 0],
     ['rival', 'Rival', 'mixed', 5, '+3 Production with a stronger coworker before peer effects; −1 otherwise; no effect alone', x => x.s.coworkers ? x.prod(x.s.strongerCoworker ? 3 : -1) : 0],
     ['primaDonna', 'Prima Donna', 'mixed', 5, '+20% output if highest paid; otherwise −10 happiness; no effect alone', x => x.s.coworkers ? (x.s.betterPaid ? x.happy(-10) : x.pct(20)) : 0],
     ['bully', 'Bully', 'negative', 5, '+2 Prod, coworkers −10 happiness', x => x.s.coworkers ? x.prod(2) + x.teamHappy(-10) : 0],
@@ -559,7 +559,7 @@ const EmployeeCore = (() => {
     ['homesick', 'Homesick', 'negative', 10, '−2 Production and −10 happiness outside their home country', x => x.s.place === 'abroad' && !x.s.homeCore ? x.prod(-2) + x.happy(-10) : 0],
     ['expat', 'Expat', 'positive', 10, '+2 Production outside their home country', x => x.s.place === 'abroad' ? x.prod(2) : 0],
     ['taxShy', 'Tax Shy', 'negative', 10, '−1% output per income tax percentage point, capped at −30%', x => x.pct(-Math.min(30, x.s.incomeTax))],
-    ['statist', 'Statist', 'positive', 10, '+6 happiness when income tax is at least 20%', x => x.s.incomeTax >= 20 ? x.resp(2) : 0],
+    ['statist', 'Statist', 'positive', 10, '+6 happiness when income tax is at least 20%', x => x.s.incomeTax >= 20 ? x.happy(6) : 0],
     // Held, the wage already includes it; gained, it applies on top.
     ['greedy', 'Greedy', 'negative', 10, 'wage +20%', x => x.wage(x.held ? 1 - 1 / 1.2 : 0.2)],
     ['modest', 'Modest', 'positive', 10, 'wage −15%', x => x.wage(x.held ? 1 - 1 / 0.85 : -0.15)],
@@ -704,7 +704,6 @@ const EmployeeCore = (() => {
       teamHappy: h => happyRecipients * coworkerBase * gain(h, s.coworkerHappiness) / 100,
       teamProd: d => (s.peers ? s.weakerCount : Number(s.weakerCoworker))
         * d / CFG.outputDivisor * (1 + B) * sr,
-      teamResp: d => s.coworkers * coworkerBase * gain(CFG.respHappiness * d, s.coworkerHappiness) / 100,
       quickStudy: pph(e) * (careerBonus(e, 2) - B) * sr,
     };
     base.stat = (stat, k) => stat === 'production' ? base.prod(k) : stat === 'responsibility' ? base.resp(k) : base.luck(k);
@@ -841,7 +840,7 @@ const EmployeeCore = (() => {
     const x = { e, s, age: e.age + day, tenure: s.tenureDays + day + 1e-9, held: true,
       male: s.coworkers - s.femaleCoworkers, prod, pct: noop, happy: noop, resp: noop,
       luck: noop, boxes: noop, wage: noop, raise: noop, teamHappy: noop, teamProd: noop,
-      engine: noop, teamResp: noop, quickStudy: 0, loss: 0 };
+      engine: noop, quickStudy: 0, loss: 0 };
     x.stat = (stat, n) => stat === 'production' ? prod(n) : 0;
     for (const t of e.traits || []) {
       if (['rival', 'mentor'].includes(t.code)) continue;
