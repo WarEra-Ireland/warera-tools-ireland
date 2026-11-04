@@ -445,7 +445,9 @@ const ProductPickerTool = (() => {
     if (!best) return null;
     const actions = Math.floor(energy / cost);
     const pp = actions * production;
-    return { energy, cost, actions, pp, profit: pp * best.perPP, company: best.company };
+    // Every company making the best product earns the same per self-work.
+    const companies = m.companies.map(c => c.company).filter(c => c.itemCode === best.company.itemCode);
+    return { energy, cost, actions, pp, profit: pp * best.perPP, company: best.company, companies };
   }
 
   function renderIncome() {

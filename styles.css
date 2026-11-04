@@ -2930,6 +2930,8 @@ html[data-theme="light"] {
 .tr-act-profit + small { margin-top: 12px; }
 .tr-act-value { text-align: right; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .tr-act-value small { font-weight: 400; font-size: 12px; }
+.tr-act-static { cursor: default; }
+.tr-acts .tr-act-static:hover { background: none; }
 .tr-act.done { color: var(--muted); }
 .tr-act.done .tr-act-rank { color: var(--accent); }
 .tr-act-cut { padding: 3px 0; border-top: 1px dashed var(--border); color: var(--muted); font-size: 12px; text-align: center; }

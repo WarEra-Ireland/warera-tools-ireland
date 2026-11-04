@@ -1581,9 +1581,25 @@ const EmployeeTrainingTool = (() => {
     // Below this line, working yourself earns more than the action.
     const self = selfWorkValue();
     let selfShown = !self;
-    const selfLine = () => { selfShown = true; groups.energy.push({ cut: `Below here, self-work earns more: ≈ ${signedPP(self.value)} PP per 10 energy (${escapeHtml(self.from)})` }); };
+    // Self-work is a step of its own, after the actions that earn more than
+    // it: how many times when the bar would fill before training renews,
+    // else in place of the actions below it (below), if any.
+    const work = overflowWork(energy, ready, self);
+    const selfStep = below => {
+      selfShown = true;
+      if (!work || !(work.times > 0 || below)) return;
+      const [first, ...others] = work.companies;
+      const where = `<span class="tr-act-company">${productIcon(first.itemCode)} ${others.length ? `Or ${escapeHtml(others.map(companyName).join(', '))}: same product` : escapeHtml(productName(first.itemCode))}</span>`;
+      groups.energy.push(work.times > 0 ? { icon: '🛠️', go: null,
+        what: `Self-work ${plural(work.times, 'time')} in ${escapeHtml(companyName(first))}`,
+        sub: `${where}<span class="tr-act-notice">${work.after ? 'After the actions above, spend' : 'Spend'} ${work.energy} energy so the bar isn't full before training renews at 00:00 UTC, in ${escapeHtml(formatDuration(untilReset()))}${below ? '. Self-work also earns more than the actions below' : ''}</span>`,
+        value: `≈ ${signedPP(self.value * work.energy / 10)} PP`, unit: 'best-margin product' } : { icon: '🛠️', go: null,
+        what: `Self-work in ${escapeHtml(companyName(first))} instead of the actions below`,
+        sub: `${where}<span class="tr-act-notice">Each action below earns less than your own work with the same energy</span>`,
+        value: `≈ ${signedPP(self.value)} PP`, unit: 'per 10 energy' });
+    };
     shown.forEach((r, i) => {
-      if (!selfShown && r.value < self.value) selfLine();
+      if (!selfShown && r.value < self.value) selfStep(true);
       if (r.kind === 'train') {
         const profit = trainingProfit(r.value, r.emp);
         groups.energy.push({ icon: '🎓', go: { tab: 'train', emp: r.emp._id },
@@ -1606,7 +1622,7 @@ const EmployeeTrainingTool = (() => {
         value: `≈ ${signedPP(r.value)} PP`, unit: 'avg pick; current-company hire estimate' });
       if (actions != null && i === actions - 1 && i < shown.length - 1) groups.energy.push({ cut: `Your ${energy} energy covers the ${plural(actions, 'action')} above` });
     });
-    if (!selfShown && shown.length === ready.length) selfLine();
+    if (!selfShown) selfStep(false);
     if (ready.length > preview.length) groups.energy.push({ cut: nextActionsExpanded ? 'Show fewer actions' : `Show ${ready.length - preview.length} more actions`, expand: true });
 
     if (plan?.running) groups.check.push({ icon: '🧭', go: { tab: 'assignments' }, what: 'Comparing assignments…', sub: 'The planner is searching in the background' });
@@ -1641,14 +1657,15 @@ const EmployeeTrainingTool = (() => {
       : ` · ${energy} energy${minutesTo10(energy) != null ? `, 10 more in ${escapeHtml(formatDuration(minutesTo10(energy) * 6e4))}` : ''}`;
     const heads = { now: 'Do now', energy: `Spend energy${energyHead}`, check: 'Check' };
     let n = 0;
+    // An action done in the game, with no tab here (self-work), isn't a button.
     const item = (a, done) => a.cut ? `<li class="tr-act-cut">${a.expand ? `<button type="button" class="tr-act-more" data-next-actions-toggle aria-expanded="${nextActionsExpanded}" aria-controls="tr-next-actions">${escapeHtml(a.cut)}</button>` : escapeHtml(a.cut)}</li>`
-      : `<li><button type="button" class="tr-act${a.go.tab === 'train' ? ' tr-act-training' : a.go.tab === 'keep' ? ' tr-act-replacement' : ''}${done ? ' done' : ''}" data-go-tab="${a.go.tab}"${a.go.emp ? ` data-go-emp="${a.go.emp}"` : ''}${a.go.company ? ` data-go-company="${a.go.company}"` : ''}>
+      : `<li>${a.go ? `<button type="button" class="tr-act${a.go.tab === 'train' ? ' tr-act-training' : a.go.tab === 'keep' ? ' tr-act-replacement' : ''}${done ? ' done' : ''}" data-go-tab="${a.go.tab}"${a.go.emp ? ` data-go-emp="${a.go.emp}"` : ''}${a.go.company ? ` data-go-company="${a.go.company}"` : ''}>` : '<div class="tr-act tr-act-static">'}
           <span class="tr-act-rank">${done ? '✓' : ++n}</span><span class="tr-act-icon" aria-hidden="true">${a.icon || ''}</span>
           <span class="tr-act-main">${a.what}<small>${a.sub}</small></span>
-          ${a.value ? `<span class="tr-act-value">${a.value}<small>${a.unit}</small></span>` : ''}</button></li>`;
+          ${a.value ? `<span class="tr-act-value">${a.value}<small>${a.unit}</small></span>` : ''}${a.go ? '</button>' : '</div>'}</li>`;
     const body = Object.entries(groups).filter(([k, list]) => k !== 'done' && list.length).map(([k, list]) =>
       `<li class="tr-act-group">${heads[k]}</li>${list.map(a => item(a, false)).join('')}`).join('');
-    return `<div class="tr-section-heading"><h3 class="tr-pane-title" id="tr-acts-h">Next actions</h3>${help('How the list is ordered', `<p><strong>Do now</strong> lists training hands waiting for a choice, and moves the planner makes for employees marked Replace: moving is free and changes their verdict, so it comes before replacing them.</p><p><strong>Spend energy</strong> ranks actions by the production points each 10 energy earns before retirement. Training uses the average value of the best card in the next hand. Hiring uses the best candidate in a fresh set. Replacing uses that candidate's value, minus the value of keeping the employee and the cost of firing.</p><p>Replacement appears when a fresh hire wins at least two times in three, or the employee costs more than they earn. If training and replacing the same employee both qualify, only the better action appears.</p><p>When your own work earns more per 10 energy than an action, a line marks where self-work takes over.</p><p><strong>Check</strong> lists assignment suggestions and employees making the wrong product type.</p>`)}</div>
+    return `<div class="tr-section-heading"><h3 class="tr-pane-title" id="tr-acts-h">Next actions</h3>${help('How the list is ordered', `<p><strong>Do now</strong> lists training hands waiting for a choice, and moves the planner makes for employees marked Replace: moving is free and changes their verdict, so it comes before replacing them.</p><p><strong>Spend energy</strong> ranks actions by the production points each 10 energy earns before retirement. Training uses the average value of the best card in the next hand. Hiring uses the best candidate in a fresh set. Replacing uses that candidate's value, minus the value of keeping the employee and the cost of firing.</p><p>Replacement appears when a fresh hire wins at least two times in three, or the employee costs more than they earn. If training and replacing the same employee both qualify, only the better action appears.</p><p>Self-work is a step of its own, placed after the actions that earn more per 10 energy than your own work, and naming the companies making your best-margin product. When the bar would fill before training renews at 00:00 UTC, it says how many times to work to keep it from overflowing: it counts the actions above it first, and leaves a full bar at the reset for the next day's trainings. Otherwise it appears only when actions below it earn less than self-work.</p><p><strong>Check</strong> lists assignment suggestions and employees making the wrong product type.</p>`)}</div>
       <ol class="tr-acts" id="tr-next-actions">${body || '<li class="tr-act-group">Nothing to do right now</li>'}</ol>
       ${groups.done.length ? `<details class="tr-more tr-done"${$team.querySelector('.tr-done')?.open ? ' open' : ''}><summary>Trained today (${groups.done.length}) <em>Ready at 00:00 UTC, in ${escapeHtml(formatDuration(untilReset()))}</em></summary><ol class="tr-acts">${groups.done.map(a => item(a, true)).join('')}</ol></details>` : ''}
       `;
@@ -1887,7 +1904,22 @@ const EmployeeTrainingTool = (() => {
   function selfWorkValue() {
     const s = team?.totalProfit?.projectedSelfWork;
     if (!(s?.actions > 0) || !(s.cost > 0) || !(market?.ppValue > 0)) return null;
-    return { value: s.profit / s.actions * 10 / s.cost / market.ppValue, from: `self-work in ${s.company.name || productName(s.company.itemCode)}` };
+    return { value: s.profit / s.actions * 10 / s.cost / market.ppValue, from: `self-work in ${companyName(team.companies.find(x => x.company._id === s.company._id)?.company || s.company)}` };
+  }
+
+  // Where to self-work (every company making the best-margin product), and
+  // how many times (times, 0 when the bar won't overflow) to keep it from filling before training renews at
+  // 00:00 UTC: the energy left after the actions that beat self-work (10
+  // each), plus what regenerates until the reset, less a full bar. A full
+  // bar at the reset funds the next day's trainings; anything over it is lost.
+  function overflowWork(energy, ready, self) {
+    const s = team?.totalProfit?.projectedSelfWork, bar = team?.energyBar;
+    if (!self || energy == null || !(bar?.max > 0) || !(s?.cost > 0)) return null;
+    const left = Math.max(0, energy - 10 * ready.filter(r => r.value >= self.value).length);
+    const regen = bar.regen > 0 ? bar.regen * untilReset() / 36e5 : 0;
+    const times = Math.max(0, Math.min(Math.floor(left / s.cost), Math.ceil((left + regen - bar.max) / s.cost)));
+    const own = c => team.companies.find(x => x.company._id === c._id)?.company || c;
+    return { times, energy: times * s.cost, after: left < energy, companies: (s.companies?.length ? s.companies : [s.company]).map(own) };
   }
 
   const recruitEntry = () => team?.companies.find(x => x.company._id === recruit.company)
