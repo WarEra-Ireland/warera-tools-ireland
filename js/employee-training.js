@@ -1500,6 +1500,17 @@ const EmployeeTrainingTool = (() => {
     return { moved, ready };
   }
 
+  // Who gets the Train tag: the trainings among the actions the energy on
+  // hand pays for, as Spend energy ranks them, above where self-work earns
+  // more. Without an energy reading, a day's worth of actions.
+  function trainTagged() {
+    const energy = energyNow();
+    const actions = energy == null ? dailyActions() ?? 5 : Math.floor(energy / 10);
+    const self = selfWorkValue();
+    return new Set(energyActions().ready.slice(0, actions)
+      .filter(r => r.kind === 'train' && !(self && r.value < self.value)).map(r => r.emp._id));
+  }
+
   // The numbered list, top to bottom: Do now (hands dealt, moves before replacing), Spend
   // energy (trainings, hires and replacements), Check (the planner, mismatches)
   // and Trained today. Each item opens the tab that acts on it.
@@ -1625,7 +1636,7 @@ const EmployeeTrainingTool = (() => {
   // The roster, one row per employee under a row per company.
   function rosterTable() {
     const verdicts = new Map(keepRows().map(r => [r.emp._id, keepVerdict(r)]));
-    const topTrain = new Set(feedRows().filter(r => r.kind === 'train' && r.ready).slice(0, 5).map(r => r.emp._id));
+    const topTrain = trainTagged();
     const stat = (emp, k) => {
       const base = statShown(k, emp.base?.[k] ?? 0), total = statShown(k, emp.breakdown?.[k]?.total ?? emp.base?.[k] ?? 0), diff = total - base;
       return `${base}${diff ? `<span class="${diff < 0 ? 'tr-neg' : 'tr-pos'}">${diff > 0 ? '+' : '−'}${Math.abs(diff)}</span>` : ''}`;
@@ -2453,7 +2464,7 @@ const EmployeeTrainingTool = (() => {
     if (paneHidden('employees')) { stalePanes.add('employees'); return; }
     stalePanes.delete('employees');
     const verdicts = new Map(keepRows().map(r => [r.emp._id, keepVerdict(r)]));
-    const topTrain = new Set(feedRows().filter(r => r.kind === 'train' && r.ready).slice(0, 5).map(r => r.emp._id));
+    const topTrain = trainTagged();
     const nextOf = new Map(feedRows().filter(r => r.kind === 'train').map(r => [r.emp._id, r]));
     const rows = team.companies.flatMap(entry => entry.employees.map(emp => {
       const p = productFor(entry.company.itemCode);
@@ -2661,7 +2672,7 @@ const EmployeeTrainingTool = (() => {
   // them while staying on the tab. Phones use the picker instead.
   function renderSide() {
     const verdicts = new Map(keepRows().map(r => [r.emp._id, keepVerdict(r)]));
-    const topTrain = new Set(feedRows().filter(r => r.kind === 'train' && r.ready).slice(0, 5).map(r => r.emp._id));
+    const topTrain = trainTagged();
     $side.innerHTML = team.companies.map(entry => {
       const { company, employees } = entry;
       if (!employees.length) return '';
