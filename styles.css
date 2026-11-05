@@ -2817,13 +2817,6 @@ table.rs-table {
 .dp-linkbtn.dp-hide { display: none; }
 
 /* ── v0.27 pause (see V027_PAUSED in js/shared.js) ───────────────── */
-.v027-banner {
-  padding: 10px 32px;
-  border-bottom: 1px solid var(--border);
-  background: var(--panel);
-  color: var(--muted); font-size: 13px; line-height: 1.5; text-align: center;
-}
-.v027-banner strong { color: var(--warn); }
 .view.is-paused > :not(.v027-paused) { display: none; }
 .v027-paused {
   max-width: 640px; margin: 32px auto;
@@ -2844,6 +2837,13 @@ table.rs-table {
 }
 
 /* ── Employee Training (#training) ───────────────────────────────── */
+.wip-banner {
+  margin: 0 0 16px; padding: 10px 14px;
+  border: 1px solid var(--warn); border-radius: 8px;
+  background: var(--panel);
+  color: var(--muted); font-size: 13px; line-height: 1.5;
+}
+.wip-banner strong { color: var(--warn); }
 /* One row of ranked cards per rarity; the rarity colour tops each card. */
 :root {
   --tr-common: #9aacb5; --tr-uncommon: #4ade80; --tr-rare: #60a5fa; --tr-epic: #c084fc; --tr-legendary: #fbbf24; --tr-mythic: #f87171;

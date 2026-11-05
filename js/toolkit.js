@@ -299,13 +299,10 @@ const ToolkitShell = (() => {
     { title: '🏭 Production', tools: ['advisor', 'clockin'], links: [
       { href: '#training', icon: '🎓', title: 'Employee Training', desc: `Which training card to keep, ranked by what it earns over the employee's working life. Plus a calculator for close calls.` },
     ] },
-    { title: '💰 Profits',    tools: ['products', 'buddy-finder', 'profit', 'wealth'], links: [
-      { href: '#factory-tax', icon: '🧾', title: 'Factory Tax', desc: `Irish-owned factories that employ workers, grouped by the country they're based in — and the income tax that country takes off those wages.` },
-    ] },
+    { title: '💰 Profits',    tools: ['products', 'buddy-finder', 'wealth'] },
     { title: '⚔️ Combat',   tools: ['mu', 'softcap'], links: [
       { href: '#roster', icon: '🛰️', title: 'Battle Intel Ireland', desc: `Live Irish citizen roster: build, pill status, health, hunger, MU and last-online time. Useful for war planning.` },
     ] },
-    { title: '🧮 Planning',  tools: ['sp-advisor'] },
   ];
   function renderPreview() {
     if (!$preview || $preview.dataset.done) return;
