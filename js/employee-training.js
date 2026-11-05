@@ -421,7 +421,14 @@ const EmployeeTrainingTool = (() => {
 
   // The one employee picker, over the employee tabs: the loaded employees by
   // company, with previous and next.
-  const canAct = (emp, entry) => !emp.leftAt && !emp.companyDisabled && !entry.company.disabledAt;
+  // A disabled company's employees don't work, age, train or get paid there.
+  const companyIdle = (emp, entry) => !!(emp.companyDisabled || entry.company.disabledAt);
+  const canAct = (emp, entry) => !emp.leftAt && !companyIdle(emp, entry);
+  const empProfit = (emp, entry, p) => companyIdle(emp, entry) ? 0 : p && emp.estimate ? emp.estimate.production * p.perPP - emp.wage : null;
+  const DISABLED_BADGE = '<span class="tr-badge tr-badge-mismatch" title="Its employees don\'t work, age, train or get paid there">Disabled</span>';
+  const disabledTag = company => company.disabledAt ? ` ${DISABLED_BADGE}` : '';
+  // Train and Keep or replace, for an employee of a disabled company.
+  const idleNote = ({ emp, entry }, what) => `<p class="tr-muted">${escapeHtml(emp.name)}'s company, ${companyLabelHtml(entry.company)}, is disabled, so they don't work, age, train or get paid there. ${what} once they're in a working company: see the <button type="button" class="tr-link" data-go-tab="assignments">Assignments</button> tab.</p>`;
   const actionEmployees = () => (team?.companies || []).flatMap(entry => entry.employees.filter(emp => canAct(emp, entry)).map(emp => ({ emp, entry })));
   const allEmployees = () => (team?.companies || []).flatMap(x => x.employees);
   function renderPicker() {
@@ -430,7 +437,7 @@ const EmployeeTrainingTool = (() => {
     renderSide();
     renderEmpHead();
     const options = team.companies.filter(x => x.employees.length).map(({ company, employees }) =>
-      `<optgroup label="${escapeHtml(companyLabel(company))}">${employees.map(emp => {
+      `<optgroup label="${escapeHtml(companyLabel(company))}${company.disabledAt ? ' · disabled' : ''}">${employees.map(emp => {
         const left = (emp.potentialMax || 0) - (emp.potential || 0);
         const notes = [`Prod ${emp.base?.production ?? '?'}`, `${left} left`,
           ...(pendingHand(emp) ? ['hand waiting'] : trainedToday(emp) ? ['trained'] : [])];
@@ -986,6 +993,8 @@ const EmployeeTrainingTool = (() => {
       return;
     }
     if (taken.size) { $calc.innerHTML = '<p class="tr-warn">Reload from the game after the recorded training choice before comparing more cards.</p>'; return; }
+    const sel = findEmployee(input.pick);
+    if (!canAct(sel.emp, sel.entry)) { $calc.innerHTML = idleNote(sel, 'Training is ranked'); return; }
     const e = employee();
     const ctx = context();
     const days = EC.workingDays(e);
@@ -1634,11 +1643,23 @@ const EmployeeTrainingTool = (() => {
       what: `Rearrange: ${plan.gain >= 0 ? '+' : '−'}${Math.abs(plan.gain).toFixed(2)} ${plan.horizon === 'career' ? 'over their careers' : `over ${plural(plan.days, 'day')}`}`,
       sub: `${plural(plan.changes, 'move or tool change', 'moves or tool changes')}${plan.cancelled ? ', search cut short' : ''} · in game money after wages` });
     // Employees of a disabled company don't work, age or train there.
+    const room = team.companies.some(x => !x.company.disabledAt && !x.rosterMissing && x.employees.filter(emp => !emp.leftAt).length < headcountCap(x.company));
+    // Who the planner's swaps leave idle here in their place.
+    const parkedNote = entry => {
+      const names = !plan || plan.running ? [] : (plan.moves || []).filter(m => m.to === entry.company._id).map(m => findEmployee(m.employee)?.emp.name).filter(Boolean);
+      return names.length ? ` · ${escapeHtml(names.join(', '))} ${names.length === 1 ? 'takes a place' : 'take their places'} here, idle` : '';
+    };
     for (const entry of team.companies) {
       const idle = entry.employees.filter(emp => !emp.leftAt && !canAct(emp, entry));
-      if (idle.length) groups.check.push({ icon: '⏸', go: { tab: 'assignments' },
+      if (!idle.length) continue;
+      const out = idle.filter(emp => plannedMove(emp._id)).length;
+      const how = !plan || plan.running ? 'the planner looks for a move to a working company'
+        : out ? `the planner moves ${out === idle.length ? (idle.length === 1 ? 'them' : 'all of them') : `${out} of them`} into a working company`
+          : !room ? 'every working company is full, and no swap with a working employee pays'
+            : 'the planner finds no move or swap into a working company worth making';
+      groups.check.push({ icon: '⏸', go: { tab: 'assignments' },
         what: `${where(entry)} is disabled: ${plural(idle.length, 'employee')} idle`,
-        sub: `${escapeHtml(idle.map(emp => emp.name).join(', '))} won't work, age or train there · the planner can move them to a working company` });
+        sub: `${escapeHtml(idle.map(emp => emp.name).join(', '))} won't work, age, train or get paid there · ${how}${parkedNote(entry)}` });
     }
     for (const { emp, entry } of all) {
       const m = mismatchOf(emp, entry.company);
@@ -1702,7 +1723,7 @@ const EmployeeTrainingTool = (() => {
       const p = productFor(company.itemCode);
       const cProfit = p && estimate ? (estimate.production || 0) * p.perPP - (estimate.wageCost || 0) - (estimate.managerCost || 0) : null;
       const rows = employees.map(emp => {
-        const profit = p && emp.estimate ? emp.estimate.production * p.perPP - emp.wage : null;
+        const profit = empProfit(emp, entry, p);
         const left = Math.max(0, (emp.potentialMax || 0) - (emp.potential || 0));
         const traits = (emp.traits || []).map(t => t.revealed === false ? 'hidden trait' : traitName(t.code)).join(', ');
         return `<tr class="tr-roster-emp${emp._id === input.pick ? ' selected' : ''}" data-emp="${emp._id}">
@@ -1716,7 +1737,7 @@ const EmployeeTrainingTool = (() => {
           <td class="num${profit != null && profit < 0 ? ' tr-neg' : ''}">${dailyProfitFmt(profit)}</td></tr>`;
       }).join('');
       // Phones hide three columns, so the heading spans fewer there.
-      const head = `${companyLink(company)} <span class="tr-muted">${productIcon(company.itemCode)}${p ? ` (${p.ratio.toFixed(2)}×)` : ''} · ${employees.length} of ${headcountCap(company)}</span>`;
+      const head = `${companyLink(company)} <span class="tr-muted">${productIcon(company.itemCode)}${p ? ` (${p.ratio.toFixed(2)}×)` : ''} · ${employees.length} of ${headcountCap(company)}</span>${disabledTag(company)}`;
       return `<tbody style="--co:${companyColour(company)}"><tr class="tr-roster-co"><th colspan="5" scope="colgroup" class="tr-roster-wide">${head}</th>
           <th colspan="2" scope="colgroup" class="tr-roster-narrow">${head}</th>
           <td class="num${cProfit != null && cProfit < 0 ? ' tr-neg' : ''}">${dailyProfitFmt(cProfit)}</td></tr>${rows}</tbody>`;
@@ -2337,6 +2358,8 @@ const EmployeeTrainingTool = (() => {
     if (!market?.ppValue) { $fire.innerHTML = '<p class="tr-muted">Loading prices…</p>'; return; }
     if (taken.size) { $fire.innerHTML = '<p class="tr-warn">Reload from the game after the recorded training choice before comparing replacements.</p>'; return; }
     if (findEmployee(input.pick)?.emp.pendingTraining) { $fire.innerHTML = '<p class="tr-warn">Choose the waiting training card, then reload before deciding whether to replace this employee. That training is already paid for.</p>'; return; }
+    const sel = findEmployee(input.pick);
+    if (sel && !canAct(sel.emp, sel.entry)) { $fire.innerHTML = idleNote(sel, 'Keep or replace compares them'); return; }
     const rows = keepRows();
     const act = rows.filter(r => ['fire', 'replace'].includes(keepVerdict(r)));
     const r = rows.find(x => x.emp._id === input.pick);
@@ -2540,7 +2563,7 @@ const EmployeeTrainingTool = (() => {
       const p = productFor(entry.company.itemCode);
       return {
         emp, entry, next: nextOf.get(emp._id),
-        profit: p && emp.estimate ? emp.estimate.production * p.perPP - emp.wage : null,
+        profit: empProfit(emp, entry, p),
         left: Math.max(0, (emp.potentialMax || 0) - (emp.potential || 0)),
         prod: emp.breakdown?.production?.total ?? emp.base?.production ?? 0,
         happy: emp.happinessBreakdown?.value ?? null,
@@ -2841,11 +2864,12 @@ const EmployeeTrainingTool = (() => {
       const { entry, contract, row, game, ireland, buddy, offer } = r;
       const vacancy = offer || r.advice;
       const who = contract === undefined ? '<span class="tr-muted">Couldn\'t load</span>'
+        : !contract && entry.company.disabledAt ? '<span class="tr-muted">No manager</span><small>Disabled: a manager would add nothing</small>'
         : !contract ? `<span class="tr-muted">No manager</span>${vacancyNote(r)}${irishLine(picks, r)}`
           : `<strong>${escapeHtml(entry.managerUser?.username || 'Unknown')}</strong><small>${row?.points ?? ManagerCore.pointsFromLevel(contract.managementLevel, market.managementLevels || undefined)} points · +${contract.productionBonusPercent}%</small>${actionNote(r)}${irishLine(picks, r)}`;
       const money = (v, cls = '') => row && contract ? `<span class="${cls}">${perDay(v)}</span>` : dash;
       return `<tr style="--co:${companyColour(entry.company)}">
-        <td data-label="Company"><strong>${companyLink(entry.company)}</strong><small>${productIcon(entry.company.itemCode)} ${escapeHtml(productName(entry.company.itemCode || '?'))}</small></td>
+        <td data-label="Company"><strong>${companyLink(entry.company)}</strong><small>${productIcon(entry.company.itemCode)} ${escapeHtml(productName(entry.company.itemCode || '?'))}${entry.company.disabledAt ? ' · disabled' : ''}</small></td>
         <td data-label="Manager">${who}<span class="tr-badges">${managerFlags(r)}</span></td>
         <td data-label="Rate / point" class="num">${contract ? `<span title="₿${contract.rateManagement} per point per hour">${rateFmt(contract.rateManagement)}</span>`
           : vacancy?.rate != null ? `<span class="tr-muted" title="${offer ? 'The open offer\'s rate' : 'Suggested rate'}">${rateExact(vacancy.rate)}</span>` : dash}</td>
@@ -2858,7 +2882,7 @@ const EmployeeTrainingTool = (() => {
       </tr>`;
     }).join('');
     const vacated = rows.filter(r => r.afterMove);
-    const vacant = rows.filter(r => r.advice), worth = [...vacant.filter(r => r.advice.worth && r.offer?.status !== 'ok'), ...vacated.filter(r => r.afterMove.worth)];
+    const vacant = rows.filter(r => r.advice && !r.entry.company.disabledAt), worth = [...vacant.filter(r => r.advice.worth && r.offer?.status !== 'ok'), ...vacated.filter(r => r.afterMove.worth)];
     const changes = rows.filter(ownChange);
     const moves = [...new Set(rows.map(r => r.move).filter(Boolean))];
     const changeGain = changes.reduce((a, r) => a + r.action[r.action.verdict].gain, 0) + moves.reduce((a, g) => a + g.gain, 0);
@@ -3029,7 +3053,7 @@ const EmployeeTrainingTool = (() => {
       const { company, employees } = entry;
       if (!employees.length) return '';
       const co = `--co:${companyColour(company)}`;
-      return `<div class="tr-side-co" style="${co}">${companyLabelHtml(company)} <span class="tr-muted">${employees.length} of ${headcountCap(company)}</span></div>
+      return `<div class="tr-side-co" style="${co}">${companyLabelHtml(company)} <span class="tr-muted">${employees.length} of ${headcountCap(company)}</span>${disabledTag(company)}</div>
         <ul>${employees.map(emp => {
           const left = Math.max(0, (emp.potentialMax || 0) - (emp.potential || 0));
           const on = emp._id === input.pick;
@@ -3050,7 +3074,7 @@ const EmployeeTrainingTool = (() => {
     if (!found) { $empHead.innerHTML = ''; return; }
     const { emp, entry } = found;
     const p = productFor(entry.company.itemCode);
-    const profit = p && emp.estimate ? emp.estimate.production * p.perPP - emp.wage : null;
+    const profit = empProfit(emp, entry, p);
     const left = Math.max(0, (emp.potentialMax || 0) - (emp.potential || 0));
     const stat = k => {
       const base = statShown(k, emp.base?.[k] ?? 0), total = statShown(k, emp.breakdown?.[k]?.total ?? emp.base?.[k] ?? 0), diff = total - base;
@@ -3060,7 +3084,7 @@ const EmployeeTrainingTool = (() => {
     const hand = pendingHand(emp);
     const status = hand ? `<p class="tr-emp-status"><span class="tr-badge tr-badge-hand">Hand</span> ${RARITY_NAME[hand.rarity]} hand waiting${hand.drawnAt ? `, dealt ${utcTime(new Date(hand.drawnAt))}` : ''}.${view.tab === 'train' ? '' : ` <button type="button" class="tr-link" data-go-tab="train" data-go-emp="${emp._id}">Rank it</button>`}</p>`
         : doneToday(emp) ? `<p class="tr-emp-status">Trained today. Next training at 00:00 UTC, in ${escapeHtml(formatDuration(untilReset()))}.</p>` : '';
-    $empHead.innerHTML = `<div class="tr-emp-name"><strong>${gameLink(entry.company, emp.name)}</strong> <span class="tr-muted">${companyLabelHtml(entry.company)}${p ? ` (${p.ratio.toFixed(2)}×)` : ''}</span></div>
+    $empHead.innerHTML = `<div class="tr-emp-name"><strong>${gameLink(entry.company, emp.name)}</strong> <span class="tr-muted">${companyLabelHtml(entry.company)}${p ? ` (${p.ratio.toFixed(2)}×)` : ''}</span>${disabledTag(entry.company)}</div>
       <div class="tr-emp-facts"><span>Age <b>${emp.age}</b> · ${plural(EC.workingDays(emp), 'working day')}</span>
         <span>${stat('production')} · ${stat('responsibility')} · ${stat('luck')}</span>
         <span><b>${left}</b> of ${emp.potentialMax || 0} trainings left</span>

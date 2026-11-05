@@ -283,6 +283,10 @@ const EmployeeAssignments = (() => {
     for (const [company, card] of switchCard) {
       card.cost = (result.switches || []).find(w => w.company === company)?.cost || 0;
       for (const a of result.arrangement) if (a.company === company && !cardOf.has(a.employee)) { card.people.push(a.employee); cardOf.set(a.employee, card); }
+      // Those who end up here on a move or swap of their own: their gain
+      // on the new good is counted on that card.
+      card.joined = result.arrangement.filter(a => a.company === company && cardOf.get(a.employee) !== card).map(a => [a.employee, cardOf.get(a.employee)])
+        .sort((x, y) => cards.indexOf(x[1]) - cards.indexOf(y[1]));
     }
     for (let grew = true; grew;) {
       grew = false;
@@ -427,11 +431,17 @@ const EmployeeAssignments = (() => {
           <span class="tr-asg-tool-top">${icon(t.type)}<span><b>+${esc(num(t.bonus, 0))}%</b><small>${esc(cap(t.type))} · spare</small></span></span>
           ${life(t.hours)}<small>${esc(toPct(t.hours))}% left${t.seen ? '' : ' · unused'} · <span class="tr-asg-products">${products(t.type)}</span></small>${who}</button>`;
       };
+      // Tools held in a disabled company sit idle until their holder moves out.
+      const idle = new Set(team.companies.filter(x => x.company.disabledAt || activeOf(x).some(e => e.companyDisabled)).flatMap(activeOf).map(e => e._id));
       const eq = e => {
         const type = toolType(e.toolItem.code) || 'hammer', hours = equippedHours(e);
+        const to = holders?.get(`equipped:${e._id}`);
+        const who = !holders ? `Currently with <b>${esc(e.name)}</b>${idle.has(e._id) ? ', idle: company disabled' : ''}`
+          : to && !(idle.has(e._id) && to === e.name) ? `Assigned to <b>${esc(to)}</b>`
+            : to ? `Idle with <b>${esc(to)}</b>: company disabled` : 'Unused';
         return `<button type="button" class="tr-asg-tool${invalid.has(e._id) ? ' is-invalid' : ''}" data-equipped-edit="${esc(e._id)}" aria-label="Correct the capacity left on ${esc(e.name)}'s ${esc(type)}">
           <span class="tr-asg-tool-top">${icon(type)}<span><b>+${esc(num(e.toolStatus?.rolledPercent ?? e.toolItem.skills?.production ?? 0, 0))}%</b><small>${esc(cap(type))} · equipped</small></span></span>
-          ${life(hours)}<small>${esc(toPct(hours))}% left</small><small class="tr-asg-who">${holders ? (holders.has(`equipped:${e._id}`) ? `Assigned to <b>${esc(holders.get(`equipped:${e._id}`))}</b>` : 'Unused') : `Currently with <b>${esc(e.name)}</b>`}</small></button>`;
+          ${life(hours)}<small>${esc(toPct(hours))}% left</small><small class="tr-asg-who${to && idle.has(e._id) && to === e.name ? ' is-warn' : ''}">${who}</small></button>`;
       };
       const cards = [...sparesFor(team, settings).map(spare), ...equippedOf(team).map(eq)];
       return cards.length ? cards.join('') : '<p class="tr-muted">No tools yet. Tools you open from toolboxes appear here.</p>';
@@ -496,7 +506,7 @@ const EmployeeAssignments = (() => {
             <section class="tr-asg-box" aria-labelledby="plan-pins-heading"><h4 id="plan-pins-heading">Keep in place</h4>
               <p class="tr-muted">Selected employees stay in their company. They can still get a tool.</p>
               <div class="tr-asg-pins">${people.map(({ e, company }) => `<button type="button" class="tr-asg-pin" data-plan-pin="${esc(e._id)}" aria-pressed="${settings.pinned.includes(e._id)}" title="${esc(companyName(company._id) || company.name || '')}">${productIcon(company.itemCode)}${esc(e.name)}</button>`).join('')}</div></section>
-            <details class="tr-more"><summary>What the comparison includes</summary><p class="tr-calc-sub">The planner scores whole company rosters: Craftsman on manufactured goods and weapons, Laborer on raw resources, Handy and Improviser, coworker traits, company bonuses and taxes, happiness, saved specialization, tenure and retirement. Moving an employee between your companies costs no happiness, but Creature of Habit loses 30 bonus points for three days. Company tenure restarts; the same product keeps its specialization, and another product restores that product's saved progress. Tools are a pool: when a tool runs out, its holder gets the best free compatible tool, and a retiring employee's tool passes on with its hours left. Tool hours go where they raise output most, so a plan may take a tool off someone to save its hours for a better use later. Spares replace only tools that ran out. Handoffs are assumed: a step notes the tool someone gets later, but they are not steps of their own. Prices are recent trades and every change takes effort, so a change is recommended only above a minimum gain: ${100 * EP.CHURN.priceUncertainty}% of the output whose value depends on prices comes off first (a swap between two products carries both products' output; a tool inside one company only its extra output), and what is left must reach ${100 * EP.CHURN.floorShare}% of the planned companies' profit over the horizon, ${EP.CHURN.recentFactor} times that for anyone moved in the last ${EP.CHURN.recentHours / 24} days. A disabled company's employees don't work, train or get paid there, so moving them out to a working company can pay; nobody is moved into a disabled company.</p><p class="tr-calc-sub">Careers value every change until the last planned employee retires at ${EC.CFG.retireAge}, one year older per day worked or trained. A retired employee's place stays empty: hiring a replacement is not valued. A shorter window ignores everything after it, so it favours quick wins over moves that pay back later.</p><p class="tr-calc-sub">This is a bounded search for a better arrangement, not a guarantee of the best one. Each employee moves at most once. A company with a hidden or unknown trait, or whose current numbers the planner cannot reproduce, is left exactly as it is and is not part of the totals. Toolboxes use your entered value. Trainer and coworker Luck use a bounded training estimate and your daily budget. Recruiter is valued only for a planned candidate set. Earnings assume employees stay; quitting probabilities and future price changes are not modeled. Equipped tools can be reassigned to any compatible employee. Nothing is changed in the game.</p></details>
+            <details class="tr-more"><summary>What the comparison includes</summary><p class="tr-calc-sub">The planner scores whole company rosters: Craftsman on manufactured goods and weapons, Laborer on raw resources, Handy and Improviser, coworker traits, company bonuses and taxes, happiness, saved specialization, tenure and retirement. Moving an employee between your companies costs no happiness, but Creature of Habit loses 30 bonus points for three days. Company tenure restarts; the same product keeps its specialization, and another product restores that product's saved progress. Tools are a pool: when a tool runs out, its holder gets the best free compatible tool, and a retiring employee's tool passes on with its hours left. Tool hours go where they raise output most, so a plan may take a tool off someone to save its hours for a better use later. Spares replace only tools that ran out. Handoffs are assumed: a step notes the tool someone gets later, but they are not steps of their own. Prices are recent trades and every change takes effort, so a change is recommended only above a minimum gain: ${100 * EP.CHURN.priceUncertainty}% of the output whose value depends on prices comes off first (a swap between two products carries both products' output; a tool inside one company only its extra output), and what is left must reach ${100 * EP.CHURN.floorShare}% of the planned companies' profit over the horizon, ${EP.CHURN.recentFactor} times that for anyone moved in the last ${EP.CHURN.recentHours / 24} days. A disabled company's employees don't work, train or get paid there, so moving them out to a working company can pay. When the working companies are full, a swap can put one to work and leave the employee they replace idle in the disabled company; nobody else is moved into one.</p><p class="tr-calc-sub">Careers value every change until the last planned employee retires at ${EC.CFG.retireAge}, one year older per day worked or trained. A retired employee's place stays empty: hiring a replacement is not valued. A shorter window ignores everything after it, so it favours quick wins over moves that pay back later.</p><p class="tr-calc-sub">This is a bounded search for a better arrangement, not a guarantee of the best one. Each employee moves at most once. A company with a hidden or unknown trait, or whose current numbers the planner cannot reproduce, is left exactly as it is and is not part of the totals. Toolboxes use your entered value. Trainer and coworker Luck use a bounded training estimate and your daily budget. Recruiter is valued only for a planned candidate set. Earnings assume employees stay; quitting probabilities and future price changes are not modeled. Equipped tools can be reassigned to any compatible employee. Nothing is changed in the game.</p></details>
           </div>
         </div>`;
       if (focus) root.querySelector(focus)?.focus();
@@ -660,7 +670,8 @@ const EmployeeAssignments = (() => {
       };
       const notes = item => {
         const out = item.kind === 'swap' ? ["Use the game's Swap option."] : item.kind === 'switch'
-          ? [`Change the product on the company page: ${item.cost ? `₿${esc(num(item.cost, 2))} of concrete. ` : ''}Saved specialisation is kept per good. Gains at today's and the game's prices are on the Products tab.`] : [];
+          ? [`Change the product on the company page: ${item.cost ? `₿${esc(num(item.cost, 2))} of concrete. ` : ''}Saved specialisation is kept per good. Gains at today's and the game's prices are on the Products tab.`,
+            ...(item.joined.length ? [`${item.people.length ? 'This step counts the staff who stay. ' : 'This step counts only the concrete: everyone working here after the plan moves in on another step. '}${esc(item.joined.map(([id, c]) => `${emp(id).name} (step ${items.indexOf(c) + 1})`).join(', '))} ${item.joined.length === 1 ? 'moves' : 'move'} in, and the gain on ${esc(productName(item.to))} is counted on ${item.joined.length === 1 ? 'that step' : 'those steps'}.`] : [])] : [];
         for (const x of item.heldFor) { const giver = item.people.find(id => emp(id).equipped?.id === x.tool); out.push(heldText(x, emp(giver).name, !back(giver) || !switchTo.has(emp(giver).company))); }
         for (const id of item.people) {
           const name = esc(emp(id).name), t = newTool(id), b = back(id), h = row(proposed, id)?.handoffs?.[0];
@@ -671,7 +682,8 @@ const EmployeeAssignments = (() => {
         return out;
       };
       const switchRow = item => `<span class="tr-asg-who">${place(item.company)}</span><span class="tr-asg-what"><span class="tr-asg-line">${productIcon(item.from)}<b>${esc(productName(item.from))}</b>
-          <span class="tr-muted">→</span>${productIcon(item.to)}<b>${esc(productName(item.to))}</b></span></span><span class="tr-asg-own"></span>`;
+          <span class="tr-muted">→</span>${productIcon(item.to)}<b>${esc(productName(item.to))}</b></span>${item.joined.length && !item.people.length
+            ? `<span class="tr-asg-line tr-muted">Concrete only here: the people moving in carry the gain (${esc(item.joined.map(([, c]) => `step ${items.indexOf(c) + 1}`).join(', '))})</span>` : ''}</span><span class="tr-asg-own"></span>`;
       const stepHtml = (item, i) => {
         const a = emp(item.people[0]), many = item.people.length + item.heldFor.length > 1;
         const value = item.people.reduce((v, id) => v + delta(id), 0) + item.heldFor.reduce((v, x) => v + delta(x.employee), 0) - (item.cost || 0);
@@ -706,6 +718,7 @@ const EmployeeAssignments = (() => {
       const manual = snapshot.tools.filter(t => t.hours > 0 && (!t.holder || !result.excluded.some(x => x.company === emp(t.holder).company)));
       const used = manual.length - result.unused.filter(id => manual.some(t => t.id === id)).length;
       const planned = snapshot.companies.filter(c => !result.excluded.some(x => x.company === c.id));
+      const plannedOff = planned.filter(c => c.disabled).length;
       const plannedPeople = snapshot.employees.filter(e => planned.some(c => c.id === e.company));
       const last = plannedPeople.reduce((a, e) => !a || EC.workingDays(e) > EC.workingDays(a) ? e : a, null);
       const pinned = plannedPeople.filter(e => e.locked).length;
@@ -721,7 +734,7 @@ const EmployeeAssignments = (() => {
         ${switchTo.size ? tile('Product switches', switchTo.size, 'gains at both prices on the Products tab') : ''}
         ${tile('Tools used', `${used}<span class="tr-muted"> / ${manual.length}</span>`, !manual.length ? 'none available' : used < manual.length ? `${manual.length - used} left unused` : 'all in use')}
         ${tile('Horizon', `${days} d`, settings.horizon === 'career' ? (last ? `${esc(last.name)} retires last, after ${EC.workingDays(last)} working days` : 'until retirement') : 'fixed window')}
-        ${tile('Planned', `${planned.length}<span class="tr-muted"> / ${snapshot.companies.length}</span>`, `companies · ${plural(plannedPeople.length, 'employee')}${pinned ? ` · ${pinned} kept in place` : ''}`)}</div>`;
+        ${tile('Planned', `${planned.length}<span class="tr-muted"> / ${snapshot.companies.length}</span>`, `companies${plannedOff ? `, ${plannedOff} disabled` : ''} · ${plural(plannedPeople.length, 'employee')}${pinned ? ` · ${pinned} kept in place` : ''}`)}</div>`;
 
       // Chart markers: retirements, and tools wearing out, inside the horizon.
       const events = [];

@@ -186,13 +186,14 @@ const EmployeePlanner = (() => {
       if (!e || !c) { errors.push('Unknown employee or company.'); continue; }
       if ((frozen(e) || c.excluded) && (a.company !== e.company || a.tool !== (e.equipped?.id || null))) errors.push(`${c.name} is not being planned, so its roster and tools stay unchanged.`);
       if (e.locked && a.company !== e.company) errors.push(`${e.name} is kept in their current company.`);
-      if (c.disabled && a.company !== e.company) errors.push(`${c.name} is disabled, so nobody is moved into it.`);
       if (!a.tool) continue;
       const t = s.tools.find(t => t.id === a.tool);
       if (!t || used.has(a.tool) || (!compatible(t, c) && (a.company !== e.company || a.tool !== e.equipped?.id)) || (t.holder && frozen(s.employees.find(e => e.id === t.holder)) && t.holder !== e.id)) errors.push('A tool must have one eligible employee.');
       used.add(a.tool);
     }
     for (const c of s.companies) if (arrangement.filter(a => a.company === c.id).length > c.capacity) errors.push(`${c.name} exceeds its Break Room capacity.`);
+    // Someone joins a disabled company only in a swap, for one who leaves it.
+    for (const c of s.companies) if (c.disabled && arrangement.filter(a => a.company === c.id).length > s.employees.filter(e => e.company === c.id).length) errors.push(`${c.name} is disabled, so nobody is moved into it except in a swap.`);
     return errors;
   }
 
@@ -895,7 +896,9 @@ const EmployeePlanner = (() => {
       if (onlyTo) return out;
       for (const f of partners) {
         const b = assign.get(f.id), there = companies.get(b.company), theirs = tools.get(b.tool) || null;
-        if (here.disabled || there.disabled) continue;
+        // A swap with a disabled company puts the better employee to work
+        // and parks the other there, idle; two disabled ones gain nothing.
+        if (here.disabled && there.disabled) continue;
         const [x, y] = [e.id, f.id].sort(), step = { kind: 'swap', employees: [e.id, f.id] };
         const key = `s:${x}:${y}`;
         add([[e.id, there.id, toolFor(cur, there)], [f.id, here.id, toolFor(theirs, here)]], `${key}:keep`, step);
@@ -923,7 +926,7 @@ const EmployeePlanner = (() => {
       companies.set(id, next); planned[at] = next;
       for (const [e, c, tool] of drops) { const x = assign.get(e); if (x.tool) holder.delete(x.tool); assign.set(e, { company: c, tool }); }
       try {
-        const partners = people.filter(f => movable(f) && assign.get(f.id).company !== id && !companies.get(assign.get(f.id).company).disabled);
+        const partners = people.filter(f => movable(f) && assign.get(f.id).company !== id);
         const out = roster.get(id).flatMap(e => candidatesFor(employees.get(e), partners, null, 'best'));
         for (const f of partners) out.push(...candidatesFor(f, [], id, 'best'));
         return out;
@@ -1261,7 +1264,10 @@ const EmployeePlanner = (() => {
       return { valid: true, partial, baseline, proposed, gain: proposed.value - baseline.value,
         coverage: sw ? [...coverage(s, search.threshold), SWITCH_NOTE, ...(search.switchSearch.cut ? [SWITCH_CUT_NOTE] : [])] : coverage(s, search.threshold), arrangement: s.employees.map(e => ({ employee: e.id, ...assign.get(e.id) })), steps: [...steps], warnings,
         unused: manual.filter(t => !holder.has(t.id)).map(t => t.id), excluded: excludedList(s),
-        ...(sw ? { switched: [...switched.values()], switches: [...switchReports] } : {}),
+        // Who moves in, from the final arrangement: a later move or swap
+        // into a switched company comes after its report.
+        ...(sw ? { switched: [...switched.values()], switches: switchReports.map(w => ({ ...w,
+          moves: s.employees.filter(e => assign.get(e.id).company === w.company && e.company !== w.company).map(e => e.id).sort() })) } : {}),
         search: { ...search, projections: P.misses, ...(sw ? { switchSearch: { ...search.switchSearch, priced: P.priced } } : {}) } };
     }
 
@@ -1468,8 +1474,7 @@ const EmployeePlanner = (() => {
     const swaps = (e, partners) => {
       if (!movable(e)) return;
       const off = id => companies.find(c => c.id === id)?.disabled;
-      if (off(e.company)) return;
-      for (const f of partners) if (movable(f) && f.company !== e.company && !off(f.company)) add('swap', [[e.id, f.company], [f.id, e.company]]);
+      for (const f of partners) if (movable(f) && f.company !== e.company && !(off(e.company) && off(f.company))) add('swap', [[e.id, f.company], [f.id, e.company]]);
     };
     moves(subject); swaps(subject, people);
     const peers = people.filter(e => e.id !== subject.id && e.company === subject.company);

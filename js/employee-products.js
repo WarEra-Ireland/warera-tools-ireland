@@ -31,7 +31,7 @@ const EmployeeProducts = (() => {
       const report = products.switches.find(w => w.company === c.id) || null;
       const hold = report ? null : products.holds.filter(h => h.company === c.id).sort((a, b) => b.live - a.live)[0] || null;
       const excluded = (plan?.excluded || []).find(x => x.company === c.id) || null;
-      const verdict = report ? 'switch' : excluded ? 'off' : hold ? (hold.spike ? 'spike' : 'hold') : 'stay';
+      const verdict = report ? 'switch' : c.disabled ? 'disabled' : excluded ? 'off' : hold ? (hold.spike ? 'spike' : 'hold') : 'stay';
       const alternatives = codes.filter(code => code !== c.product).map(margin).sort((a, b) => b.worse - a.worse || (a.code < b.code ? -1 : 1)).slice(0, TOP);
       const to = report?.to || hold?.to;
       return { id: c.id, product: c.product, disabled: !!c.disabled, verdict, report, hold, excluded, now: margin(c.product), target: to ? margin(to) : null, alternatives };
@@ -44,6 +44,7 @@ const EmployeeProducts = (() => {
     hold: ['Hold', 'tr-badge-spike'],
     stay: ['Stay', 'tr-badge-stay'],
     off: ['Not planned', 'tr-badge-stay'],
+    disabled: ['Disabled', 'tr-badge-stay'],
   };
   const pct = v => `${Math.round(v * 100)}%`;
   const days = v => !Number.isFinite(v) ? 'never' : v <= 0 ? 'none' : v < 1 ? 'under a day' : `${Math.ceil(v)} day${Math.ceil(v) === 1 ? '' : 's'}`;
@@ -93,6 +94,8 @@ const EmployeeProducts = (() => {
       } else if (hd) {
         const ratio = r.target.ratio;
         detail = `<small>${r.verdict === 'spike' ? `Today's margin is ${ratio != null ? `${ratio.toFixed(2)}×` : 'far above'} the game's average.` : 'Pays at today\'s prices only.'} At the game's prices it doesn't clear the minimum gain.</small>`;
+      } else if (r.verdict === 'disabled') {
+        detail = '<small>It makes nothing while disabled, so no product pays here.</small>';
       } else if (r.verdict === 'off') {
         detail = `<small>${h.esc(r.excluded.reason.replace(/^Not planned: /, ''))}</small>`;
       } else {
@@ -102,7 +105,7 @@ const EmployeeProducts = (() => {
       const be = w?.breakEven?.ratio != null
         ? `${pct(w.breakEven.ratio)}<small>of ${name(w.from)}'s margin per PP; now ${r.target.live != null && r.now.live > 0 ? pct(r.target.live / r.now.live) : '—'}</small>` : dash;
       return `<tr style="--co:${h.colour(r.id)}">
-        <td data-label="Company"><strong>${h.company(r.id)}</strong><small>${good(r.product)}${r.disabled ? ' · disabled' : ''}</small>
+        <td data-label="Company"><strong>${h.company(r.id)}</strong><small>${good(r.product)}</small>
           <small>Today ${h.today(r.id) == null ? '—' : h.perDay(h.today(r.id))}</small>${now}</td>
         <td data-label="Verdict" class="tr-prod-verdict"><span class="tr-badge ${cls}">${label}</span>${to ? ` <span class="tr-prod-to">→ ${good(to)}</span>` : ''}${detail}</td>
         <td data-label="Gain / day" class="num">${gain}</td>
