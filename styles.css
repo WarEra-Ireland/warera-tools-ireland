@@ -1861,9 +1861,12 @@ input[type="password"]:focus { border-color: var(--focus); }
 #pp-products .pp-sort, #pp-companies .pp-sort { width: 100%; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; text-transform: inherit; text-align: inherit; cursor: pointer; }
 #pp-products .pp-sort:focus-visible, #pp-companies .pp-sort:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; border-radius: 2px; }
 #pp-companies { table-layout: fixed; min-width: 1000px; font-size: 12px; }
-#pp-companies th:nth-child(1) { width: 21%; }
+#pp-companies th:nth-child(1) { width: 19%; }
 #pp-companies th:nth-child(2) { width: 10%; }
-#pp-companies th:nth-child(3) { width: 13%; }
+#pp-companies th:nth-child(3) { width: 12%; }
+/* Best switch, Gain / day, Switch cost. */
+#pp-companies th:nth-child(9) { width: 15%; }
+#pp-companies th:nth-child(10), #pp-companies th:nth-child(11) { width: 8%; }
 #pp-companies td.dp-l { white-space: normal; overflow-wrap: anywhere; }
 #pp-companies .dp-prod { display: inline-grid; grid-template-columns: 22px minmax(0, 1fr); gap: 3px 6px; max-width: 100%; }
 #pp-companies .dp-prod .dp-cat { grid-column: 2; }
@@ -1871,6 +1874,13 @@ input[type="password"]:focus { border-color: var(--focus); }
 #pp-companies .pp-chip { padding: 1px 5px; }
 #pp-companies .dash-pill { white-space: normal; }
 #pp-companies .pp-mgr small { margin-top: 2px; }
+/* Best switch: verdict (linked to the Products tab), good, and a note. */
+.pp-switch-note { margin: 0 0 8px; font-size: 13px; color: var(--muted); }
+.pp-m-note { margin: 0 0 8px; }
+#pp-companies .pp-verdict { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; max-width: 100%; }
+#pp-companies .pp-verdict .dash-pill { flex: none; white-space: nowrap; overflow-wrap: normal; }
+#pp-companies .pp-verdict .dp-prod { min-width: 0; }
+#pp-companies .pp-switch-cell small { display: block; margin-top: 2px; font-size: 12px; }
 /* The game's company colour: its product's rarity. */
 #pp-companies tbody td:first-child { border-left: 3px solid var(--co); background: linear-gradient(90deg, color-mix(in srgb, var(--co) 14%, transparent), transparent 80%); }
 
@@ -2994,6 +3004,16 @@ html[data-theme="light"] {
 .tr-emps td .tr-badges { margin-top: 4px; }
 .tr-emps-traits { min-width: 220px; }
 .tr-mgrs td .tr-badges { display: flex; margin-top: 4px; }
+/* Products tab: a switch verdict per company. */
+.tr-badge-switch { background: var(--accent); color: var(--bg); }
+.tr-badge-spike { background: none; border: 1px solid var(--warn); color: var(--warn); }
+.tr-badge-stay { background: var(--border); color: var(--muted); }
+.tr-prod-verdict { min-width: 240px; }
+.tr-prod-to { display: inline-flex; align-items: center; gap: 4px; font-weight: 600; }
+.tr-prod-verdict details { margin-top: 6px; font-size: 12px; }
+.tr-prod-verdict ul { margin: 4px 0; padding-left: 18px; }
+.tr-prod-alts { list-style: none; padding: 0 !important; display: grid; gap: 2px; }
+.tr-prod-alts li { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 2px 8px; }
 .tr-badge-buddy { background: none; border: 1px solid var(--accent); color: var(--accent); }
 .tr-emps-happy { min-width: 190px; }
 .tr-emps-open { white-space: nowrap; }
@@ -3026,6 +3046,10 @@ html[data-theme="light"] {
   .tr-mgrs tr { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .tr-mgrs td[data-label="Manager"] { grid-column: 1 / -1; }
   .tr-mgrs td[data-label="Profit / day"] { grid-column: span 2; }
+  .tr-prods tr { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .tr-prods td[data-label="Verdict"], .tr-prods td[data-label="Break-even"] { grid-column: 1 / -1; min-width: 0; }
+  .tr-prods td[data-label="Gain / day"] { grid-column: span 2; }
+  .tr-prods tbody td.num { white-space: normal; }
   .tr-emps td:first-child strong { font-size: 14px; }
   .tr-emps-open { display: flex !important; gap: 6px; }
   .tr-emps-open .tr-use { flex: 1; margin: 0; min-height: 36px; }

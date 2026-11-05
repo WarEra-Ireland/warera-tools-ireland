@@ -144,7 +144,7 @@ const EmployeeTrainingTool = (() => {
   let irishPool = null;
   let busy = false;
   let assignments = null;
-  const TABS = ['overview', 'employees', 'train', 'keep', 'hire', 'assignments', 'managers'];
+  const TABS = ['overview', 'employees', 'train', 'keep', 'hire', 'assignments', 'products', 'managers'];
   // Tabs about one employee, under the shared picker.
   const EMP_TABS = ['train', 'keep'];
   // The open tab; emp is an employee asked for by the link, until the team loads.
@@ -196,7 +196,9 @@ const EmployeeTrainingTool = (() => {
     const gameMargin = gameValues && ppValue > 0 ? EC.gameMargins(items, gameValues, ppValue) : {};
     return { ppValue: ppValue > 0 ? ppValue : null, list, types, rarity, gameMargin, engineLevels: config?.upgradesConfig?.automatedEngine?.levels || {},
       // Manager pricing: Management levels → points, and the market's rate band per point.
-      managementLevels: config?.skills?.management?.levels || null, managerRates: ManagerCore.rateBand(wageStats) };
+      managementLevels: config?.skills?.management?.levels || null, managerRates: ManagerCore.rateBand(wageStats),
+      // Product switches: the concrete a switch takes, priced at recent trades.
+      concretePrice: price.concrete ?? null, changeItemCost: config?.company?.changeItemCost ?? 5 };
   }
   let marketPending = false;
   function refreshMarket() {
@@ -2599,6 +2601,34 @@ const EmployeeTrainingTool = (() => {
   const perDay = v => `${v < 0 ? '−' : '+'}₿${Math.abs(v).toFixed(3)}/day`;
   const tone = v => v < 0 ? 'tr-neg' : 'tr-pos';
 
+  /* ── Products: switch a company to another good ──────────── */
+  // Verdicts from the planner's joint search; see js/employee-products.js.
+  function renderProducts() {
+    if (!team) return;
+    const $body = document.getElementById('tr-products-body');
+    const ready = market && plan && !plan.running && plan.products;
+    const list = ready ? EmployeeProducts.rows(team.companies.map(x => ({ id: x.company._id, product: x.company.itemCode, disabled: !!x.company.disabledAt })), plan, market) : null;
+    tabCount('products', list ? list.filter(r => r.verdict === 'switch').length : 0);
+    if (paneHidden('products')) { stalePanes.add('products'); return; }
+    stalePanes.delete('products');
+    const heading = `<div class="tr-section-heading"><h3 class="tr-pane-title">Products</h3>${help('How a switch is judged', `<p>A company can switch to any other good for ${market?.changeItemCost ?? 5} concrete. The planner compares every good for every company, each with the moves, swaps and tool changes that go with re-tooling it, using the full employee model: saved specialisation per good, Specialist, Craftsman and Laborer, tools that fit, coworkers, wages and retirement. A company switched early in the plan can be switched again if a better good turns up once others have moved.</p><p><strong>Win at both prices:</strong> a switch is recommended only if the plan still gains at the worse of today's margin (recent trades, after market tax) and the game's slower average, after the planner's minimum gain. <strong>Spike: hold</strong> means a good pays at today's prices only, and its margin is far above the game's average, so it may soon drop.</p><p><strong>Gain / day</strong> is the switch's extra profit over the plan's horizon, net of the concrete; today's prices first, the game's below. A move or swap that would pay on its own keeps its own gain: the switch has to pay on top of it, at both prices. <strong>Payback</strong> is the concrete over the gain a day at the worse price. <strong>Break-even</strong> is the share of the old good's margin per PP the new good must keep for the switch to pay.</p><p>Each switch's gain is measured when the planner takes it, with the moves taken before it. Moves taken later can change a company's figures, so the step values on the Assignments tab can split the same gain differently.</p><p><strong>What a switch loses:</strong> specialisation is saved per good and never decays, so employees resume the new good's saved days and regain 1% a day (2% with Quick Study). Tools of another type go back to inventory. Specialist only works on their own good. Nothing is changed in the game.</p>`)}</div>`;
+    if (!market || !plan || plan.running) { $body.innerHTML = `${heading}<p class="tr-muted">${plan?.running ? 'The planner is comparing products with employee moves…' : 'Loading prices and the plan…'}</p>`; return; }
+    if (!plan.products) { $body.innerHTML = `${heading}<p class="tr-warn">Concrete has no recent price, so switches can't be costed and weren't compared. <button type="button" class="tr-link" data-reload>Retry</button></p>`; return; }
+    const entry = id => team.companies.find(x => x.company._id === id);
+    const emps = new Map(team.companies.flatMap(x => x.employees.map(e => [e._id, { name: e.name, company: x.company._id }])));
+    const today = id => {
+      const x = entry(id), p = x && productFor(x.company.itemCode);
+      return p && x.estimate ? ((x.estimate.production || 0) * p.perPP - (x.estimate.wageCost || 0) - (x.estimate.managerCost || 0)) * 24 : null;
+    };
+    const out = EmployeeProducts.render(list, plan, {
+      esc: escapeHtml, productIcon, productName, perDay, tile, money: v => `₿${v.toFixed(3)}`, margin: v => `₿${v.toFixed(4)}`,
+      company: id => companyLink(entry(id).company), companyName: id => entry(id) ? companyName(entry(id).company) : 'another company',
+      colour: id => companyColour(entry(id).company), employee: id => emps.get(id) || null, today,
+      tool: id => plan.products.tools.find(t => t.id === id) || null,
+    });
+    $body.innerHTML = `${heading}${out.html}${plan.cancelled ? '<p class="tr-warn">The search was cut short, so a finished one may find more.</p>' : ''}`;
+  }
+
   /* ── Managers ────────────────────────────────────────────── */
   // Each company's manager priced per day (ManagerCore.companyValue) at our
   // order-book margin; the game's margin repeats it as a check. A buddy (an
@@ -3152,7 +3182,7 @@ const EmployeeTrainingTool = (() => {
     }
     for (const p of $shell.querySelectorAll('[data-pane]')) p.hidden = p.dataset.pane !== view.tab;
     rankPricing();
-    if (stalePanes.has(view.tab)) ({ overview: renderTeam, employees: renderEmployees, keep: renderFire, managers: renderManagers })[view.tab]();
+    if (stalePanes.has(view.tab)) ({ overview: renderTeam, employees: renderEmployees, keep: renderFire, products: renderProducts, managers: renderManagers })[view.tab]();
     renderPicker();
     writeState();
     // Opened from further down the page: bring the tabs back into view.
@@ -3264,7 +3294,7 @@ const EmployeeTrainingTool = (() => {
     assignments = EmployeeAssignments.mount(document.getElementById('tr-assignments-body'), {
       getTeam: () => taken.size ? null : team, getMarket: () => market, productName, productIcon,
       companyName: id => { const x = team?.companies.find(c => c.company._id === id); return x ? companyName(x.company) : null; },
-      onResult: result => { plan = result; prefetchHands(); renderResult(); renderTeam(); renderFire(); },
+      onResult: result => { plan = result; prefetchHands(); renderResult(); renderTeam(); renderFire(); renderProducts(); },
       onSettings: () => { renderResult(); renderTeam(); },
     });
     $load.addEventListener('click', () => runLoad($username.value));
@@ -3377,6 +3407,8 @@ const EmployeeTrainingTool = (() => {
 
   return {
     summary,
+    // The account's tool history (cached per account), for Top Products' switch model.
+    loadToolLog,
     // fn(snapshot) on every Overview redraw (prices, planner); returns an unsubscribe.
     watch(fn) { watchers.add(fn); return () => watchers.delete(fn); },
     activate(params) {

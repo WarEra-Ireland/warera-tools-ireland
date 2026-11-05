@@ -1,14 +1,14 @@
 /* Runs EmployeePlanner.recommend and career simulations off the UI thread.
  * The page passes the cache tags of its own employee-core.js,
- * employee-planner.js and employee-career.js, so the worker always loads
- * the same versions as the page. */
+ * employee-planner.js, product-switch-core.js and employee-career.js, so
+ * the worker always loads the same versions as the page. */
 const params = new URL(self.location.href).searchParams;
 const tag = name => {
   const v = params.get(name) || '';
   if (!/^[\w.-]*$/.test(v)) throw new Error(`Invalid ${name} version`);
   return v;
 };
-importScripts(`employee-core.js?v=${tag('core')}`, `employee-planner.js?v=${tag('planner')}`, `employee-career.js?v=${tag('career')}`);
+importScripts(`employee-core.js?v=${tag('core')}`, `employee-planner.js?v=${tag('planner')}`, `product-switch-core.js?v=${tag('switch')}`, `employee-career.js?v=${tag('career')}`);
 const CARD_SUBJECT_BUDGET = 60000;
 let cardGeneration = 0, session = null;
 // One employee's cards per message. The page spreads a batch's employees

@@ -34,10 +34,18 @@
  *  older than PRICE_MAX_AGE_MS are ignored, so an item nobody has traded
  *  recently has no price rather than a stale one.
  *
- *  Switching product costs company.changeItemCost concrete. Employees also
- *  lose their specialization on the old product while they make the new
- *  one (it's saved per product). The full tool shows this progress from
- *  employee rosters; switching estimates still hold output fixed.
+ *  Switching product costs company.changeItemCost concrete. When rosters
+ *  load, each company's switch is judged on the shared model
+ *  (product-switch 05): the snapshot Employee Training plans from
+ *  (EmployeeAssignments.snapshotOf), each company re-tooled on its own
+ *  (ProductSwitchCore.singleSwitches), so saved specialisation per good,
+ *  Specialist, Craftsman and Laborer, tools that stop fitting, coworkers,
+ *  wages and retirement all count. A switch is recommended only if it
+ *  gains at the worse of today's margin and the game's average, after the
+ *  planner's minimum gain, with the Products tab's verdict names (switch,
+ *  spike, hold, stay, off). The Products tab adds employee moves to the
+ *  same search. Companies whose roster didn't load keep the plain margin
+ *  comparison, which holds output fixed and says so.
  *
  *  Access: Irish citizens only (enforceIrishOnly). bypass=1 lifts it.
  * ═══════════════════════════════════════════════════════════════════ */
@@ -89,6 +97,7 @@ const ProductPickerTool = (() => {
   const $prodTable  = document.getElementById('pp-products');
   const $compCard   = document.getElementById('pp-companies-card');
   const $compTable  = document.getElementById('pp-companies');
+  const $switchNote = document.getElementById('pp-switch-note');
   const $mobile     = document.getElementById('pp-mobile');
   const steps       = makeSteps(document.getElementById('pp-steps'));
   const setStatus   = makeStatus(document.getElementById('pp-status'));
@@ -172,18 +181,24 @@ const ProductPickerTool = (() => {
       .filter(c => c && !c.disabledAt);
     if (!companies.length) throw new Error(`All of "${full.username}"'s companies are disabled`);
     const byCompany = companies.map(c => ({ companyId: c._id }));
-    const [statsSettled, managers, offers, regions, rosters] = await Promise.all([
+    const [statsSettled, managers, offers, regions, rosters, gameValues] = await Promise.all([
       // Only Premium API keys can read this; a 403 means the proxy has none.
       trpcMany('work.getStatsByCompany', companies.map(c => ({ companyId: c._id, days: 2 }))),
       trpcManyValues('manager.getByCompanyId', byCompany),
       trpcManyValues('managerOffer.getByCompanyId', byCompany),
       trpcManyValues('region.getById', [...new Set(companies.map(c => c.region))].map(regionId => ({ regionId }))),
       includeSpecialisations ? trpcManyValues('employee.getCompanyEmployees', byCompany) : [],
+      // The game's average prices, the second price set a switch must clear.
+      includeSpecialisations ? pp_trpc('gameStat.getPpMoneyValueByItem', null).catch(() => null) : null,
     ]);
     const managerIds = [...new Set(managers.map(m => m?.user).filter(Boolean))];
     const managerUsers = await trpcManyValues('user.getUserLite', managerIds.map(userId => ({ userId })));
     const managerName = Object.fromEntries(managerIds.map((id, i) => [id, managerUsers[i]?.username]));
     const regionById = Object.fromEntries(regions.filter(Boolean).map(r => [r._id, r]));
+    // Each region's country, for income tax and the regional bonus (switch model only).
+    const countryIds = includeSpecialisations ? [...new Set(regions.filter(Boolean).map(r => r.country).filter(Boolean))] : [];
+    const countries = await trpcManyValues('country.getCountryById', countryIds.map(countryId => ({ countryId })));
+    const countryById = Object.fromEntries(countryIds.map((id, i) => [id, countries[i]]).filter(([, c]) => c));
     const statsNeedPremium = statsSettled.some(result => result.status === 'rejected' && result.reason?.status === 403);
     const aeLevels = gameConfig?.upgradesConfig?.automatedEngine?.levels || {};
     const rows = companies.map((company, i) => {
@@ -224,7 +239,52 @@ const ProductPickerTool = (() => {
       selfWorkEnergy: full.skills?.energy?.total ?? null,
       selfWorkProduction: full.skills?.production?.total ?? null,
       selfWorkEnergyCost: gameConfig?.user?.energyCostPerAction ?? null,
+      // What switchModel needs to build Employee Training's snapshot.
+      switchInputs: includeSpecialisations ? { userId: full._id, management: full.skills?.management, energy: full.skills?.energy?.total ?? null,
+        engineLevels: aeLevels, gameValues, countries: countryById } : null,
+      switches: null,
     };
+  }
+
+  // Training's management level from the skill record (as employee-training.js reads it).
+  const managementLevel = sk => !sk ? 0 : sk.total == null ? Math.max(0, sk.level || 0)
+    : Math.max(0, sk.total - ((sk.value ?? sk.total) - (sk.level ?? 0)));
+
+  /**
+   * Each company's best switch on the shared model (product-switch 05):
+   * the snapshot Employee Training plans from, with the planner inputs the
+   * player saved there, each company re-tooled on its own and evaluated at
+   * today's and the game's margins (ProductSwitchCore.singleSwitches).
+   * `toolLog` is Employee Training's (loadToolLog), for spare tools; without
+   * it only equipped tools count. `now` is for tests. Returns
+   * { rows, byId, days } or { reason } when the model can't run.
+   */
+  function switchModel(m, { toolLog = null, now = Date.now() } = {}) {
+    const S = m.switchInputs;
+    if (!S) return { reason: 'Employee rosters were not loaded.' };
+    if (!m.ppValue) return { reason: "The game's PP value did not load." };
+    const EC = EmployeeCore, EA = EmployeeAssignments;
+    const list = m.codes.flatMap(code => { const mg = margin(m, code); return mg ? [{ code, perPP: mg.perPP, ratio: mg.perPP / m.ppValue }] : []; });
+    const concretePrice = m.prices.concrete?.price ?? null;
+    if (!(concretePrice > 0)) return { reason: 'Concrete has no recent price, so a switch cannot be costed.' };
+    const market = { ppValue: m.ppValue, list, types: Object.fromEntries(m.codes.map(c => [c, m.gameItems[c].type])), engineLevels: S.engineLevels,
+      gameMargin: S.gameValues ? EC.gameMargins(m.gameItems, S.gameValues, m.ppValue) : {}, concretePrice, changeItemCost: m.changeItemCost };
+    const team = { userId: S.userId, username: m.username, management: managementLevel(S.management), energy: S.energy, toolLog,
+      companies: m.companies.map(c => {
+        const country = S.countries[c.region?.country] || null;
+        return { company: c.company, rosterMissing: !c.employees, region: c.region,
+          employees: (c.employees || []).filter(e => !e.leftAt).map(e => ({ ...e, traits: EC.currentTraits(e.traits) })),
+          engineBonus: (computeProductionBonus(country, c.region, c.company.itemCode)?.total || 0) / 100,
+          incomeTax: country?.taxes?.income };
+      }) };
+    let raw = null;
+    try { raw = JSON.parse(localStorage.getItem(`tr-assignments-v1:${S.userId}`) || 'null'); } catch { /* storage blocked: defaults */ }
+    const { errors, snapshot } = EA.snapshotOf(team, market, EA.sanitize(raw).settings, now);
+    if (errors.length) return { reason: errors.join(' ') };
+    const out = ProductSwitchCore.singleSwitches(snapshot);
+    if (!out) return { reason: 'Switches could not be compared.' };
+    if (out.errors) return { reason: out.errors.join(' ') };
+    return { ...out, byId: new Map(out.rows.map(r => [r.id, r])) };
   }
 
   /** Sale price after market tax, input cost and margin per PP, or null. */
@@ -303,9 +363,20 @@ const ProductPickerTool = (() => {
     return { rows, totals: t };
   }
 
-  /** Current product vs the most profitable one for a company. */
+  /**
+   * Current product vs the alternatives for a company. With the switch
+   * model (m.switches) and the company modelled, `modelled` is its row
+   * (verdict, target good, gain at both prices); otherwise the plain
+   * comparison with the highest-margin good at the same output, `fixed`.
+   */
   function companyPlan(m, c) {
     const profitNow = profitAt(m, c, c.company.itemCode);
+    const row = m.switches?.byId?.get(c.company._id);
+    if (row && row.verdict !== 'off') return { profitNow, modelled: row };
+    return { ...fixedPlan(m, c, profitNow), fixed: true, why: row?.excluded || m.switches?.reason || null };
+  }
+
+  function fixedPlan(m, c, profitNow) {
     let best = null;
     for (const code of m.codes) {
       const mg = margin(m, code);
@@ -323,9 +394,9 @@ const ProductPickerTool = (() => {
 
   const HELP = {
     income: ['About projected income', '<p>Total per day and week includes engines and employees, minus wages and manager pay. It excludes self-work. Engines use their configured output; employee output and wages use the last full UTC day.</p><p>The estimate beneath Total adds one full energy bar spent on self-work at your best-margin owned product, using your Production stat. The weekly estimate assumes this each day. It assumes storage space and excludes energy regenerated while working.</p><p>Engine and employee inputs update income and product comparisons as you type, keeping their current product mix and costs. The self-work input starts at one full energy bar and affects the product comparison only. Company rows and Actual values keep the loaded figures.</p>'],
-    best: ['About the highest margin', '<p>This product has the highest margin per production point at current market prices. Rankings change over time.</p><p>This is a price snapshot, not a recommendation to switch your workforce. Changing products affects employee specialisation and trait bonuses. For example, Labourer favours raw resources and penalises manufactured goods; Craftsman does the reverse. Company comparisons hold output fixed and do not include these changes.</p>'],
+    best: ['About the highest margin', '<p>This product has the highest margin per production point at current market prices. Rankings change over time.</p><p>This is a price snapshot, not a recommendation to switch your workforce. Changing products affects employee specialisation and trait bonuses. For example, Labourer favours raw resources and penalises manufactured goods; Craftsman does the reverse. Your companies below are judged with these changes when their employees load.</p>'],
     products: ['About product margins', '<p>Margin per production point (PP) is the sale price after market tax, minus input costs, divided by the PP needed to make it. Inputs use market prices even when you make them yourself.</p><p>Prices average the latest 100 trades, weighted by quantity. Trades older than 24 hours are excluded. Products without recent prices are omitted. The game uses a slower price average and excludes market tax, so its profit figures can differ.</p><p>Max columns put all your output into that product. Without self-work adds engines and profitable employee output. With self-work adds Max self-work, using the PP input above. Both exclude employee output when it loses money. The default sort is Without self-work, highest first. Actual is what your companies making it earn now. Green rows are products you make. Click a heading to sort.</p><p>Employees pay off shows the highest wage expectation that earns a profit, using your Management and core-region bonus. Wages use the game’s PP value × wage expectation (70–130%). Bonuses increase output without increasing wages. This threshold excludes individual happiness, traits and specialisation.</p>'],
-    companies: ['About company profits and switching', '<p>Daily profit is output × the current product margin, minus wages and manager pay. Employee bonuses include your Management, the manager and a core region.</p><p>Gain per day compares the current product with the best product at the same output and costs. Switch cost is the concrete needed to change products. Companies start in the game’s order. Click a column heading to sort; click again to reverse it.</p><p>Expand Specialisations to see each employee’s current bonus and saved progress on other products, capped at +20%. An unlisted product has no saved progress. Switching restores that product’s progress. Potential gains hold output fixed and exclude changes to specialisation and trait bonuses. Labourer favours raw resources and penalises manufactured goods; Craftsman does the reverse.</p>'],
+    companies: ['About company profits and switching', '<p>Daily profit is output × the current product margin, minus wages and manager pay. Employee bonuses include your Management, the manager and a core region.</p><p><strong>Best switch</strong> uses the Employee Training model with your saved planner settings. Each company is switched on its own to the goods the planner tries, with each employee’s saved specialisation on the new good, Specialist, Craftsman and Laborer, tools that stop fitting, coworkers, wages and retirement. <strong>Switch</strong> means it still gains at the worse of today’s margin and the game’s slower average, after the planner’s minimum gain. <strong>Spike: hold</strong> means it pays at today’s prices only, while the good’s margin is far above the game’s average. <strong>Hold</strong> means it pays at today’s prices only, without a spike. <strong>Stay</strong> means no other good pays at both prices. Each verdict links to the Products tab of Employee Training, which plans switches together with employee moves, so its verdicts can differ.</p><p>Gain per day is the switch’s extra profit over the planner’s horizon, net of the concrete: today’s prices first, the game’s below. Switch cost is the concrete needed to change products; payback is that cost over the gain a day at the worse price.</p><p>When a company’s employees don’t load, it shows the old comparison instead, marked <strong>output held fixed</strong>: the best-margin good at the same output and costs, without specialisation, trait or tool changes.</p><p>Companies start in the game’s order. Click a column heading to sort; click again to reverse it. Expand Specialisations to see each employee’s current bonus and saved progress on other products, capped at +20%. Switching restores that product’s progress.</p>'],
   };
   const help = key => sectionHelp(...HELP[key]);
 
@@ -573,13 +644,52 @@ const ProductPickerTool = (() => {
     { key: 'payOff', label: 'Employees pay off', title: 'Highest wage expectation at which an employee still makes money on the current product, with this company’s bonuses' },
     { key: 'wages', label: 'Wages' },
     { key: 'profit', label: 'Profit / day' },
-    { key: 'best', label: 'Highest margin', l: true, dir: 1 },
-    { key: 'gain', label: 'Potential gain / day' },
+    { key: 'best', label: 'Best switch', l: true, dir: 1, title: 'The Employee Training model, each company switched on its own; output held fixed where employees did not load' },
+    { key: 'gain', label: 'Gain / day', title: 'Extra profit a day, net of the concrete: today’s prices, then the game’s' },
     { key: 'cost', label: 'Switch cost' },
   ];
 
+  /* ── Switch verdicts (product-switch 05) ───────────────────
+   *  Names as the Products tab of Employee Training (EmployeeProducts.VERDICT);
+   *  each links there for the plan with employee moves. */
+  const VERDICT_KIND = { switch: 'ok', spike: 'warn', hold: 'warn', stay: 'muted' };
+  const productsTabUrl = () => `#training?${new URLSearchParams({ u: model.username, tab: 'products' })}`;
+  function verdictPill(verdict) {
+    const label = EmployeeProducts.VERDICT[verdict]?.[0] || verdict;
+    return `<a class="dash-pill ${VERDICT_KIND[verdict] || 'muted'}" href="${productsTabUrl()}" title="Open the Products tab of Employee Training, which plans switches with employee moves">${escapeHtml(label)}</a>`;
+  }
+  const VERDICT_NOTE = {
+    switch: 'Pays at both prices',
+    spike: 'Pays at today’s prices only: a price spike',
+    hold: 'Pays at today’s prices only',
+    stay: 'No other good pays at both prices',
+  };
+  // Whether the row offers a switch figure (gain, cost) at all.
+  const offersSwitch = plan => plan.modelled ? !!plan.modelled.to : plan.gain != null && !plan.isBest;
+  const switchGain = plan => plan.modelled ? plan.modelled.gain?.live ?? null : plan.gain;
+  const switchCost = plan => plan.modelled ? plan.modelled.cost : plan.cost;
+  const daysText = v => !Number.isFinite(v) ? 'never' : v <= 0 ? 'none' : v < 1 ? 'under a day' : `${Math.ceil(v)} day${Math.ceil(v) === 1 ? '' : 's'}`;
+  const fixedTag = plan => `<small class="dp-muted pp-fixed"${plan.why ? ` title="${escapeHtml(plan.why)}"` : ''}>output held fixed</small>`;
+
+  function bestSwitchHtml(plan) {
+    const w = plan.modelled;
+    if (w) return `<span class="pp-verdict">${verdictPill(w.verdict)}${w.to ? `<span aria-hidden="true">→</span>${productCell(w.to)}` : ''}</span><small class="dp-muted">${VERDICT_NOTE[w.verdict]}${w.spike && w.ratio != null ? ` (${num(w.ratio, 2)}× the game’s margin)` : ''}${w.tools ? ` · with ${w.tools} spare tool${w.tools === 1 ? '' : 's'}` : ''}</small>`;
+    if (!plan.best) return muted('–');
+    return `${plan.isBest ? pill('✓ Already making it', 'ok') : productCell(plan.best.code)}${fixedTag(plan)}`;
+  }
+  function gainHtml(plan) {
+    const w = plan.modelled;
+    if (w) return w.gain ? `${signedMoney(w.gain.live)}<small class="dp-muted">Game: ${signedMoney(w.gain.game)}</small>` : muted('–');
+    return offersSwitch(plan) ? `${signedMoney(plan.gain)}${fixedTag(plan)}` : muted('–');
+  }
+  function costHtml(plan) {
+    if (!offersSwitch(plan)) return muted('–');
+    const w = plan.modelled;
+    return `${money(switchCost(plan))}${w?.verdict === 'switch' && w.cost ? `<small class="dp-muted">payback ${daysText(w.payback)}</small>` : ''}`;
+  }
+
   function companySortValue({ c, plan }, key) {
-    const switching = plan.gain != null && !plan.isBest;
+    const switching = offersSwitch(plan);
     switch (key) {
       case 'bonus': return c.empPP ? employeeBonusPct(model, c) : null;
       case 'manager': return c.manager ? c.managerName || 'Unknown' : null;
@@ -588,9 +698,12 @@ const ProductPickerTool = (() => {
       case 'payOff': return c.empPP ? payOffLimit(model, c.company.itemCode, employeeBonusPct(model, c)) : null;
       case 'wages': return costDay(c) > 0 ? costDay(c) : null;
       case 'profit': return plan.profitNow;
-      case 'best': return plan.best ? ITEMS[plan.best.code]?.name || plan.best.code : null;
-      case 'gain': return switching ? plan.gain : null;
-      case 'cost': return switching ? plan.cost : null;
+      case 'best': {
+        const code = plan.modelled ? plan.modelled.to : plan.best?.code;
+        return code ? ITEMS[code]?.name || code : null;
+      }
+      case 'gain': return switching ? switchGain(plan) : null;
+      case 'cost': return switching ? switchCost(plan) : null;
     }
   }
 
@@ -607,7 +720,6 @@ const ProductPickerTool = (() => {
         const { company } = c;
         const itemName = ITEMS[company.itemCode]?.name;
         const label = company.name && company.name !== itemName ? `<span class="dp-cat">${escapeHtml(company.name)}</span>` : '';
-        const switching = plan.gain != null && !plan.isBest;
         return `<tr style="--co:${rarityColour(model.gameItems?.[company.itemCode]?.rarity)}">
           <td class="dp-l"><a href="${companyUrlFor(company._id)}" target="_blank" rel="noopener">${productCell(company.itemCode, label)}</a>${statusTags(c)}${specialisationsHtml(c)}</td>
           <td class="dp-l">${bonusChips(c)}</td>
@@ -617,13 +729,25 @@ const ProductPickerTool = (() => {
           <td>${c.empPP ? payOffHtml(payOffLimit(model, company.itemCode, employeeBonusPct(model, c))) : muted('–')}</td>
           <td>${costDay(c) > 0 ? money(costDay(c)) : muted('–')}</td>
           <td>${money(plan.profitNow)}</td>
-          <td class="dp-l">${!plan.best ? muted('–') : plan.isBest ? pill('✓ Already making it', 'ok') : productCell(plan.best.code)}</td>
-          <td>${switching ? signedMoney(plan.gain) : muted('–')}</td>
-          <td>${switching ? money(plan.cost) : muted('–')}</td>
+          <td class="dp-l pp-switch-cell">${bestSwitchHtml(plan)}</td>
+          <td class="pp-switch-cell">${gainHtml(plan)}</td>
+          <td class="pp-switch-cell">${costHtml(plan)}</td>
         </tr>`;
       }).join('')}</tbody>`;
     bindSorting($compTable, COMPANY_COLS, companySort, value => { companySort = value; }, renderCompanies);
+    $switchNote.innerHTML = switchNoteHtml();
     $compCard.classList.remove('hidden');
+  }
+
+  /** One line on how the Best switch column was worked out. */
+  function switchNoteHtml() {
+    const sw = model.switches;
+    const fixed = model.companies.filter(c => companyPlan(model, c).fixed).length;
+    if (!sw?.rows) return `Best switch holds output fixed: ${escapeHtml(sw?.reason || 'the employee model did not run.')}`;
+    const counts = sw.rows.reduce((n, r) => ({ ...n, [r.verdict]: (n[r.verdict] || 0) + 1 }), {});
+    return `Best switch uses the Employee Training model, each company switched on its own over ${num(sw.days, 0)} days: ${counts.switch || 0} to switch.`
+      + `${fixed ? ` ${fixed} compan${fixed === 1 ? 'y' : 'ies'} didn’t load and hold output fixed.` : ''}`
+      + ` <a href="${productsTabUrl()}">Plan switches with employee moves on the Products tab</a>.`;
   }
 
   function specialisationsHtml(c) {
@@ -657,6 +781,14 @@ const ProductPickerTool = (() => {
     if (c.manager) return `${escapeHtml(c.managerName || 'Unknown')} · +${num(c.manager.productionBonusPercent, 0)}% · ${money(c.managerDay)}/day${c.manager.isInactive ? ' · inactive' : ''}`;
     if (c.offer) return `Hiring · up to ₿${num(c.offer.maxHourlyWage, 3)}/h`;
     return 'None';
+  }
+
+  function mobileSwitchLine(plan, name) {
+    const w = plan.modelled;
+    if (w) return `<div class="pp-m-switch">${verdictPill(w.verdict)}${w.to ? ` → <strong>${name(w.to)}</strong>` : ''} · ${VERDICT_NOTE[w.verdict]}${w.tools ? `, with ${w.tools} spare tool${w.tools === 1 ? '' : 's'}` : ''}`
+      + `${w.gain ? `<br>${signedMoney(w.gain.live)}/day · game ${signedMoney(w.gain.game)}/day · switch costs ${money(w.cost)}${w.verdict === 'switch' ? `, payback ${daysText(w.payback)}` : ''}` : ''}</div>`;
+    if (!offersSwitch(plan)) return '';
+    return `<div class="pp-m-switch">At current prices, <strong>${name(plan.best.code)}</strong>: ${signedMoney(plan.gain)}/day with output held fixed · switch costs ${money(plan.cost)}</div>`;
   }
 
   function renderMobile() {
@@ -724,12 +856,13 @@ const ProductPickerTool = (() => {
           <div><span>Employees pay off</span>${c.empPP ? payOffHtml(payOffLimit(model, code, employeeBonusPct(model, c))) : '–'}</div>
         </div>
         ${specialisationsHtml(c)}
-        ${plan.gain != null && !plan.isBest ? `<div class="pp-m-switch">At current prices, <strong>${name(plan.best.code)}</strong>: ${signedMoney(plan.gain)}/day at unchanged output · switch costs ${money(plan.cost)}</div>` : ''}
+        ${mobileSwitchLine(plan, name)}
       </div>`;
     };
 
     $mobile.innerHTML = `${incomeCard}${bestCard}${productsCard}
       <h3 class="pp-m-heading">Your companies</h3>
+      <p class="pp-m-sub pp-m-note">${switchNoteHtml()}</p>
       ${plans.map(companyCard).join('')}`;
     $mobile.classList.remove('hidden');
   }
@@ -773,6 +906,14 @@ const ProductPickerTool = (() => {
       enforceIrishOnly(user.country, user.username);
       steps.setStep(1, 'done', { count: `→ ${user.username}` });
       model = await loadModel(user, steps.setStep, { includeSpecialisations: true });
+      // Spare tools, as Employee Training sees them (cached per account).
+      steps.setStep(3, 'active', { sub: 'Reading tool history for switches' });
+      const toolLog = await EmployeeTrainingTool.loadToolLog(model.switchInputs.userId).catch(err => { console.warn('[products] tool history failed', err); return null; });
+      steps.setStep(3, 'done', { sub: '', count: `${Object.keys(model.prices).length} priced` });
+      try { model.switches = switchModel(model, { toolLog }); } catch (err) {
+        console.warn('[products] switch model failed', err);
+        model.switches = { reason: 'The employee model failed to run.' };
+      }
       overrides = {};
       sort = { key: 'totalWithoutSelf', dir: -1 };
       companySort = { key: 'company', dir: 1 };
@@ -794,7 +935,7 @@ const ProductPickerTool = (() => {
   RecentPlayers.mount(document.getElementById('pp-recent'), u => { $username.value = u; run(); });
 
   return {
-    ITEMS, tradePrices, margin, loadModel, productRows, companyPlan, incomeSummary, selfWorkProjection,
+    ITEMS, tradePrices, margin, loadModel, productRows, companyPlan, switchModel, incomeSummary, selfWorkProjection,
     /**
      * Called by the router (or the home shell) whenever the view becomes
      * active. Re-runs only when ?u= differs from the loaded name.

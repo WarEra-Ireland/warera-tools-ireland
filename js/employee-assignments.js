@@ -217,7 +217,12 @@ const EmployeeAssignments = (() => {
       c.recruitmentValues = [first.best, ...[4, 5, 6].map(slots => EC.freshSetValue(groups, { slots, rate: first.rate }).best)].map(value => value * market.ppValue);
     }
     const days = settings.horizon === 'career' ? careerDays(employees.filter(e => !excluded.has(e.company))) : Number(settings.horizon);
-    return { errors, snapshot: { companies, employees, tools, days, toolboxValue: settings.toolboxValue || 0, trainingQuota, management: team.management || 0, minMax: settings.minMax } };
+    // Product switches (product-switch 03) need the switch's concrete priced;
+    // without it the planner keeps every company on its product.
+    const switches = market.concretePrice > 0 ? { market: { list: market.list, gameMargin: market.gameMargin || {}, types: market.types || {} },
+      concretePrice: market.concretePrice, changeItemCost: market.changeItemCost ?? 5 } : undefined;
+    return { errors, snapshot: { companies, employees, tools, days, toolboxValue: settings.toolboxValue || 0, trainingQuota, management: team.management || 0, minMax: settings.minMax,
+      ...(switches ? { switches } : {}) } };
   }
 
   /* ── Rendering ─────────────────────────────────────────────── */
@@ -229,6 +234,7 @@ const EmployeeAssignments = (() => {
   const ICON = {
     swap: '<path d="M4 8h14l-3.5-3.5M20 16H6l3.5 3.5"/>',
     move: '<path d="M4 12h15l-4-4M19 12l-4 4"/>',
+    switch: '<path d="M20 11a8 8 0 0 0-14.9-3M4 13a8 8 0 0 0 14.9 3M5 4v4h4M19 20v-4h-4"/>',
     plus: '<path d="M12 5v14M5 12h14"/>',
   };
   // Tool types use the game's own item art; the rest are line glyphs.
@@ -262,12 +268,22 @@ const EmployeeAssignments = (() => {
    * tools a card's people give up that go to an unchanged employee later,
    * when that employee's own tool runs out ([{ tool, employee, from, to }],
    * hours); that employee's gain belongs to the card. */
+  /* A product switch (product-switch 03, step { kind: 'switch', company,
+   * from, to }) gets a card of its own. Its people are everyone who ends
+   * the plan in that company and is on no other card (a move in keeps its
+   * own card), its `cost` the switch's concrete, and it carries the tool
+   * changes accepted with it. */
   function planCards(result, snapshot) {
     const emp = new Map(snapshot.employees.map(e => [e.id, e]));
     const changed = result.arrangement.filter(a => a.company !== emp.get(a.employee).company || a.tool !== (emp.get(a.employee).equipped?.id || null));
     const changedIds = new Set(changed.map(a => a.employee)), accepted = result.search.accepted || [];
     const cards = result.steps.map(s => ({ ...s, people: [...s.employees], entries: [] }));
     const cardOf = new Map(cards.flatMap(c => c.employees.map(id => [id, c])));
+    const switchCard = new Map(cards.filter(c => c.kind === 'switch').map(c => [c.company, c]));
+    for (const [company, card] of switchCard) {
+      card.cost = (result.switches || []).find(w => w.company === company)?.cost || 0;
+      for (const a of result.arrangement) if (a.company === company && !cardOf.has(a.employee)) { card.people.push(a.employee); cardOf.set(a.employee, card); }
+    }
     for (let grew = true; grew;) {
       grew = false;
       for (const a of accepted) {
@@ -275,10 +291,12 @@ const EmployeeAssignments = (() => {
         if (card) for (const id of ids) if (!cardOf.has(id) && changedIds.has(id)) { card.people.push(id); cardOf.set(id, card); grew = true; }
       }
     }
-    for (const a of accepted) a.changes.map(c => cardOf.get(c[0])).find(Boolean)?.entries.push(a);
+    for (const a of accepted) (switchCard.get(a.switch?.company) || a.changes.map(c => cardOf.get(c[0])).find(Boolean))?.entries.push(a);
     const margins = Object.fromEntries(snapshot.companies.map(c => [c.product, c.margin]));
     const product = id => snapshot.companies.find(c => c.id === id).product;
     for (const card of cards) {
+      // A switch's break-even is in its report (result.switches).
+      if (card.kind === 'switch') { card.price = null; delete card.entries; continue; }
       const from = emp.get(card.employees[0]).company, to = card.kind === 'move' ? card.to : emp.get(card.employees[1]).company;
       const sum = {};
       for (const a of card.entries) for (const [k, v] of Object.entries(a.byProduct || {})) sum[k] = (sum[k] || 0) + v;
@@ -320,8 +338,9 @@ const EmployeeAssignments = (() => {
     if (moved) {
       if (e.traits.some(t => t.code === 'creatureOfHabit')) tag('down', 'Creature of Habit −30% for 3 days');
       if (e.traits.some(t => ['veteran', 'diamondInTheRough', 'burnout'].includes(t.code))) tag('down', 'Tenure restarts', 'Resets Veteran, Diamond in the Rough and Burnout.');
-      if (from.product !== to.product) tag(after.specialization >= before.specialization ? 'up' : 'down', `Specialization ${pct(before.specialization)} → ${pct(after.specialization)}`, `Saved progress for ${productName(to.product)}.`);
     }
+    // A move, or a product switch: saved progress for the new good.
+    if (from.product !== to.product) tag(after.specialization >= before.specialization ? 'up' : 'down', `Specialization ${pct(before.specialization)} → ${pct(after.specialization)}`, `Saved progress for ${productName(to.product)}.`);
     tag('', `Output ${num(before.output, 2)} → ${num(after.output, 2)} PP/h`, 'Right after the change.');
     return out;
   }
@@ -572,7 +591,10 @@ const EmployeeAssignments = (() => {
       if (!result.valid) { onResult(null); hero.innerHTML = ''; out.innerHTML = `<ul class="tr-warn">${result.errors.map(e => `<li>${esc(e)}</li>`).join('')}</ul>`; return; }
       const { baseline, proposed } = result, days = snapshot.days;
       const emp = id => snapshot.employees.find(e => e.id === id);
-      const co = id => snapshot.companies.find(c => c.id === id);
+      // Companies as the plan leaves them: a switched one on its new product.
+      const types = snapshot.switches?.market?.types || {}, switchTo = new Map((result.switched || []).map(x => [x.company, x.product]));
+      const finalCompanies = snapshot.companies.map(c => switchTo.has(c.id) ? { ...c, product: switchTo.get(c.id), type: types[switchTo.get(c.id)] || c.type } : c);
+      const co0 = id => snapshot.companies.find(c => c.id === id), co = id => finalCompanies.find(c => c.id === id);
       // Company names repeat (new companies share a default), so add the product.
       const place = id => `<span class="tr-asg-place">${productIcon(co(id).product)}${esc(companyName(id) || co(id).name)}</span>`;
       const tool = id => snapshot.tools.find(t => t.id === id);
@@ -581,8 +603,11 @@ const EmployeeAssignments = (() => {
       const changed = result.arrangement.filter(a => a.company !== emp(a.employee).company || a.tool !== (emp(a.employee).equipped?.id || null));
       const changedIds = new Set(changed.map(a => a.employee));
       const moved = changed.filter(a => a.company !== emp(a.employee).company);
-      onResult({ coverage: result.coverage, warnings: result.warnings, excluded: result.excluded, gain: result.gain, days, horizon: settings.horizon, changes: changed.length, cancelled,
+      onResult({ coverage: result.coverage, warnings: result.warnings, excluded: result.excluded, gain: result.gain, days, horizon: settings.horizon, changes: changed.length + switchTo.size, cancelled,
         moves: moved.map(a => ({ employee: a.employee, to: a.company })),
+        // Product switches (product-switch 04): null when the planner ran without them.
+        products: snapshot.switches ? { switches: result.switches || [], holds: result.search.switchHolds || [],
+          tools: snapshot.tools.map(t => ({ id: t.id, type: t.type, bonus: t.bonus })) } : null,
         tools: result.arrangement.map(a => ({ employee: a.employee, tool: a.tool ? tool(a.tool) : null })) });
       const delta = id => row(proposed, id).value - row(baseline, id).value;
       const newTool = id => { const a = final.get(id); return a.tool && a.tool !== (emp(id).equipped?.id || null) ? tool(a.tool) : null; };
@@ -600,11 +625,16 @@ const EmployeeAssignments = (() => {
       const ratioText = (v, other) => `${num(v * 100, Math.round(v * 100) === Math.round(other * 100) ? 1 : 0)}%`;
       const priceLine = ({ price: b }) => b ? `<span>Price-sensitive: loses money if ${esc(productName(b.up))} earns less than ${ratioText(b.ratio, b.now)} of ${esc(productName(b.down))} per PP (now ${ratioText(b.now, b.ratio)}).</span>` : '';
       const tags = id => {
-        const e = emp(id), list = reasons(e, co(e.company), co(final.get(id).company), row(baseline, id), row(proposed, id), productName);
+        const e = emp(id), list = reasons(e, co0(e.company), co(final.get(id).company), row(baseline, id), row(proposed, id), productName);
         return list.map(r => `<span class="tr-asg-tag${r.tone ? ` is-${r.tone}` : ''}"${r.hint ? ` title="${esc(r.hint)}"` : ''}>${esc(r.text)}</span>`).join('');
       };
       // A tool that does not fit the new company returns to inventory by itself.
-      const back = id => EP.returnsTool(emp(id), final.get(id), snapshot.tools, snapshot.companies);
+      // So does a tool that stops fitting a company switched to another good.
+      const back = id => {
+        const e = emp(id), a = final.get(id), t = e.equipped && tool(e.equipped.id);
+        if (t && switchTo.has(a.company) && a.company === e.company && a.tool !== t.id && !EP.TOOL_TYPES[t.type]?.includes(co(a.company).product)) return t;
+        return EP.returnsTool(e, a, snapshot.tools, finalCompanies);
+      };
       const removes = id => !newTool(id) && !back(id) && emp(id).equipped && !final.get(id).tool;
       const action = id => {
         const e = emp(id), to = final.get(id).company, t = newTool(id);
@@ -615,9 +645,11 @@ const EmployeeAssignments = (() => {
       };
       // A tool given up now and handed on later: to whom, when, and why.
       const dayOf = h => Math.floor(h / 24) + 1;
-      const heldText = (x, giver) => {
+      // `fits`: false when the giver's company switches to a good the tool doesn't fit.
+      const heldText = (x, giver, fits = true) => {
         const e = emp(x.employee), own = e.equipped, held = tool(x.tool), retires = x.to >= EC.workingDays(e) * 24 - 1e-6;
         const handy = e.traits.some(t => t.code === 'handy') ? ' and keeps Handy\'s +40% going' : '';
+        if (!fits) return `Held for ${esc(e.name)}: their ${own ? toolText(own) : 'tool'} runs out on day ${dayOf(x.from)}. The ${toolText(held)}, back in inventory with the switch, then lasts ${retires ? 'until they retire' : `until day ${dayOf(x.to)}`}${handy}.`;
         const gone = held.hours <= x.from ? ` If ${esc(giver)} keeps it, it wears out on day ${dayOf(held.hours)}, before then.` : '';
         return `Held for ${esc(e.name)}: their ${own ? toolText(own) : 'tool'} runs out on day ${dayOf(x.from)}. The ${toolText(held)} then lasts ${retires ? 'until they retire' : `until day ${dayOf(x.to)}`}${handy}, worth more than its +${esc(num(held.bonus, 0))}% to ${esc(giver)} now.${gone}`;
       };
@@ -627,8 +659,9 @@ const EmployeeAssignments = (() => {
           <span class="tr-asg-own${delta(x.employee) < 0 ? ' is-neg' : ''}">${signed(delta(x.employee))}</span>`;
       };
       const notes = item => {
-        const out = item.kind === 'swap' ? ["Use the game's Swap option."] : [];
-        for (const x of item.heldFor) out.push(heldText(x, emp(item.people.find(id => emp(id).equipped?.id === x.tool)).name));
+        const out = item.kind === 'swap' ? ["Use the game's Swap option."] : item.kind === 'switch'
+          ? [`Change the product on the company page: ${item.cost ? `₿${esc(num(item.cost, 2))} of concrete. ` : ''}Saved specialisation is kept per good. Gains at today's and the game's prices are on the Products tab.`] : [];
+        for (const x of item.heldFor) { const giver = item.people.find(id => emp(id).equipped?.id === x.tool); out.push(heldText(x, emp(giver).name, !back(giver) || !switchTo.has(emp(giver).company))); }
         for (const id of item.people) {
           const name = esc(emp(id).name), t = newTool(id), b = back(id), h = row(proposed, id)?.handoffs?.[0];
           if (b && !item.heldFor.some(x => x.tool === emp(id).equipped?.id)) out.push(`${name}'s ${toolText(b)} goes back to inventory by itself.`);
@@ -637,13 +670,15 @@ const EmployeeAssignments = (() => {
         }
         return out;
       };
+      const switchRow = item => `<span class="tr-asg-who">${place(item.company)}</span><span class="tr-asg-what"><span class="tr-asg-line">${productIcon(item.from)}<b>${esc(productName(item.from))}</b>
+          <span class="tr-muted">→</span>${productIcon(item.to)}<b>${esc(productName(item.to))}</b></span></span><span class="tr-asg-own"></span>`;
       const stepHtml = (item, i) => {
-        const a = emp(item.employees[0]), many = item.people.length + item.heldFor.length > 1;
-        const value = item.people.reduce((v, id) => v + delta(id), 0) + item.heldFor.reduce((v, x) => v + delta(x.employee), 0);
+        const a = emp(item.people[0]), many = item.people.length + item.heldFor.length > 1;
+        const value = item.people.reduce((v, id) => v + delta(id), 0) + item.heldFor.reduce((v, x) => v + delta(x.employee), 0) - (item.cost || 0);
         const t = item.kind === 'tool' && newTool(a.id);
-        const kind = item.kind === 'swap' ? 'Swap' : item.kind === 'move' ? 'Move' : t ? 'Give a tool' : item.heldFor.length ? 'Hold back a tool' : 'Remove a tool';
+        const kind = item.kind === 'switch' ? 'Switch product' : item.kind === 'swap' ? 'Swap' : item.kind === 'move' ? 'Move' : t ? 'Give a tool' : item.heldFor.length ? 'Hold back a tool' : 'Remove a tool';
         const glyph = icon(item.kind === 'tool' ? t?.type || a.equipped?.type || 'move' : item.kind);
-        const rows = item.people.map(id => `<span class="tr-asg-who">${esc(emp(id).name)}</span><span class="tr-asg-what">${action(id)}</span>
+        const rows = (item.kind === 'switch' ? switchRow(item) : '') + item.people.map(id => `<span class="tr-asg-who">${esc(emp(id).name)}</span><span class="tr-asg-what">${action(id)}</span>
           <span class="tr-asg-own${delta(id) < 0 ? ' is-neg' : ''}">${many ? signed(delta(id)) : ''}</span>`).join('') + item.heldFor.map(heldRow).join('');
         const why = item.people.map(id => `<div class="tr-asg-tags">${many ? `<b>${esc(emp(id).name)}</b>` : ''}${tags(id)}</div>`).join('') + notes(item).map(n => `<p>${n}</p>`).join('');
         return `<li class="tr-asg-step" data-emps="${esc([...item.people, ...item.heldFor.map(x => x.employee)].join(' '))}"><span class="tr-asg-n" aria-hidden="true">${i + 1}</span><span class="tr-asg-glyph">${glyph}</span>
@@ -652,7 +687,7 @@ const EmployeeAssignments = (() => {
           <div class="tr-asg-foot">${priceLine(item)}<details class="tr-asg-why"><summary>Why and details</summary><div>${why}</div></details></div></div></li>`;
       };
 
-      const onCards = new Set([...changedIds, ...[...held.values()].map(x => x.employee)]);
+      const onCards = new Set([...changedIds, ...items.flatMap(c => c.people), ...[...held.values()].map(x => x.employee)]);
       const coworkers = proposed.employees.filter(r => !onCards.has(r.id)).map(r => ({ r, b: row(baseline, r.id) }))
         .filter(({ r, b }) => Math.abs(r.value - b.value) > 0.005);
       const coworkerHtml = ({ r, b }) => {
@@ -683,6 +718,7 @@ const EmployeeAssignments = (() => {
         ${tile(`Extra profit · ${settings.horizon === 'career' ? 'over their careers' : `next ${plural(days, 'day')}`}`, good ? signed(result.gain) : 'Keep as is',
           good ? `≈ ${signed(result.gain / days)} a day · game money after wages, at today's prices` : dropped ? `Within noise of the best found: ${left}` : 'No more profitable arrangement found', good ? ' is-big' : ' is-big is-flat')}
         ${tile('Moves', moved.length, moved.length ? (payback > 1 ? `pays back by day ${payback}` : 'pays off from day 1') : 'none worth it')}
+        ${switchTo.size ? tile('Product switches', switchTo.size, 'gains at both prices on the Products tab') : ''}
         ${tile('Tools used', `${used}<span class="tr-muted"> / ${manual.length}</span>`, !manual.length ? 'none available' : used < manual.length ? `${manual.length - used} left unused` : 'all in use')}
         ${tile('Horizon', `${days} d`, settings.horizon === 'career' ? (last ? `${esc(last.name)} retires last, after ${EC.workingDays(last)} working days` : 'until retirement') : 'fixed window')}
         ${tile('Planned', `${planned.length}<span class="tr-muted"> / ${snapshot.companies.length}</span>`, `companies · ${plural(plannedPeople.length, 'employee')}${pinned ? ` · ${pinned} kept in place` : ''}`)}</div>`;
@@ -698,7 +734,7 @@ const EmployeeAssignments = (() => {
       chartData = drawn?.data || null;
       const head = cancelled ? '<p class="tr-warn">Search cancelled. This is the best arrangement found before cancelling: every step is valid, but a finished search may find more.</p>' : '';
       out.innerHTML = `${head}${drawn ? `<section class="tr-asg-box">${drawn.html}</section>` : ''}
-        <section class="tr-asg-box" aria-labelledby="plan-steps-heading"><h4 id="plan-steps-heading">${items.length ? 'Recommended moves and tool assignments <span class="tr-muted">· then reload employees</span>' : 'No changes'}</h4>
+        <section class="tr-asg-box" aria-labelledby="plan-steps-heading"><h4 id="plan-steps-heading">${items.length ? `Recommended ${switchTo.size ? 'product switches, ' : ''}moves and tool assignments` + ' <span class="tr-muted">· then reload employees</span>' : 'No changes'}</h4>
           ${items.length ? `<ol class="tr-asg-steps">${items.map(stepHtml).join('')}</ol>` : `<p class="tr-muted">${dropped ? `No change clears the minimum gain ${over(days)}` : `No profitable change found ${over(days)}`}. Tools can remain unused.</p>`}
           ${dropped ? `<p class="tr-muted">${esc(left[0].toUpperCase() + left.slice(1))}: a change must gain at least ${signed(bar.floor)}, or ${signed(bar.recentFactor * bar.floor)} for someone moved in the last ${bar.recentHours / 24} days, after a margin for price changes.</p>` : ''}
           ${coworkers.length ? `<details class="tr-more"><summary>${plural(coworkers.length, 'coworker')} ${coworkers.length === 1 ? 'is' : 'are'} affected <em>· ${signed(coworkers.reduce((v, { r, b }) => v + r.value - b.value, 0))}, included above</em></summary>
@@ -710,7 +746,7 @@ const EmployeeAssignments = (() => {
 
       // Tool cards learn who gets each tool, or why it stays unused.
       const holders = new Map(result.arrangement.filter(a => a.tool).map(a => [a.tool, emp(a.employee).name]));
-      const fits = type => planned.some(c => EP.TOOL_TYPES[type]?.includes(c.product));
+      const fits = type => planned.some(c => EP.TOOL_TYPES[type]?.includes(co(c.id).product));
       const unusedWhy = r => fits(r.type) ? { text: 'No gain found' } : { text: 'No planned company uses it', title: `None of your planned companies makes ${EP.TOOL_TYPES[r.type].map(productName).join(', ')}` };
       $('[data-plan-shelf]').innerHTML = shelf(getTeam(), { holders, unusedWhy });
     }
@@ -768,7 +804,7 @@ const EmployeeAssignments = (() => {
       onResult({ running: true });
       const tag = name => document.querySelector(`script[src*="js/${name}.js"]`)?.getAttribute('src')?.match(/[?&]v=([\w.-]+)/)?.[1] || '';
       try {
-        worker = new Worker(`${root.dataset.worker}&core=${tag('employee-core')}&planner=${tag('employee-planner')}&career=${tag('employee-career')}`);
+        worker = new Worker(`${root.dataset.worker}&core=${tag('employee-core')}&planner=${tag('employee-planner')}&switch=${tag('product-switch-core')}&career=${tag('employee-career')}`);
       } catch (err) { console.warn('[planner] worker failed', err); fail('The planner could not start in this browser.'); return; }
       running = id;
       worker.onmessage = ({ data }) => {
