@@ -1103,8 +1103,10 @@ const EmployeeTrainingTool = (() => {
     const companies = (await trpcManyValues('company.getById', ids.map(companyId => ({ companyId })), {
       onProgress: (done, total) => steps.setStep(2, 'active', { sub: 'Loading company details', count: `${done}/${total}` }),
     }))
-      .filter(c => c && !c.disabledAt);
-    steps.setStep(2, 'done', { count: `${companies.length} active` });
+      // Disabled companies stay: their employees still need moving out.
+      .filter(Boolean);
+    const disabled = companies.filter(c => c.disabledAt).length;
+    steps.setStep(2, 'done', { count: `${companies.length - disabled} active${disabled ? ` · ${disabled} disabled` : ''}` });
     steps.setStep(3, 'active', { sub: 'Loading employees, estimates and managers' });
     steps.setStep(4, 'active', { sub: 'Loading output history and prices' });
     // Profit often finishes first; it ticks off after employees so the list reads in order.
