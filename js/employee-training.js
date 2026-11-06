@@ -2569,7 +2569,7 @@ const EmployeeTrainingTool = (() => {
       const sure = v.beat(alt.value);
       $res.innerHTML = `
         <div class="tr-cand-total"><strong class="${v.total < 0 ? 'tr-neg' : ''}">${signedPP(v.total)} PP</strong>${money ? ` <span class="tr-muted">≈ ${money}</span>` : ''}
-          <small class="${sure < 0.6 ? 'tr-warn' : 'tr-muted'}">${sure >= 0.95 ? 'worth hiring whatever the card hides' : `worth the energy ${odds(sure)} of the time`}</small></div>
+          <small class="${sure < 0.6 ? 'tr-warn' : 'tr-muted'}">${sure >= 0.95 ? 'worth hiring whatever the card hides' : `pays for the hire ${odds(sure)} of the time`}</small></div>
         <details class="tr-cand-why"><summary>Breakdown</summary><ul class="tr-cand-parts">
           ${part('Output after wages', v.output)}
           ${part('Trait', v.trait, 'average roll')}
@@ -2591,27 +2591,28 @@ const EmployeeTrainingTool = (() => {
     const rerollCost = 2 ** recruit.rerolls * alt.value;
     const energy = 10 * 2 ** recruit.rerolls;
     const name = `Candidate ${LETTERS[best.i]}`;
-    const rate = `${fresh.rate.toFixed(1)} PP a day`;
     // Waiting a day leaves the slot empty for a day.
     const rerollNet = fresh.best - rerollCost, waitNet = fresh.best - fresh.rate;
+    // Where the 10 energy goes instead: "training Ana, your least valuable training" → "training Ana".
+    const elsewhere = escapeHtml(alt.from.split(',')[0]);
     let take, why;
     if (best.v.total < alt.value) {
       take = 'Hire nobody';
-      why = `The best, ${name}, is worth ${signedPP(best.v.total)} PP, less than the 10 energy it costs earns elsewhere (${signedPP(alt.value)} PP, ${escapeHtml(alt.from)}).`;
+      why = `None of these candidates would earn back the 10 energy a hire costs. It's worth more spent on ${elsewhere}.`;
     } else if (rerollNet >= waitNet && rerollNet > best.s) {
       take = `Reroll (${energy} energy)`;
-      why = `After the slot's ${rate} for each working day, a fresh set's pick averages ${signedPP(fresh.best)} PP, against ${signedPP(best.s)} for ${name}; the reroll's energy is worth ${signedPP(rerollCost)} PP elsewhere.`;
+      why = `A new set of candidates will probably include someone better than ${name}, by more than the reroll's energy is worth.`;
     } else if (waitNet > best.s) {
       take = 'Wait for tomorrow\'s free set';
-      why = `After the slot's ${rate} for each working day, a fresh set's pick averages ${signedPP(fresh.best)} PP, more than ${name}'s ${signedPP(best.s)}. Waiting costs a day of the empty slot (${signedPP(fresh.rate)} PP), less than the reroll's ${energy} energy (${signedPP(rerollCost)} PP elsewhere).`;
+      why = `Tomorrow's candidates will probably include someone better than ${name}. A reroll at ${energy} energy costs more than it would gain; waiting only leaves the slot empty for a day.`;
     } else {
-      const second = ready.filter(x => x !== best).reduce((a, x) => !a || x.s > a.s ? x : a, null);
       take = `Hire ${name}`;
-      why = `${signedPP(best.v.total)} PP over ${plural(daysOf(best.i), 'working day')}, ${signedPP(best.s)} after the slot's ${rate}${second ? `, ${signedPP(best.s - second.s)} PP ahead of Candidate ${LETTERS[second.i]}` : ''}. A fresh set's pick averages ${signedPP(fresh.best)} PP on the same scale, not worth a reroll at ${energy} energy.`;
+      why = ready.length > 1 ? `${name} is the best of these candidates. ` : '';
+      why += recruit.rerolls ? `Another reroll (${energy} energy) is unlikely to find someone better by enough to pay for it.` : `A reroll (${energy} energy) is unlikely to find someone better by enough to pay for it.`;
     }
     const gender = hirePrefs(entry).find(x => x.want === 'a woman' || x.want === 'a man');
     const missing = gender && !ready.some(x => recruit.cands[x.i].gender === (gender.want === 'a woman' ? 'female' : 'male'));
-    if (missing) why += ` None of these candidates is ${gender.want}, worth ${escapeHtml(gender.why.replace(/^\+/, ''))}. A fresh set's average already counts this.`;
+    if (missing) why += ` This company would do better with ${gender.want} (because of ${escapeHtml(gender.why.split(': ').slice(1).join(': '))}), and none of these candidates is one.`;
     $verdict.innerHTML = `<div class="tr-verdict${best.v.total < alt.value ? ' muted' : ''}"><span class="tr-verdict-take">${take}</span><small>${why}</small></div>`;
   }
 
