@@ -1674,7 +1674,7 @@ const EmployeeTrainingTool = (() => {
         groups.energy.push({ icon: '🔁', go: { tab: 'keep', emp: r.emp._id },
         what: `Replace ${escapeHtml(r.emp.name)}`,
         sub: `<span class="tr-act-company">${productIcon(r.entry.company.itemCode)} ${escapeHtml(companyName(r.entry.company))}</span>
-          <span class="tr-act-details"><span title="Chance a fresh candidate set offers a better replacement">${odds(r.keep.chance)} better hire</span>${traitsChip(r.emp)}<span>Age ${r.emp.age}</span></span>${keepVerdict(r.keep) === 'fire' ? '<span class="tr-act-notice tr-warn">Costs more than they earn</span>' : ''}${r.keep.from ? `<span class="tr-act-notice tr-warn">Can be fired from ${utcTime(r.keep.from)}</span>` : ''}${hirePrefs(without(r.entry, r.emp)).slice(0, 2).map(x => `<span class="tr-act-notice" title="${escapeHtml(x.why)}">Prefer ${escapeHtml(x.want)}</span>`).join('')}`,
+          <span class="tr-act-details"><span title="How often a new set of candidates includes someone better">${odds(r.keep.chance)} chance of better</span>${traitsChip(r.emp)}<span>Age ${r.emp.age}</span></span>${keepVerdict(r.keep) === 'fire' ? '<span class="tr-act-notice tr-warn">Costs more than they earn</span>' : ''}${r.keep.from ? `<span class="tr-act-notice tr-warn">Can be fired from ${utcTime(r.keep.from)}</span>` : ''}${hirePrefs(without(r.entry, r.emp)).slice(0, 2).map(x => `<span class="tr-act-notice" title="${escapeHtml(x.why)}">Prefer ${escapeHtml(x.want)}</span>`).join('')}`,
         value: profit || `≈ ${signedPP(r.value)} PP`, unit: profit ? `≈ ${signedPP(r.value)} PP` : 'avg replacement' });
       }
       else groups.energy.push({ icon: '➕', go: { tab: 'hire', company: r.entry.company._id },
@@ -2239,7 +2239,7 @@ const EmployeeTrainingTool = (() => {
       const rows = keepRows().filter(r => r.entry === entry);
       const weakest = rows.reduce((a, r) => !a || r.chance > a.chance ? r : a, null);
       body = `<div class="tr-verdict muted"><span class="tr-verdict-take">${escapeHtml(companyName(entry.company))} is full</span>
-        <small>A full company can't hire. Fire someone first, <button type="button" class="tr-link" data-reload>reload</button>, then type the candidates in here.${weakest ? ` Most worth replacing here: <button type="button" class="tr-link" data-go-tab="keep" data-go-emp="${weakest.emp._id}">${escapeHtml(weakest.emp.name)}</button> (${keepVerdict(weakest) === 'fire' ? 'Fire' : `${odds(weakest.chance)} replacement chance`}).` : ''}</small></div>`;
+        <small>A full company can't hire. Fire someone first, <button type="button" class="tr-link" data-reload>reload</button>, then type the candidates in here.${weakest ? ` Most worth replacing here: <button type="button" class="tr-link" data-go-tab="keep" data-go-emp="${weakest.emp._id}">${escapeHtml(weakest.emp.name)}</button> (${keepVerdict(weakest) === 'fire' ? 'costs more than they earn' : `a new set beats them ${odds(weakest.chance)} of the time`}).` : ''}</small></div>`;
     } else {
       body = `<div id="tr-recruit-verdict"></div>
       <div class="tr-cands">${recruit.cands.map((c, i) => candCard(c, i, entry)).join('')}</div>
@@ -2252,7 +2252,7 @@ const EmployeeTrainingTool = (() => {
     }
     const prefs = entry ? prefsHtml(hirePrefs(entry), `What to look for in ${escapeHtml(companyName(entry.company))}`) : '';
     $recruit.innerHTML = `
-      ${help('How candidates are valued', `<p>Each candidate is worth their output after wages until retirement, plus their trait, their trainings and what they change for the coworkers' traits. The happiness on the card is 50 plus 3 for each point of Responsibility, and lasts. Each point of happiness above 50 adds 1% to output.</p><p>Wage expectation is the coloured % on the card. Enter it, the wage, or both; either is enough. Wage expectation is the better clue to the hidden trait, so enter it when you can.</p><p>The trait and potential show only after hire. The trait is the average roll, weighted by how likely each trait is and by what the wage expectation says: above +30% the trait is likely one that raises the wage, such as Greedy, and below −30% Modest. Gendered traits roll only for the candidate's gender, and Misogynist, Man Hater, Girl Power and Band of Brothers count the coworkers of each gender. Potential is averaged from 3 to 10. Each training counts only what it earns beyond the same 10 energy spent elsewhere.</p><p>The verdict compares the best candidate with a fresh set's likely pick, after what a new hire earns in the slot each working day. Reroll or wait when a fresh set is likely to do better.</p>`)}
+      ${help('How candidates are valued', `<p>Each candidate is worth their output after wages until retirement, plus their trait, their trainings and what they change for the coworkers' traits. The happiness on the card is 50 plus 3 for each point of Responsibility, and lasts. Each point of happiness above 50 adds 1% to output.</p><p>Wage expectation is the coloured % on the card. Enter it, the wage, or both; either is enough. Wage expectation is the better clue to the hidden trait, so enter it when you can.</p><p>The trait and potential show only after hire. The trait is the average roll, weighted by how likely each trait is and by what the wage expectation says: above +30% the trait is likely one that raises the wage, such as Greedy, and below −30% Modest. Gendered traits roll only for the candidate's gender, and Misogynist, Man Hater, Girl Power and Band of Brothers count the coworkers of each gender. Potential is averaged from 3 to 10. Each training counts only what it earns beyond the same 10 energy spent elsewhere.</p><p>The verdict compares your best candidate with who you'd likely get from a new set, allowing for how long each would hold the slot. It says to reroll or wait when a new set is likely to do better by more than it costs.</p>`)}
       ${prefs}
       <div class="tr-recruit-top">
         <label class="tr-field" for="tr-r-company"><span>Hiring into</span><select id="tr-r-company" data-r="company"${team ? '' : ' disabled'}>${companyOpts}</select></label>
@@ -2492,12 +2492,11 @@ const EmployeeTrainingTool = (() => {
     const v = keepVerdict(r);
     const name = escapeHtml(emp.name);
     const net = r.fresh.best - r.alt;
-    const rate = `${r.fresh.rate.toFixed(1)} PP a day, what a new hire earns there`;
     const part = (label, x, note = '') => Math.abs(x) < 0.5 && !note ? '' : `<li><span>${label}${note ? ` <em>${escapeHtml(note)}</em>` : ''}</span><strong>${signedPP(x)}</strong></li>`;
-    const why = v === 'fire' ? `${name} costs more than they earn: firing gains ${signedPP(-r.stay)} PP even if nobody is hired.`
-      : v === 'replace' ? `A new hire, picked from a fresh set of ${r.slots} candidates, beats keeping ${name} ${odds(r.chance)} of the time.`
-      : v === 'close' ? `A new hire beats keeping ${name} ${odds(r.chance)} of the time: about a coin flip. Replace only if you'd rather gamble.`
-      : `A new hire beats keeping ${name} only ${odds(r.chance)} of the time.`;
+    const why = v === 'fire' ? `${name} costs more than they earn. Firing them gains about ${signedPP(-r.stay)} PP even if you hire nobody.`
+      : v === 'replace' ? `Most new sets of candidates (${odds(r.chance)}) include someone better than ${name}.`
+      : v === 'close' ? `${odds(r.chance)} of new candidate sets include someone better than ${name}. Replace only if you're happy to gamble.`
+      : `Only ${odds(r.chance)} of new candidate sets include someone better than ${name}.`;
     const notes = [
       ...(emp.happinessBreakdown?.quitChance > 0 ? ['<span class="tr-warn">Unhappy enough to quit.</span>'] : []),
       ...r.keep.warnings.map(note => `<span class="tr-warn">${escapeHtml(note)}</span>`),
@@ -2519,28 +2518,28 @@ const EmployeeTrainingTool = (() => {
     const prefs = v === 'keep' ? '' : prefsHtml(hirePrefs(without(entry, emp)), 'When you hire their replacement, look for');
     const top = act[0];
     const team_ = act.length
-      ? `${plural(act.length, 'employee')} marked Fire or Replace.${top && top !== r ? ` Most worth replacing: <button type="button" class="tr-link" data-go-tab="keep" data-go-emp="${top.emp._id}">${escapeHtml(top.emp.name)}</button> (${keepVerdict(top) === 'fire' ? 'Fire' : odds(top.chance)}).` : ''}`
-      : `Nobody is marked Fire or Replace. The highest replacement chance is ${odds(rows[0].chance)}, for ${rows[0] === r ? 'this employee' : `<button type="button" class="tr-link" data-go-tab="keep" data-go-emp="${rows[0].emp._id}">${escapeHtml(rows[0].emp.name)}</button>`}.`;
+      ? `${plural(act.length, 'employee')} marked Fire or Replace.${top && top !== r ? ` Most worth replacing: <button type="button" class="tr-link" data-go-tab="keep" data-go-emp="${top.emp._id}">${escapeHtml(top.emp.name)}</button> (${keepVerdict(top) === 'fire' ? 'costs more than they earn' : `a new set beats them ${odds(top.chance)} of the time`}).` : ''}`
+      : `Nobody needs replacing. The closest is ${rows[0] === r ? 'this employee' : `<button type="button" class="tr-link" data-go-tab="keep" data-go-emp="${rows[0].emp._id}">${escapeHtml(rows[0].emp.name)}</button>`}: a new set beats them ${odds(rows[0].chance)} of the time.`;
     $fire.innerHTML = `
-      ${help('How this is worked out', `<p><strong>Worth keeping</strong> includes the employee's output, traits and remaining trainings, plus the value their traits add to coworkers.</p><p><strong>Worth replacing</strong> uses the best candidate from a fresh set, minus the hire's 10 energy. Firing costs coworkers nothing.</p><p>Both values subtract what a new hire would earn in that slot over the same working days. This accounts for the work you give up by keeping either employee in the slot.</p><p><strong>Replace</strong> means a fresh hire wins at least two times in three. <strong>Close</strong> means at least one time in three. <strong>Fire</strong> means the employee costs more than they earn.</p>`)}
+      ${help('How this is worked out', `<p><strong>Keeping</strong> counts what the employee will still earn you before retirement: their work after wages, their traits, their trainings left, and what their traits do for coworkers.</p><p><strong>Replacing</strong> counts the best candidate you'd likely pick from a new set, less the 10 energy a hire costs. Firing costs nothing else.</p><p>Both sides allow for how long each person holds the slot. Someone who retires sooner frees it sooner for the next hire, so a long career is only worth what it earns above that.</p><p><strong>Replace</strong>: a new set beats them at least 2 times in 3. <strong>Close</strong>: at least 1 time in 3. <strong>Fire</strong>: they cost more than they earn.</p>`)}
       ${rows.pending ? `<div class="tr-refine" role="status"><span>Updating for your latest change…</span>${EmployeeAssignments.busyBar()}</div>`
         : '<div class="tr-refine is-done" role="status"><span>Up to date.</span><div class="tr-refine-bar" aria-hidden="true"></div></div>'}
       <div class="tr-verdict tr-keep-${v}"><span class="tr-verdict-take">${VERDICT[v]}${v === 'close' ? ' call' : ''}</span><small>${why}</small>
         ${r.from ? `<small class="tr-warn">Just hired: can be fired from ${utcTime(r.from)}.</small>` : ''}</div>
       <div class="tr-keep-cols">
         <section><h4>Keeping ${name}</h4><ul class="tr-cand-parts">
-          ${part('Lifetime output after wages', r.keep.output, 'includes traits, tool expiry and temporary happiness')}
-          ${part('Trainings left', r.keep.potential, r.left ? `${r.left}, above what their energy earns elsewhere` : 'none left')}
-          ${part('Coworkers\' traits', -r.leaving.value, r.leaving.notes.length ? `lost if they go: ${r.leaving.notes.join(', ')}` : '')}
-          ${part('Their days in the slot', -r.held, `${plural(r.days, 'working day')} at ${rate}`)}
-          <li class="tr-keep-sum"><span>Worth keeping</span><strong>${signedPP(r.surplus)} PP</strong></li></ul></section>
+          ${part('Work until retirement', r.keep.output, 'after wages, with their traits')}
+          ${part('Trainings left', r.keep.potential, r.left ? `${r.left} left` : 'none left')}
+          ${part('Effect on coworkers', -r.leaving.value, r.leaving.notes.length ? `lost if they go: ${r.leaving.notes.join(', ')}` : '')}
+          ${part('Less what the slot earns anyway', -r.held, `over their ${plural(r.days, 'working day')}`)}
+          <li class="tr-keep-sum"><span>Gain from keeping</span><strong>${signedPP(r.surplus)} PP</strong></li></ul></section>
         <section><h4>Replacing ${name}</h4><ul class="tr-cand-parts">
-          <li><span>A new hire <em>the best of ${r.slots} fresh candidates, on average</em></span><strong>${signedPP(r.fresh.gross)}</strong></li>
-          ${part('Their days in the slot', r.fresh.best - r.fresh.gross, `${Math.round(r.fresh.days)} working days at ${rate}`)}
-          ${part('The hire\'s 10 energy', -r.alt, 'what it earns elsewhere')}
-          <li class="tr-keep-sum"><span>Worth replacing</span><strong>${signedPP(net)} PP</strong></li></ul></section>
+          <li><span>A typical new hire <em>the best of ${r.slots} candidates</em></span><strong>${signedPP(r.fresh.gross)}</strong></li>
+          ${part('Less what the slot earns anyway', r.fresh.best - r.fresh.gross, `over their ${Math.round(r.fresh.days)} working days`)}
+          ${part('Less 10 energy to hire', -r.alt, 'what it would earn elsewhere')}
+          <li class="tr-keep-sum"><span>Gain from replacing</span><strong>${signedPP(net)} PP</strong></li></ul></section>
       </div>
-      <p class="tr-keep-odds">A new hire must be worth over <strong>${signedPP(r.bar)} PP</strong> after their days in the slot; ${odds(r.chance)} of fresh sets hold one.${notes.length ? ` ${notes.join(' ')}` : ''}</p>
+      <p class="tr-keep-odds">A new set of candidates includes someone better than ${name} <strong>${odds(r.chance)}</strong> of the time.${notes.length ? ` ${notes.join(' ')}` : ''}</p>
       ${move}
       ${steps}
       ${prefs}
