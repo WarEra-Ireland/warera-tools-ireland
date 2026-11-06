@@ -347,7 +347,8 @@ const EmployeeAssignments = (() => {
       const partner = list.filter(o => o !== list[i] && linked(list[i], o)).sort((x, y) => value(y) - value(x))[0];
       if (!partner) continue;
       const j = list.indexOf(partner);
-      const parts = [...partsOf(list[i]), ...partsOf(partner)].sort((x, y) => all.indexOf(x) - all.indexOf(y));
+      // Switches first: the company icons elsewhere show the product after the plan.
+      const parts = [...partsOf(list[i]), ...partsOf(partner)].sort((x, y) => (y.kind === 'switch') - (x.kind === 'switch') || all.indexOf(x) - all.indexOf(y));
       const group = { kind: 'group', parts, employees: parts.flatMap(x => x.employees), people: parts.flatMap(x => x.people),
         heldFor: parts.flatMap(x => x.heldFor), cost: parts.reduce((v, x) => v + (x.cost || 0), 0), price: null };
       list.splice(Math.max(i, j), 1);
@@ -744,7 +745,8 @@ const EmployeeAssignments = (() => {
         }
         return out;
       };
-      const switchRow = item => `<span class="tr-asg-who">${place(item.company)}</span><span class="tr-asg-what"><span class="tr-asg-line">${productIcon(item.from)}<b>${esc(productName(item.from))}</b>
+      // The products are on the from → to line, so the company name has no icon.
+      const switchRow = item => `<span class="tr-asg-who">${esc(companyName(item.company) || co(item.company).name)}</span><span class="tr-asg-what"><span class="tr-asg-line">${productIcon(item.from)}<b>${esc(productName(item.from))}</b>
           <span class="tr-muted">→</span>${productIcon(item.to)}<b>${esc(productName(item.to))}</b></span>${joinedOut(item).length && !item.people.length && joinedOut(item).length === item.joined.length
             ? `<span class="tr-asg-line tr-muted">Concrete only here: the people moving in carry the gain (${esc(joinedOut(item).map(([, c]) => `step ${stepNo(c)}`).join(', '))})</span>` : ''}</span><span class="tr-asg-own"></span>`;
       const valueOf = item => item.people.reduce((v, id) => v + delta(id), 0) + item.heldFor.reduce((v, x) => v + delta(x.employee), 0) - (item.cost || 0);
