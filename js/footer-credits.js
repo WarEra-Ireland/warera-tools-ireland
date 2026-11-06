@@ -74,7 +74,7 @@
     }
     heading.append(element('strong', '', 'Contributions to the project'), periods);
     const count = element('div', 'footer-commit-total', total.toLocaleString('en-GB'));
-    count.append(element('small', '', ' human commits'));
+    count.append(element('small', '', ' commits'));
     const strip = element('div', 'footer-commit-strip');
     strip.setAttribute('role', 'img');
     strip.setAttribute('aria-label', contributors.map(p => `${p.name || p.github}: ${commitsFor(p)} commits`).join('; '));
