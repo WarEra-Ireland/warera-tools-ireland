@@ -416,7 +416,7 @@ const EmployeeAssignments = (() => {
   // onResult hears the latest comparison for the page's Next actions and card values:
   // { running: true } while it searches, then { gain, days, horizon, changes,
   // cancelled, moves, tools } (tools: the registered tools it gives out), or null when there is none (inputs changed, or it failed).
-  function mount(root, { getTeam, getMarket, productName = code => code, productIcon = code => esc(productName(code)), companyName = () => null, onResult = () => {}, onSettings = () => {} }) {
+  function mount(root, { getTeam, getMarket, productName = code => code, productIcon = code => esc(productName(code)), companyName = () => null, companyLink = () => null, onResult = () => {}, onSettings = () => {} }) {
     let account = null, settings = defaults(), notices = [], worker = null, runId = 0, best = null, running = null, chartData = null;
     let draft = null;
     const key = () => `tr-assignments-v1:${account}`;
@@ -670,7 +670,9 @@ const EmployeeAssignments = (() => {
       const finalCompanies = snapshot.companies.map(c => switchTo.has(c.id) ? { ...c, product: switchTo.get(c.id), type: types[switchTo.get(c.id)] || c.type } : c);
       const co0 = id => snapshot.companies.find(c => c.id === id), co = id => finalCompanies.find(c => c.id === id);
       // Company names repeat (new companies share a default), so add the product.
-      const place = id => `<span class="tr-asg-place">${productIcon(co(id).product)}${esc(companyName(id) || co(id).name)}</span>`;
+      // The name links to the company in game, where names carry no number.
+      const coName = id => companyLink(id) || esc(companyName(id) || co(id).name);
+      const place = id => `<span class="tr-asg-place">${productIcon(co(id).product)}${coName(id)}</span>`;
       const tool = id => snapshot.tools.find(t => t.id === id);
       const row = (rows, id) => rows.employees.find(r => r.id === id);
       const final = new Map(result.arrangement.map(a => [a.employee, a]));
@@ -749,7 +751,7 @@ const EmployeeAssignments = (() => {
         return out;
       };
       // The products are on the from → to line, so the company name has no icon.
-      const switchRow = item => `<span class="tr-asg-who">${esc(companyName(item.company) || co(item.company).name)}</span><span class="tr-asg-what"><span class="tr-asg-line">${productIcon(item.from)}<b>${esc(productName(item.from))}</b>
+      const switchRow = item => `<span class="tr-asg-who">${coName(item.company)}</span><span class="tr-asg-what"><span class="tr-asg-line">${productIcon(item.from)}<b>${esc(productName(item.from))}</b>
           <span class="tr-muted">→</span>${productIcon(item.to)}<b>${esc(productName(item.to))}</b></span>${joinedOut(item).length && !item.people.length && joinedOut(item).length === item.joined.length
             ? `<span class="tr-asg-line tr-muted">Concrete only here: the people moving in carry the gain (${esc(joinedOut(item).map(([, c]) => `step ${stepNo(c)}`).join(', '))})</span>` : ''}</span><span class="tr-asg-own"></span>`;
       const valueOf = item => item.people.reduce((v, id) => v + delta(id), 0) + item.heldFor.reduce((v, x) => v + delta(x.employee), 0) - (item.cost || 0);

@@ -251,16 +251,26 @@ const EmployeeTrainingTool = (() => {
   // A link to a company's page in the game. Employees have no page of
   // their own; the company page lists them, so their names link there too.
   // The title carries the full text too, for names cut short by an ellipsis.
-  const gameLink = (company, text) =>
-    `<a href="${GAME_BASE}/company/${encodeURIComponent(company._id)}" target="_blank" rel="noopener" title="${escapeHtml(text)}: open in game">${escapeHtml(text)}</a>`;
-  const companyLink = company => gameLink(company, companyName(company));
+  const gameLink = (company, text, title = `${text}: open in game`) =>
+    `<a href="${GAME_BASE}/company/${encodeURIComponent(company._id)}" target="_blank" rel="noopener" title="${escapeHtml(title)}">${escapeHtml(text)}</a>`;
+  const companyLink = company => gameLink(company, companyName(company), companyTitle(company));
   // A company's name, numbered when several share it (new companies are
-  // all "My new company"); with its product for lists.
-  function companyName(company) {
+  // all "My new company"); with its product for lists. The number is ours:
+  // the game shows the bare name, so the link and its title tell them apart.
+  function companyNumber(company) {
     const name = company.name || 'Company';
     const same = (team?.companies || []).map(x => x.company).filter(c => (c.name || 'Company') === name);
     const n = same.findIndex(c => c._id === company._id);
-    return `${name}${same.length > 1 && n >= 0 ? ` (${n + 1})` : ''}`;
+    return same.length > 1 && n >= 0 ? { name, n: n + 1, of: same.length } : null;
+  }
+  function companyName(company) {
+    const k = companyNumber(company);
+    return k ? `${k.name} (${k.n})` : company.name || 'Company';
+  }
+  function companyTitle(company) {
+    const k = companyNumber(company);
+    return k ? `${k.name}, number ${k.n} of ${k.of} by that name in your company list. The game shows no number: open it in game to check.`
+      : `${companyName(company)}: open in game`;
   }
   const companyLabel = company => `${companyName(company)} · ${productName(company.itemCode || '?')}`;
   function productIcon(code) {
@@ -269,6 +279,8 @@ const EmployeeTrainingTool = (() => {
     return file ? `<img class="tr-product-icon" src="images/${escapeHtml(file)}" alt="${name}" title="${name}" width="22" height="22">` : name;
   }
   const companyLabelHtml = company => `${escapeHtml(companyName(company))} · ${productIcon(company.itemCode)}`;
+  // The same, linked to the game; not for text inside a button.
+  const companyLinkHtml = company => `${companyLink(company)} · ${productIcon(company.itemCode)}`;
 
   // The game's own icons (Material Design paths), for the hand cards.
   const GAME_ICON = {
@@ -433,7 +445,7 @@ const EmployeeTrainingTool = (() => {
   const DISABLED_BADGE = '<span class="tr-badge tr-badge-mismatch" title="Its employees don\'t work, age, train or get paid there">Disabled</span>';
   const disabledTag = company => company.disabledAt ? ` ${DISABLED_BADGE}` : '';
   // Train and Keep or replace, for an employee of a disabled company.
-  const idleNote = ({ emp, entry }, what) => `<p class="tr-muted">${escapeHtml(emp.name)}'s company, ${companyLabelHtml(entry.company)}, is disabled, so they don't work, age, train or get paid there. ${what} once they're in a working company: see the <button type="button" class="tr-link" data-go-tab="assignments">Assignments</button> tab.</p>`;
+  const idleNote = ({ emp, entry }, what) => `<p class="tr-muted">${escapeHtml(emp.name)}'s company, ${companyLinkHtml(entry.company)}, is disabled, so they don't work, age, train or get paid there. ${what} once they're in a working company: see the <button type="button" class="tr-link" data-go-tab="assignments">Assignments</button> tab.</p>`;
   const actionEmployees = () => (team?.companies || []).flatMap(entry => entry.employees.filter(emp => canAct(emp, entry)).map(emp => ({ emp, entry })));
   const allEmployees = () => (team?.companies || []).flatMap(x => x.employees);
   function renderPicker() {
@@ -2494,14 +2506,14 @@ const EmployeeTrainingTool = (() => {
     ];
     const steps = v === 'keep' ? '' : `<ol class="tr-keep-steps">
         <li>Fire ${name} in the game${r.from ? ` <span class="tr-warn">(from ${utcTime(r.from)}: hired under 12 hours ago)</span>` : ''}. A full company can't hire, so the slot has to be free first.</li>
-        <li><button type="button" class="tr-link" data-reload>Reload</button>. ${companyLabelHtml(entry.company)} then shows a free slot.</li>
+        <li><button type="button" class="tr-link" data-reload>Reload</button>. ${companyLinkHtml(entry.company)} then shows a free slot.</li>
         <li>Open its recruiting slots and type the candidates into <button type="button" class="tr-link" data-go-tab="hire" data-go-company="${entry.company._id}">Hire</button>.</li>
       </ol>`;
     const m = plannedMove(emp._id), to = m && team.companies.find(x => x.company._id === m.to);
     const compare = `<button type="button" class="tr-link" data-go-tab="assignments" data-go-emp="${emp._id}">`;
     const move = v === 'keep' ? ''
       : plan?.running ? `<p class="tr-calc-sub">The planner is still checking whether moving ${name} beats replacing them.</p>`
-      : m ? `<p class="tr-keep-move"><strong>Move them first.</strong> The planner would move ${name}${to ? ` to ${companyLabelHtml(to.company)}` : ''}. Moving is free and changes this verdict, so check again after the move. ${compare}See the move</button></p>`
+      : m ? `<p class="tr-keep-move"><strong>Move them first.</strong> The planner would move ${name}${to ? ` to ${companyLinkHtml(to.company)}` : ''}. Moving is free and changes this verdict, so check again after the move. ${compare}See the move</button></p>`
       : plan ? `<p class="tr-calc-sub">The planner found no better company for ${name}.</p>`
       : `<p class="tr-calc-sub">${compare}Compare assignments</button> to see whether moving ${name} beats replacing them.</p>`;
     const prefs = v === 'keep' ? '' : prefsHtml(hirePrefs(without(entry, emp)), 'When you hire their replacement, look for');
@@ -2700,7 +2712,7 @@ const EmployeeTrainingTool = (() => {
       const toRetire = EC.workingDays(emp);
       const status = pendingHand(emp) ? 'hand waiting' : doneToday(emp) ? 'trained today' : '';
       return `<tr style="--co:${companyColour(entry.company)}">
-        <td data-label="Employee"><strong>${gameLink(entry.company, emp.name)}</strong><small>${companyLabelHtml(entry.company)}</small>
+        <td data-label="Employee"><strong>${gameLink(entry.company, emp.name)}</strong><small>${companyLinkHtml(entry.company)}</small>
           <span class="tr-badges">${flagsOf(emp, entry, verdicts, topTrain)}</span></td>
         <td data-label="Age" class="num">${emp.age}<small>${toRetire > 0 ? `${plural(toRetire, 'day')} left` : 'retiring'}</small></td>
         <td data-label="Prod" class="num">${stat(emp, 'production')}</td>
@@ -3173,7 +3185,7 @@ const EmployeeTrainingTool = (() => {
       const { company, employees } = entry;
       if (!employees.length) return '';
       const co = `--co:${companyColour(company)}`;
-      return `<div class="tr-side-co" style="${co}">${companyLabelHtml(company)} <span class="tr-muted">${employees.length} of ${headcountCap(company)}</span>${disabledTag(company)}</div>
+      return `<div class="tr-side-co" style="${co}">${companyLinkHtml(company)} <span class="tr-muted">${employees.length} of ${headcountCap(company)}</span>${disabledTag(company)}</div>
         <ul>${employees.map(emp => {
           const left = Math.max(0, (emp.potentialMax || 0) - (emp.potential || 0));
           const on = emp._id === input.pick;
@@ -3204,7 +3216,7 @@ const EmployeeTrainingTool = (() => {
     const hand = pendingHand(emp);
     const status = hand ? `<p class="tr-emp-status"><span class="tr-badge tr-badge-hand">Hand</span> ${RARITY_NAME[hand.rarity]} hand waiting${hand.drawnAt ? `, dealt ${utcTime(new Date(hand.drawnAt))}` : ''}.${view.tab === 'train' ? '' : ` <button type="button" class="tr-link" data-go-tab="train" data-go-emp="${emp._id}">Rank it</button>`}</p>`
         : doneToday(emp) ? `<p class="tr-emp-status">Trained today. Next training at 00:00 UTC, in ${escapeHtml(formatDuration(untilReset()))}.</p>` : '';
-    $empHead.innerHTML = `<div class="tr-emp-name"><strong>${gameLink(entry.company, emp.name)}</strong> <span class="tr-muted">${companyLabelHtml(entry.company)}${p ? ` (${p.ratio.toFixed(2)}×)` : ''}</span>${disabledTag(entry.company)}</div>
+    $empHead.innerHTML = `<div class="tr-emp-name"><strong>${gameLink(entry.company, emp.name)}</strong> <span class="tr-muted">${companyLinkHtml(entry.company)}${p ? ` (${p.ratio.toFixed(2)}×)` : ''}</span>${disabledTag(entry.company)}</div>
       <div class="tr-emp-facts"><span>Age <b>${emp.age}</b> · ${plural(EC.workingDays(emp), 'working day')}</span>
         <span>${stat('production')} · ${stat('responsibility')} · ${stat('luck')}</span>
         <span><b>${left}</b> of ${emp.potentialMax || 0} trainings left</span>
@@ -3440,6 +3452,7 @@ const EmployeeTrainingTool = (() => {
     assignments = EmployeeAssignments.mount(document.getElementById('tr-assignments-body'), {
       getTeam: () => taken.size ? null : team, getMarket: () => market, productName, productIcon,
       companyName: id => { const x = team?.companies.find(c => c.company._id === id); return x ? companyName(x.company) : null; },
+      companyLink: id => { const x = team?.companies.find(c => c.company._id === id); return x ? companyLink(x.company) : null; },
       onResult: result => { plan = result; if (result && !result.running) lastPlan = { plan: result, team, market }; prefetchHands(); renderResult(); renderTeam(); renderFire(); renderProducts(); },
       onSettings: () => { renderResult(); renderTeam(); },
     });
