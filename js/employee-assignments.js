@@ -761,13 +761,33 @@ const EmployeeAssignments = (() => {
         const losing = item.parts.filter(p => valueOf(p) < -1e-9);
         return `One step: ${losing.map(p => `${what(p)} (${signed(valueOf(p))} on its own)`).join(', ')} only pays together with the rest, ${losing.some(p => item.parts.some(q => q !== p && q.people.some(id => p.people.some(x => emp(x).equipped?.id && final.get(id)?.tool === emp(x).equipped.id)))) ? 'which gets the tool it gives up' : 'which it makes room for'}.`;
       };
+      // A swap as one pair: names, the two companies, then tools and gains.
+      const poss = n => `${esc(n)}${/s$/i.test(n) ? "'" : "'s"}`;
+      const toolBit = (id, name) => {
+        const e = emp(id), t = newTool(id), keep = held.get(e.equipped?.id), until = keep ? ` · keep it for ${esc(emp(keep.employee).name)}` : '';
+        return t ? `Give ${esc(name)} ${icon(t.type)}<b>${toolText(t)}</b>` : removes(id) ? `Remove ${poss(name)} ${icon(e.equipped.type)}<b>${toolText(e.equipped)}</b>${until}` : '';
+      };
+      const swapRow = (p, many) => {
+        const [x, y] = p.employees, first = id => emp(id).name.split(' ')[0];
+        const short = first(x) !== first(y) ? first : id => emp(id).name;
+        const gains = many ? [x, y].map(id => `${esc(short(id))} <span class="tr-asg-gain${delta(id) < 0 ? ' is-neg' : ''}">${signed(delta(id))}</span>`).join(', ') : '';
+        // One span per piece, the dot ending the piece before, so a wrap never starts a line with it.
+        const bits = [...[x, y].map(id => toolBit(id, short(id))).filter(Boolean), gains].filter(Boolean);
+        const last = bits.map((b, k) => `<span>${b}${k < bits.length - 1 ? ' ·' : ''}</span>`).join('');
+        return `<div class="tr-asg-swap"><div class="tr-asg-pair"><b>${esc(emp(x).name)}</b><span class="tr-asg-x" aria-label="swaps with">⇄</span><b>${esc(emp(y).name)}</b></div>
+          <div class="tr-asg-swap-sub">${place(emp(x).company)}<span aria-hidden="true">⇄</span>${place(emp(y).company)}</div>${last ? `<div class="tr-asg-swap-sub">${last}</div>` : ''}</div>`;
+      };
       const stepHtml = (item, i) => {
-        const parts = item.parts || [item], many = item.people.length + item.heldFor.length > 1;
+        // A switch's own value carries the concrete, so its people show theirs too.
+        const parts = item.parts || [item], many = item.people.length + item.heldFor.length > 1 || parts.some(p => p.kind === 'switch' && p.cost);
         const value = valueOf(item);
         const kind = parts.map(kindOf).join(' + ');
         const glyph = glyphOf(parts[0]);
-        const rows = parts.map(p => (p.kind === 'switch' ? switchRow(p) : '') + p.people.map(id => `<span class="tr-asg-who">${esc(emp(id).name)}</span><span class="tr-asg-what">${action(id)}</span>
-          <span class="tr-asg-own${delta(id) < 0 ? ' is-neg' : ''}">${many ? signed(delta(id)) : ''}</span>`).join('')).join('') + item.heldFor.map(heldRow).join('');
+        const person = id => `<span class="tr-asg-who">${esc(emp(id).name)}</span><span class="tr-asg-what">${action(id)}</span>
+          <span class="tr-asg-own${delta(id) < 0 ? ' is-neg' : ''}">${many ? signed(delta(id)) : ''}</span>`;
+        const rows = parts.map(p => (p.kind === 'switch' ? switchRow(p) : '') + (p.kind === 'swap' && p.employees.length === 2
+          ? swapRow(p, many) + p.people.filter(id => !p.employees.includes(id)).map(person).join('')
+          : p.people.map(person).join(''))).join('') + item.heldFor.map(heldRow).join('');
         const why = (item.parts ? `<p>${groupNote(item)}</p>` : '') + item.people.map(id => `<div class="tr-asg-tags">${many ? `<b>${esc(emp(id).name)}</b>` : ''}${tags(id)}</div>`).join('')
           + [...new Set(parts.flatMap(notes))].map(n => `<p>${n}</p>`).join('');
         return `<li class="tr-asg-step" data-emps="${esc([...item.people, ...item.heldFor.map(x => x.employee)].join(' '))}"><span class="tr-asg-n" aria-hidden="true">${i + 1}</span><span class="tr-asg-glyph">${glyph}</span>

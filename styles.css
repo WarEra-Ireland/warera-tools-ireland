@@ -3253,6 +3253,14 @@ html[data-theme="light"] {
 .tr-asg-step-head .tr-asg-value small { display: inline; margin-left: 6px; }
 .tr-asg-rows { display: grid; grid-template-columns: max-content minmax(0, 1fr) auto; gap: 3px 12px; align-items: center; margin-top: 4px; font-size: 13px; }
 .tr-asg-who { font-weight: 600; }
+.tr-asg-swap { grid-column: 1 / -1; display: grid; gap: 1px; }
+.tr-asg-pair { font-weight: 600; }
+.tr-asg-x { padding: 0 6px; color: var(--accent); font-weight: 700; }
+.tr-asg-swap-sub { display: flex; flex-wrap: wrap; gap: 2px 6px; align-items: center; color: var(--muted); }
+.tr-asg-swap-sub b, .tr-asg-swap-sub .tr-asg-place { color: var(--text); font-weight: 400; }
+.tr-asg-swap-sub .tr-asg-icon { width: 16px; height: 16px; margin-right: -2px; }
+.tr-asg-gain { color: var(--accent); font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.tr-asg-gain.is-neg { color: var(--danger); }
 .tr-asg-what { display: flex; flex-wrap: wrap; gap: 2px 8px; align-items: center; min-width: 0; color: var(--muted); }
 .tr-asg-what b, .tr-asg-what .tr-asg-place { color: var(--text); font-weight: 400; }
 .tr-asg-line { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 2px 6px; }
