@@ -420,6 +420,35 @@ const EmployeeAssignments = (() => {
       onSettings();
     }
 
+    // Tools held in a disabled company sit idle until their holder moves out.
+    const idleIds = team => new Set(team.companies.filter(x => x.company.disabledAt || activeOf(x).some(e => e.companyDisabled)).flatMap(activeOf).map(e => e._id));
+
+    /* The closed tools box: how many, how they are used, and a count per type.
+       Before a comparison it splits equipped from spare; after one, assigned from unused. */
+    function toolSummary(team, holders = null) {
+      const spares = sparesFor(team, settings), equipped = equippedOf(team), idle = idleIds(team);
+      const total = spares.length + equipped.length;
+      const head = `<h4 id="plan-tools-heading">Your tools <span class="tr-muted">${total}</span></h4>`;
+      if (!total) return head;
+      const types = new Map();
+      for (const type of [...spares.map(t => t.type), ...equipped.map(e => toolType(e.toolItem.code) || 'hammer')]) types.set(type, (types.get(type) || 0) + 1);
+      let stats;
+      if (holders) {
+        const used = spares.filter(t => holders.has(`spare:${t.id}`)).length
+          + equipped.filter(e => { const to = holders.get(`equipped:${e._id}`); return to && !(idle.has(e._id) && to === e.name); }).length;
+        stats = `<span><b>${used}</b> assigned</span>${total > used ? `<span class="is-warn"><b>${total - used}</b> unused</span>` : ''}`;
+      } else stats = `<span><b>${equipped.length}</b> equipped</span><span><b>${spares.length}</b> spare</span>`;
+      return `${head}<span class="tr-asg-fold-stats">${stats}</span>
+        <span class="tr-asg-tools-types">${[...types].map(([type, n]) => `<span class="tr-asg-tools-type" title="${esc(cap(type))}">${icon(type)}${n}</span>`).join('')}</span>`;
+    }
+
+    /* The closed Keep in place box: how many are kept, and who. */
+    function pinSummary(people) {
+      const kept = people.filter(({ e }) => settings.pinned.includes(e._id));
+      return `<h4 id="plan-pins-heading">Keep in place <span class="tr-muted">${kept.length} of ${people.length}</span></h4>
+        <span class="tr-asg-fold-stats">${kept.length ? esc(kept.map(({ e }) => e.name).join(', ')) : 'Nobody is kept in place'}</span>`;
+    }
+
     /* Tool cards. `holders` maps a tool ID to the employee who gets it. */
     function shelf(team, { holders = null, unusedWhy = () => ({ text: '' }) } = {}) {
       const invalid = new Set(fieldErrors(settings, equippedIds(team)).map(([id]) => id.replace(/^plan-equipped-/, '')));
@@ -431,8 +460,7 @@ const EmployeeAssignments = (() => {
           <span class="tr-asg-tool-top">${icon(t.type)}<span><b>+${esc(num(t.bonus, 0))}%</b><small>${esc(cap(t.type))} · spare</small></span></span>
           ${life(t.hours)}<small>${esc(toPct(t.hours))}% left${t.seen ? '' : ' · unused'} · <span class="tr-asg-products">${products(t.type)}</span></small>${who}</button>`;
       };
-      // Tools held in a disabled company sit idle until their holder moves out.
-      const idle = new Set(team.companies.filter(x => x.company.disabledAt || activeOf(x).some(e => e.companyDisabled)).flatMap(activeOf).map(e => e._id));
+      const idle = idleIds(team);
       const eq = e => {
         const type = toolType(e.toolItem.code) || 'hammer', hours = equippedHours(e);
         const to = holders?.get(`equipped:${e._id}`);
@@ -462,6 +490,7 @@ const EmployeeAssignments = (() => {
       const team = getTeam();
       $('[data-plan-source]').innerHTML = toolSource(team);
       $('[data-plan-shelf]').innerHTML = shelf(team);
+      $('[data-plan-tools-sum]').innerHTML = toolSummary(team);
       (root.querySelector(focus) || $('[data-plan-shelf] button'))?.focus({ preventScroll: true });
     }
 
@@ -500,12 +529,12 @@ const EmployeeAssignments = (() => {
         <div class="tr-asg-grid">
           <div class="tr-asg-main" data-plan-result></div>
           <div class="tr-asg-side">
-            <section class="tr-asg-box tr-asg-tools" aria-labelledby="plan-tools-heading"><h4 id="plan-tools-heading">Your tools</h4>
+            <details class="tr-asg-box tr-asg-fold tr-asg-tools"><summary data-plan-tools-sum>${toolSummary(team)}</summary>
               <div data-plan-source>${toolSource(team)}</div>
-              <div class="tr-asg-shelf" data-plan-shelf>${shelf(team)}</div></section>
-            <section class="tr-asg-box" aria-labelledby="plan-pins-heading"><h4 id="plan-pins-heading">Keep in place</h4>
+              <div class="tr-asg-shelf" data-plan-shelf>${shelf(team)}</div></details>
+            <details class="tr-asg-box tr-asg-fold"><summary data-plan-pins-sum>${pinSummary(people)}</summary>
               <p class="tr-muted">Selected employees stay in their company. They can still get a tool.</p>
-              <div class="tr-asg-pins">${people.map(({ e, company }) => `<button type="button" class="tr-asg-pin" data-plan-pin="${esc(e._id)}" aria-pressed="${settings.pinned.includes(e._id)}" title="${esc(companyName(company._id) || company.name || '')}">${productIcon(company.itemCode)}${esc(e.name)}</button>`).join('')}</div></section>
+              <div class="tr-asg-pins">${people.map(({ e, company }) => `<button type="button" class="tr-asg-pin" data-plan-pin="${esc(e._id)}" aria-pressed="${settings.pinned.includes(e._id)}" title="${esc(companyName(company._id) || company.name || '')}">${productIcon(company.itemCode)}${esc(e.name)}</button>`).join('')}</div></details>
             <details class="tr-more"><summary>What the comparison includes</summary><p class="tr-calc-sub">The planner scores whole company rosters: Craftsman on manufactured goods and weapons, Laborer on raw resources, Handy and Improviser, coworker traits, company bonuses and taxes, happiness, saved specialization, tenure and retirement. Moving an employee between your companies costs no happiness, but Creature of Habit loses 30 bonus points for three days. Company tenure restarts; the same product keeps its specialization, and another product restores that product's saved progress. Tools are a pool: when a tool runs out, its holder gets the best free compatible tool, and a retiring employee's tool passes on with its hours left. Tool hours go where they raise output most, so a plan may take a tool off someone to save its hours for a better use later. Spares replace only tools that ran out. Handoffs are assumed: a step notes the tool someone gets later, but they are not steps of their own. Prices are recent trades and every change takes effort, so a change is recommended only above a minimum gain: ${100 * EP.CHURN.priceUncertainty}% of the output whose value depends on prices comes off first (a swap between two products carries both products' output; a tool inside one company only its extra output), and what is left must reach ${100 * EP.CHURN.floorShare}% of the planned companies' profit over the horizon, ${EP.CHURN.recentFactor} times that for anyone moved in the last ${EP.CHURN.recentHours / 24} days. A disabled company's employees don't work, train or get paid there, so moving them out to a working company can pay. When the working companies are full, a swap can put one to work and leave the employee they replace idle in the disabled company; nobody else is moved into one.</p><p class="tr-calc-sub">Careers value every change until the last planned employee retires at ${EC.CFG.retireAge}, one year older per day worked or trained. A retired employee's place stays empty: hiring a replacement is not valued. A shorter window ignores everything after it, so it favours quick wins over moves that pay back later.</p><p class="tr-calc-sub">This is a bounded search for a better arrangement, not a guarantee of the best one. Each employee moves at most once. A company with a hidden or unknown trait, or whose current numbers the planner cannot reproduce, is left exactly as it is and is not part of the totals. Toolboxes use your entered value. Trainer and coworker Luck use a bounded training estimate and your daily budget. Recruiter is valued only for a planned candidate set. Earnings assume employees stay; quitting probabilities and future price changes are not modeled. Equipped tools can be reassigned to any compatible employee. Nothing is changed in the game.</p></details>
           </div>
         </div>`;
@@ -762,6 +791,7 @@ const EmployeeAssignments = (() => {
       const fits = type => planned.some(c => EP.TOOL_TYPES[type]?.includes(co(c.id).product));
       const unusedWhy = r => fits(r.type) ? { text: 'No gain found' } : { text: 'No planned company uses it', title: `None of your planned companies makes ${EP.TOOL_TYPES[r.type].map(productName).join(', ')}` };
       $('[data-plan-shelf]').innerHTML = shelf(getTeam(), { holders, unusedWhy });
+      $('[data-plan-tools-sum]').innerHTML = toolSummary(getTeam(), holders);
     }
 
     function hoverChart(ev) {
@@ -863,6 +893,7 @@ const EmployeeAssignments = (() => {
         const on = b.getAttribute('aria-pressed') !== 'true';
         b.setAttribute('aria-pressed', String(on));
         settings.pinned = on ? [...new Set([...settings.pinned, b.dataset.planPin])] : settings.pinned.filter(id => id !== b.dataset.planPin);
+        $('[data-plan-pins-sum]').innerHTML = pinSummary(getTeam().companies.flatMap(entry => activeOf(entry).map(e => ({ e }))));
         save(); stale();
       } else if (b.dataset.planRun !== undefined) run();
       else if (b.dataset.planCancel !== undefined) cancel();
