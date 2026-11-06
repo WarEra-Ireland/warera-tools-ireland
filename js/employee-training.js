@@ -2123,9 +2123,9 @@ const EmployeeTrainingTool = (() => {
     if (!stat(numOrNull(c.production))) out.push('Production');
     if (!stat(numOrNull(c.luck))) out.push('Luck');
     if (!stat(candResponsibility(numOrNull(c.happiness)))) out.push('happiness');
-    if (wage == null && pct == null) out.push('the wage or its %');
+    if (wage == null && pct == null) out.push('wage or wage expectation');
     if (wage != null && wage < 0) out.push('a wage of 0 or more');
-    if (pct != null && pct <= -100) out.push('a % above −100');
+    if (pct != null && pct <= -100) out.push('a wage expectation above −100%');
     return out;
   }
   function priceCandidate(c, entry, alt) {
@@ -2172,7 +2172,7 @@ const EmployeeTrainingTool = (() => {
       return `<option value="${n._id}"${sel ? ' selected' : ''}>${escapeHtml(n.name)}</option>`;
     };
     const top = common.map(id => opt(byId.get(id))).join('');
-    return `<option value="">Choose…</option>${top ? `<optgroup label="Usual">${top}</optgroup><optgroup label="All countries">` : ''}${countries.map(opt).join('')}${top ? '</optgroup>' : ''}`;
+    return `<option value="">Choose…</option>${top ? `<optgroup label="Common">${top}</optgroup><optgroup label="All countries">` : ''}${countries.map(opt).join('')}${top ? '</optgroup>' : ''}`;
   }
   // One candidate laid out as the game's card: nationality, gender, age,
   // then Production, Luck and happiness, then the wage and its %. The
@@ -2185,7 +2185,7 @@ const EmployeeTrainingTool = (() => {
       const keys = g.keys ? Object.keys(g.keys).map(x => x.toUpperCase()).join(' or ') : `1–${g.opts.length}`;
       return `<div class="tr-cand-pick tr-cand-pick-${k}" role="radiogroup" aria-labelledby="${id(k)}-l">
         <span class="tr-cand-pick-label" id="${id(k)}-l">${g.icon ? gameIcon(g.icon) : ''}${g.label}</span>
-        <div class="tr-seg" title="Click, or press ${keys}">${g.opts.map(([v, t]) => `<label><input type="radio" name="${id(k)}" value="${v}" data-c="${i}" data-k="${k}"${String(c[k]) === v ? ' checked' : ''} /><span>${t}</span></label>`).join('')}</div>
+        <div class="tr-seg" title="Click, or type ${keys}">${g.opts.map(([v, t]) => `<label><input type="radio" name="${id(k)}" value="${v}" data-c="${i}" data-k="${k}"${String(c[k]) === v ? ' checked' : ''} /><span>${t}</span></label>`).join('')}</div>
       </div>`;
     };
     return `<article class="tr-cand" id="tr-cand-${i}" aria-labelledby="tr-cand-h-${i}">
@@ -2198,7 +2198,7 @@ const EmployeeTrainingTool = (() => {
       <div class="tr-cand-stats">${pick('production')}${pick('luck')}${pick('happiness')}</div>
       <div class="tr-cand-wage">
         ${num('wage', `${gameIcon('wage')}Wage /${recruit.unit === 'day' ? 'day' : 'h'}`, 'min="0" step="any" inputmode="decimal"')}
-        ${num('expect', `${gameIcon('negotiation')}vs market`, `step="0.1" inputmode="decimal" placeholder="±0.0" class="${expectTone(c.expect)}"`, { suffix: '%' })}
+        ${num('expect', `${gameIcon('negotiation')}Wage expectation`, `step="0.1" inputmode="decimal" class="${expectTone(c.expect)}"`, { suffix: '%' })}
       </div>
       <div class="tr-cand-res" id="tr-cand-res-${i}"></div>
     </article>`;
@@ -2235,12 +2235,12 @@ const EmployeeTrainingTool = (() => {
         ${recruit.cands.length < MAX_SLOTS ? '<button type="button" data-r-add>Add a candidate</button>' : ''}
         <button type="button" data-r-rerolled title="Clears the candidates and counts the reroll">I rerolled</button>
         <button type="button" data-r-clear>Clear</button>
-        <span class="tr-muted">A Recruiter in the company adds a slot, up to 6. On a focused picker, 1–4, M or F picks and moves on.</span>
+        <span class="tr-muted">A Recruiter in the company adds a slot, up to 6. Tip: you can type the card in with the keyboard: Tab between fields, and 1–4, M or F to pick.</span>
       </div>`;
     }
     const prefs = entry ? prefsHtml(hirePrefs(entry), `What to look for in ${escapeHtml(companyName(entry.company))}`) : '';
     $recruit.innerHTML = `
-      ${help('How candidates are valued', `<p>Each candidate is worth their output after wages until retirement, plus their trait, their trainings and what they change for the coworkers' traits. The happiness on the card is 50 plus 3 for each point of Responsibility, and lasts. Each point of happiness above 50 adds 1% to output.</p><p>The coloured % on the card is the wage against the market rate for their Production. Type it, the wage, or both: the % reads the hidden trait the way the game set the wage, without our price for a production point, and the wage sets what they're paid. Each falls back on the other.</p><p>The trait and potential show only after hire. The trait is the average roll, weighted by how likely each trait is and by what the wage says: above +30% only a trait that raises the wage fits, such as Greedy, and below −30% Modest. Gendered traits roll only for the candidate's gender, and Misogynist, Man Hater, Girl Power and Band of Brothers count the coworkers of each gender. Potential is averaged from 3 to 10. Each training counts only what it earns beyond the same 10 energy spent elsewhere.</p><p>The verdict compares the best candidate with a fresh set's likely pick, after what a new hire earns in the slot each working day. Reroll or wait when a fresh set is likely to do better.</p>`)}
+      ${help('How candidates are valued', `<p>Each candidate is worth their output after wages until retirement, plus their trait, their trainings and what they change for the coworkers' traits. The happiness on the card is 50 plus 3 for each point of Responsibility, and lasts. Each point of happiness above 50 adds 1% to output.</p><p>Wage expectation is the coloured % on the card. Enter it, the wage, or both; either is enough. Wage expectation is the better clue to the hidden trait, so enter it when you can.</p><p>The trait and potential show only after hire. The trait is the average roll, weighted by how likely each trait is and by what the wage expectation says: above +30% the trait is likely one that raises the wage, such as Greedy, and below −30% Modest. Gendered traits roll only for the candidate's gender, and Misogynist, Man Hater, Girl Power and Band of Brothers count the coworkers of each gender. Potential is averaged from 3 to 10. Each training counts only what it earns beyond the same 10 energy spent elsewhere.</p><p>The verdict compares the best candidate with a fresh set's likely pick, after what a new hire earns in the slot each working day. Reroll or wait when a fresh set is likely to do better.</p>`)}
       ${prefs}
       <div class="tr-recruit-top">
         <label class="tr-field" for="tr-r-company"><span>Hiring into</span><select id="tr-r-company" data-r="company"${team ? '' : ' disabled'}>${companyOpts}</select></label>
@@ -2550,7 +2550,8 @@ const EmployeeTrainingTool = (() => {
       $card.classList.remove('best');
       const c = recruit.cands[i];
       if (!v) { const need = candMissing(c); $res.innerHTML = need.length ? `<small class="tr-muted">Still to enter: ${escapeHtml(need.join(', '))}.</small>` : ''; return; }
-      const wageText = `wage ${Math.round(v.reading * 100)}% of the market${v.odds.greedy > 0.995 ? ', so Greedy' : v.odds.modest > 0.995 ? ', so Modest'
+      const pct = Math.round((v.reading - 1) * 1000) / 10;
+      const wageText = `wage expectation ${pct > 0 ? '+' : pct < 0 ? '−' : ''}${Math.abs(pct)}%${v.odds.greedy > 0.995 ? ', so Greedy' : v.odds.modest > 0.995 ? ', so Modest'
         : v.odds.greedy < 0.005 ? ', so not Greedy' : ''}`;
       const money = moneyOf(v.total);
       const sure = v.beat(alt.value);
