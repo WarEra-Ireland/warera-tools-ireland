@@ -323,7 +323,38 @@ const EmployeeAssignments = (() => {
         }
       }
     }
-    return all;
+    // A card that loses on its own joins the card it serves, as one step
+    // ({ kind: 'group', parts }): a tool passes between their people, the
+    // search accepted changes to both together, or one is the switch of a
+    // company the other's people leave or join. Each person's gain is
+    // counted on their own card, so a swap that hands its tool to someone
+    // on another card shows the loss and not the gain.
+    const gain = id => (after.get(id)?.value ?? 0) - (before.get(id)?.value ?? 0);
+    const value = c => c.people.reduce((v, id) => v + gain(id), 0) + c.heldFor.reduce((v, x) => v + gain(x.employee), 0) - (c.cost || 0);
+    const partsOf = c => c.parts || [c];
+    const touches = (p, q) => {
+      const start = c => c.people.map(id => emp.get(id).equipped?.id).filter(Boolean), end = c => c.people.map(id => final.get(id)?.tool).filter(Boolean);
+      const meet = (x, y) => x.some(t => y.includes(t));
+      if (meet(start(p), end(q)) || meet(end(p), start(q))) return true;
+      if (accepted.some(a => a.changes.some(x => p.people.includes(x[0])) && a.changes.some(x => q.people.includes(x[0])))) return true;
+      const at = (w, c) => w.kind === 'switch' && c.people.some(id => emp.get(id).company === w.company || final.get(id)?.company === w.company);
+      return at(p, q) || at(q, p);
+    };
+    const linked = (a, b) => partsOf(a).some(p => partsOf(b).some(q => touches(p, q)));
+    const list = [...all];
+    for (let i = 0; i < list.length; i++) {
+      if (value(list[i]) >= -1e-9) continue;
+      const partner = list.filter(o => o !== list[i] && linked(list[i], o)).sort((x, y) => value(y) - value(x))[0];
+      if (!partner) continue;
+      const j = list.indexOf(partner);
+      const parts = [...partsOf(list[i]), ...partsOf(partner)].sort((x, y) => all.indexOf(x) - all.indexOf(y));
+      const group = { kind: 'group', parts, employees: parts.flatMap(x => x.employees), people: parts.flatMap(x => x.people),
+        heldFor: parts.flatMap(x => x.heldFor), cost: parts.reduce((v, x) => v + (x.cost || 0), 0), price: null };
+      list.splice(Math.max(i, j), 1);
+      list.splice(Math.min(i, j), 1, group);
+      i = -1;
+    }
+    return list;
   }
 
   // Short reason tags for an employee's change.
@@ -660,6 +691,9 @@ const EmployeeAssignments = (() => {
        * not act on (a tool going back to inventory, tool hours, later
        * handoffs) fold into "Why and details". */
       const items = planCards(result, snapshot);
+      const stepNo = c => items.findIndex(x => x === c || x.parts?.includes(c)) + 1;
+      // Arrivals on another step; those in the same (grouped) step need no pointer.
+      const joinedOut = item => item.joined.filter(([, c]) => stepNo(c) !== stepNo(item));
       const held = new Map(items.flatMap(c => c.heldFor.map(x => [x.tool, x])));
       const ratioText = (v, other) => `${num(v * 100, Math.round(v * 100) === Math.round(other * 100) ? 1 : 0)}%`;
       const priceLine = ({ price: b }) => b ? `<span>Price-sensitive: loses money if ${esc(productName(b.up))} earns less than ${ratioText(b.ratio, b.now)} of ${esc(productName(b.down))} per PP (now ${ratioText(b.now, b.ratio)}).</span>` : '';
@@ -699,8 +733,8 @@ const EmployeeAssignments = (() => {
       };
       const notes = item => {
         const out = item.kind === 'swap' ? ["Use the game's Swap option."] : item.kind === 'switch'
-          ? [`Change the product on the company page: ${item.cost ? `₿${esc(num(item.cost, 2))} of concrete. ` : ''}Saved specialisation is kept per good. Gains at today's and the game's prices are on the Products tab.`,
-            ...(item.joined.length ? [`${item.people.length ? 'This step counts the staff who stay. ' : 'This step counts only the concrete: everyone working here after the plan moves in on another step. '}${esc(item.joined.map(([id, c]) => `${emp(id).name} (step ${items.indexOf(c) + 1})`).join(', '))} ${item.joined.length === 1 ? 'moves' : 'move'} in, and the gain on ${esc(productName(item.to))} is counted on ${item.joined.length === 1 ? 'that step' : 'those steps'}.`] : [])] : [];
+          ? [`Change ${(n => `${esc(n)}${/s$/i.test(n) ? "'" : "'s"}`)(companyName(item.company) || co(item.company).name)} product on its company page: ${item.cost ? `₿${esc(num(item.cost, 2))} of concrete. ` : ''}Saved specialisation is kept per good. Gains at today's and the game's prices are on the Products tab.`,
+            ...(joinedOut(item).length ? [`${item.people.length || item.joined.length > joinedOut(item).length ? 'This step counts the staff who stay. ' : 'This step counts only the concrete: everyone working here after the plan moves in on another step. '}${esc(joinedOut(item).map(([id, c]) => `${emp(id).name} (step ${stepNo(c)})`).join(', '))} ${joinedOut(item).length === 1 ? 'moves' : 'move'} in, and the gain on ${esc(productName(item.to))} is counted on ${joinedOut(item).length === 1 ? 'that step' : 'those steps'}.`] : [])] : [];
         for (const x of item.heldFor) { const giver = item.people.find(id => emp(id).equipped?.id === x.tool); out.push(heldText(x, emp(giver).name, !back(giver) || !switchTo.has(emp(giver).company))); }
         for (const id of item.people) {
           const name = esc(emp(id).name), t = newTool(id), b = back(id), h = row(proposed, id)?.handoffs?.[0];
@@ -711,17 +745,31 @@ const EmployeeAssignments = (() => {
         return out;
       };
       const switchRow = item => `<span class="tr-asg-who">${place(item.company)}</span><span class="tr-asg-what"><span class="tr-asg-line">${productIcon(item.from)}<b>${esc(productName(item.from))}</b>
-          <span class="tr-muted">→</span>${productIcon(item.to)}<b>${esc(productName(item.to))}</b></span>${item.joined.length && !item.people.length
-            ? `<span class="tr-asg-line tr-muted">Concrete only here: the people moving in carry the gain (${esc(item.joined.map(([, c]) => `step ${items.indexOf(c) + 1}`).join(', '))})</span>` : ''}</span><span class="tr-asg-own"></span>`;
+          <span class="tr-muted">→</span>${productIcon(item.to)}<b>${esc(productName(item.to))}</b></span>${joinedOut(item).length && !item.people.length && joinedOut(item).length === item.joined.length
+            ? `<span class="tr-asg-line tr-muted">Concrete only here: the people moving in carry the gain (${esc(joinedOut(item).map(([, c]) => `step ${stepNo(c)}`).join(', '))})</span>` : ''}</span><span class="tr-asg-own"></span>`;
+      const valueOf = item => item.people.reduce((v, id) => v + delta(id), 0) + item.heldFor.reduce((v, x) => v + delta(x.employee), 0) - (item.cost || 0);
+      const kindOf = item => {
+        const t = item.kind === 'tool' && newTool(item.people[0]);
+        return item.kind === 'switch' ? 'Switch product' : item.kind === 'swap' ? 'Swap' : item.kind === 'move' ? 'Move' : t ? 'Give a tool' : item.heldFor.length ? 'Hold back a tool' : 'Remove a tool';
+      };
+      const glyphOf = item => icon(item.kind === 'tool' ? (newTool(item.people[0]) || null)?.type || emp(item.people[0]).equipped?.type || 'move' : item.kind);
+      // A grouped step: which part loses on its own, and why they go together.
+      const groupNote = item => {
+        const names = p => esc(p.people.map(id => emp(id).name).join(' and '));
+        const what = p => p.kind === 'switch' ? `switching ${esc(companyName(p.company) || co(p.company).name)} to ${esc(productName(p.to))}`
+          : p.kind === 'swap' ? `the swap of ${names(p)}` : p.kind === 'move' ? `moving ${names(p)}` : `the tool change for ${names(p)}`;
+        const losing = item.parts.filter(p => valueOf(p) < -1e-9);
+        return `One step: ${losing.map(p => `${what(p)} (${signed(valueOf(p))} on its own)`).join(', ')} only pays together with the rest, ${losing.some(p => item.parts.some(q => q !== p && q.people.some(id => p.people.some(x => emp(x).equipped?.id && final.get(id)?.tool === emp(x).equipped.id)))) ? 'which gets the tool it gives up' : 'which it makes room for'}.`;
+      };
       const stepHtml = (item, i) => {
-        const a = emp(item.people[0]), many = item.people.length + item.heldFor.length > 1;
-        const value = item.people.reduce((v, id) => v + delta(id), 0) + item.heldFor.reduce((v, x) => v + delta(x.employee), 0) - (item.cost || 0);
-        const t = item.kind === 'tool' && newTool(a.id);
-        const kind = item.kind === 'switch' ? 'Switch product' : item.kind === 'swap' ? 'Swap' : item.kind === 'move' ? 'Move' : t ? 'Give a tool' : item.heldFor.length ? 'Hold back a tool' : 'Remove a tool';
-        const glyph = icon(item.kind === 'tool' ? t?.type || a.equipped?.type || 'move' : item.kind);
-        const rows = (item.kind === 'switch' ? switchRow(item) : '') + item.people.map(id => `<span class="tr-asg-who">${esc(emp(id).name)}</span><span class="tr-asg-what">${action(id)}</span>
-          <span class="tr-asg-own${delta(id) < 0 ? ' is-neg' : ''}">${many ? signed(delta(id)) : ''}</span>`).join('') + item.heldFor.map(heldRow).join('');
-        const why = item.people.map(id => `<div class="tr-asg-tags">${many ? `<b>${esc(emp(id).name)}</b>` : ''}${tags(id)}</div>`).join('') + notes(item).map(n => `<p>${n}</p>`).join('');
+        const parts = item.parts || [item], many = item.people.length + item.heldFor.length > 1;
+        const value = valueOf(item);
+        const kind = parts.map(kindOf).join(' + ');
+        const glyph = glyphOf(parts[0]);
+        const rows = parts.map(p => (p.kind === 'switch' ? switchRow(p) : '') + p.people.map(id => `<span class="tr-asg-who">${esc(emp(id).name)}</span><span class="tr-asg-what">${action(id)}</span>
+          <span class="tr-asg-own${delta(id) < 0 ? ' is-neg' : ''}">${many ? signed(delta(id)) : ''}</span>`).join('')).join('') + item.heldFor.map(heldRow).join('');
+        const why = (item.parts ? `<p>${groupNote(item)}</p>` : '') + item.people.map(id => `<div class="tr-asg-tags">${many ? `<b>${esc(emp(id).name)}</b>` : ''}${tags(id)}</div>`).join('')
+          + [...new Set(parts.flatMap(notes))].map(n => `<p>${n}</p>`).join('');
         return `<li class="tr-asg-step" data-emps="${esc([...item.people, ...item.heldFor.map(x => x.employee)].join(' '))}"><span class="tr-asg-n" aria-hidden="true">${i + 1}</span><span class="tr-asg-glyph">${glyph}</span>
           <div><div class="tr-asg-step-head"><span>${kind}</span><span class="tr-asg-value${value < 0 ? ' is-neg' : ''}">${signed(value)}<small>${signed(value / days, 2)}/day</small></span></div>
           <div class="tr-asg-rows">${rows}</div>
