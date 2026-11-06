@@ -32,7 +32,7 @@ const ProductSwitchCore = (() => {
     Math.min(SPECIALIZATION.maxPercent, Math.max(0, (e.specializations?.[product] || 0) * SPECIALIZATION.percentPerDay));
 
   /* The two price sets, built once per load: `live` from the market list
-   * (order-book margin after tax and inputs, market.list[].perPP) and `game`
+   * (order-book margin after inputs, market.list[].perPP) and `game`
    * from EmployeeCore.gameMargins (the game's slow multi-day average). Both
    * are { code: money per PP }. worse(code) is the lower of the two, or the
    * one known; spike(code) flags a live margin far above the game's. */

@@ -15,7 +15,10 @@
  *
  *  A product turns PP into money at its margin per PP:
  *
- *    margin per PP = (sale price × (1 − market tax) − input cost) ÷ productionPoints
+ *    margin per PP = (sale price − input cost) ÷ productionPoints
+ *
+ *  Market tax is paid by the buyer, to the buyer's country, on top of the
+ *  price (the game's market text), so a sale keeps its full price.
  *
  *  Profit is output × margin, minus employee wages and the manager's pay.
  *  Employee tax is withheld from wages, so it costs the owner nothing.
@@ -287,7 +290,7 @@ const ProductPickerTool = (() => {
     return { ...out, byId: new Map(out.rows.map(r => [r.id, r])) };
   }
 
-  /** Sale price after market tax, input cost and margin per PP, or null. */
+  /** Sale price, input cost and margin per PP, or null. */
   function margin(m, code) {
     const it = m.gameItems[code];
     const sale = m.prices[code]?.price;
@@ -298,8 +301,7 @@ const ProductPickerTool = (() => {
       if (p == null) return null;
       inputs += qty * p;
     }
-    const net = sale * (1 - (m.taxes.market || 0) / 100);
-    return { sale, net, inputs, perPP: (net - inputs) / it.productionPoints };
+    return { sale, inputs, perPP: (sale - inputs) / it.productionPoints };
   }
 
   const outputPP = c => c.aePP + c.empPP + c.selfPP;
@@ -395,7 +397,7 @@ const ProductPickerTool = (() => {
   const HELP = {
     income: ['About projected income', '<p>Total per day and week includes engines and employees, minus wages and manager pay. It excludes self-work. Engines use their configured output; employee output and wages use the last full UTC day.</p><p>The estimate beneath Total adds one full energy bar spent on self-work at your best-margin owned product, using your Production stat. The weekly estimate assumes this each day. It assumes storage space and excludes energy regenerated while working.</p><p>Engine and employee inputs update income and product comparisons as you type, keeping their current product mix and costs. The self-work input starts at one full energy bar and affects the product comparison only. Company rows and Actual values keep the loaded figures.</p>'],
     best: ['About the highest margin', '<p>This product has the highest margin per production point at current market prices. Rankings change over time.</p><p>This is a price snapshot, not a recommendation to switch your workforce. Changing products affects employee specialisation and trait bonuses. For example, Labourer favours raw resources and penalises manufactured goods; Craftsman does the reverse. Your companies below are judged with these changes when their employees load.</p>'],
-    products: ['About product margins', '<p>Margin per production point (PP) is the sale price after market tax, minus input costs, divided by the PP needed to make it. Inputs use market prices even when you make them yourself.</p><p>Prices average the latest 100 trades, weighted by quantity. Trades older than 24 hours are excluded. Products without recent prices are omitted. The game uses a slower price average and excludes market tax, so its profit figures can differ.</p><p>Max columns put all your output into that product. Without self-work adds engines and profitable employee output. With self-work adds Max self-work, using the PP input above. Both exclude employee output when it loses money. The default sort is Without self-work, highest first. Actual is what your companies making it earn now. Green rows are products you make. Click a heading to sort.</p><p>Employees pay off shows the highest wage expectation that earns a profit, using your Management and core-region bonus. Wages use the game’s PP value × wage expectation (70–130%). Bonuses increase output without increasing wages. This threshold excludes individual happiness, traits and specialisation.</p>'],
+    products: ['About product margins', '<p>Margin per production point (PP) is the sale price minus input costs, divided by the PP needed to make it. Inputs use market prices even when you make them yourself.</p><p>Prices average the latest 100 trades, weighted by quantity. Trades older than 24 hours are excluded. Products without recent prices are omitted. The buyer pays market tax on top of the price, so a sale keeps its full price. The game uses a slower price average, so its profit figures can differ.</p><p>Max columns put all your output into that product. Without self-work adds engines and profitable employee output. With self-work adds Max self-work, using the PP input above. Both exclude employee output when it loses money. The default sort is Without self-work, highest first. Actual is what your companies making it earn now. Green rows are products you make. Click a heading to sort.</p><p>Employees pay off shows the highest wage expectation that earns a profit, using your Management and core-region bonus. Wages use the game’s PP value × wage expectation (70–130%). Bonuses increase output without increasing wages. This threshold excludes individual happiness, traits and specialisation.</p>'],
     companies: ['About company profits and switching', '<p>Daily profit is output × the current product margin, minus wages and manager pay. Employee bonuses include your Management, the manager and a core region.</p><p><strong>Best switch</strong> uses the Employee Training model with your saved planner settings. Each company is switched on its own to the goods the planner tries, with each employee’s saved specialisation on the new good, Specialist, Craftsman and Laborer, tools that stop fitting, coworkers, wages and retirement. <strong>Switch</strong> means it still gains at the worse of today’s margin and the game’s slower average, after the planner’s minimum gain. <strong>Spike: hold</strong> means it pays at today’s prices only, while the good’s margin is far above the game’s average. <strong>Hold</strong> means it pays at today’s prices only, without a spike. <strong>Stay</strong> means no other good pays at both prices. Each verdict links to the Products tab of Employee Training, which plans switches together with employee moves, so its verdicts can differ.</p><p>Gain per day is the switch’s extra profit over the planner’s horizon, net of the concrete: today’s prices first, the game’s below. Switch cost is the concrete needed to change products; payback is that cost over the gain a day at the worse price.</p><p>When a company’s employees don’t load, it shows the old comparison instead, marked <strong>output held fixed</strong>: the best-margin good at the same output and costs, without specialisation, trait or tool changes.</p><p>Companies start in the game’s order. Click a column heading to sort; click again to reverse it. Expand Specialisations to see each employee’s current bonus and saved progress on other products, capped at +20%. Switching restores that product’s progress.</p>'],
   };
   const help = key => sectionHelp(...HELP[key]);
@@ -575,7 +577,7 @@ const ProductPickerTool = (() => {
 
   const PRODUCT_COLS = [
     { key: 'name',         label: 'Product', l: true, dir: 1 },
-    { key: 'perPP',        label: 'Margin / PP', title: 'Sale price after market tax, minus inputs, per production point' },
+    { key: 'perPP',        label: 'Margin / PP', title: 'Sale price minus inputs, per production point' },
     { key: 'maxEngines',   label: 'Max engines', title: 'If all your automated engines made this' },
     { key: 'maxEmployees', label: 'Max employees', title: 'If all your employees made this, minus wages and managers' },
     { key: 'maxSelf',      label: 'Max self-work', title: 'If all your self-work went into this' },

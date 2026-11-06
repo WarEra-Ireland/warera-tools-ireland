@@ -19,8 +19,8 @@
  *      any key, so they go through the shared proxy. Selecting an employee
  *      fills the Train tab, including the hand they were dealt and haven't
  *      picked from yet (pendingTraining.offers).
- *    • Product prices: each product's margin per PP (sale price after
- *      market tax, minus inputs, over its production points, from the
+ *    • Product prices: each product's margin per PP (sale price minus
+ *      inputs, over its production points, from the
  *      latest trades, as in the Top products) over the game's value of
  *      a PP. 1.00× is an average product.
  *
@@ -64,7 +64,7 @@ const EmployeeTrainingTool = (() => {
     return `<span class="tr-help${trait ? ' tr-trait-help' : ' tr-section-help'}"><button type="button" class="tr-help-trigger" aria-expanded="false"${trait ? '' : ` aria-label="${escapeHtml(label)}"`}>${trait ? label : '<span aria-hidden="true">ⓘ</span>'}</button><span class="tr-help-content" role="tooltip" hidden>${content}</span></span>`;
   }
 
-  const profitPricingHelp = '<p>Prices use recent market trades, with market tax deducted from sales. The game uses a slower price average and excludes market tax, so its profit figures can differ.</p>';
+  const profitPricingHelp = '<p>Prices use recent market trades. The buyer pays market tax on top of the price, so a sale keeps its full price. The game uses a slower price average, so its profit figures can differ.</p>';
 
   function wireHelp() {
     const view = document.querySelector('[data-view="training"]');
@@ -162,10 +162,9 @@ const EmployeeTrainingTool = (() => {
 
   /* ── Market: product margins over the PP value ───────────── */
   async function loadMarket() {
-    const [ppValue, config, country, gameValues, wageStats] = await Promise.all([
+    const [ppValue, config, gameValues, wageStats] = await Promise.all([
       trpc('gameStat.getPpMoneyValue', null, { retry: true, fresh: true }),
       trpc('gameConfig.getGameConfig', {}, { retry: true, fresh: true }),
-      trpc('country.getCountryById', { countryId: IRELAND }, { retry: true, fresh: true }).catch(() => null),
       trpc('gameStat.getPpMoneyValueByItem', null, { retry: true, fresh: true }).catch(() => null),
       trpc('managerOffer.getWageStats', {}, { retry: true, fresh: true }).catch(() => null),
     ]);
@@ -184,7 +183,6 @@ const EmployeeTrainingTool = (() => {
       }
       if (qty > 0) price[codes[i]] = money / qty;
     });
-    const tax = (country?.taxes?.market || 0) / 100;
     const list = codes.flatMap(code => {
       if (price[code] == null || !(ppValue > 0)) return [];
       let inputs = 0;
@@ -192,7 +190,7 @@ const EmployeeTrainingTool = (() => {
         if (price[need] == null) return [];
         inputs += n * price[need];
       }
-      const perPP = (price[code] * (1 - tax) - inputs) / items[code].productionPoints;
+      const perPP = (price[code] - inputs) / items[code].productionPoints;
       return [{ code, perPP, ratio: perPP / ppValue }];
     }).sort((a, b) => b.ratio - a.ratio);
     const types = Object.fromEntries(codes.map(c => [c, items[c].type]));
@@ -782,7 +780,7 @@ const EmployeeTrainingTool = (() => {
     const v = EC.gameDailyProfit({ ...employee(), ...(Number.isFinite(wage) ? { wage } : {}) }, c, context(), market?.gameMargin?.[input.product], market?.ppValue);
     // The game shows two decimals and hides a change that rounds to nothing.
     if (v == null || Math.abs(v) < 0.005) return '';
-    return `<div class="tr-gc-note" title="The daily profit the game shows on this card: today's extra output at the game's own price, with no market tax, minus the wage change, over 24 hours. The game's price is a slow average, so it can differ from the market price the value above uses. That value also counts specialization growth, aging, coworkers and future trainings.">Game: ${v < 0 ? '−' : '+'}₿${Math.abs(v).toLocaleString('en', { maximumFractionDigits: 3 })}/day</div>`;
+    return `<div class="tr-gc-note" title="The daily profit the game shows on this card: today's extra output at the game's own price, minus the wage change, over 24 hours. The game's price is a slow average, so it can differ from the market price the value above uses. That value also counts specialization growth, aging, coworkers and future trainings.">Game: ${v < 0 ? '−' : '+'}₿${Math.abs(v).toLocaleString('en', { maximumFractionDigits: 3 })}/day</div>`;
   }
 
   // A card value as average profit per day over the employee's working days, or
@@ -2764,7 +2762,7 @@ const EmployeeTrainingTool = (() => {
     tabCount('products', list ? list.filter(r => r.verdict === 'switch').length : 0);
     if (paneHidden('products')) { stalePanes.add('products'); return; }
     stalePanes.delete('products');
-    const heading = `<div class="tr-section-heading"><h3 class="tr-pane-title">Products</h3>${help('How a switch is judged', `<p>A company can switch to any other good for ${market?.changeItemCost ?? 5} concrete. The planner compares every good for every company, each with the moves, swaps and tool changes that go with re-tooling it, using the full employee model: saved specialisation per good, Specialist, Craftsman and Laborer, tools that fit, coworkers, wages and retirement. A company switched early in the plan can be switched again if a better good turns up once others have moved.</p><p><strong>Win at both prices:</strong> a switch is recommended only if the plan still gains at the worse of today's margin (recent trades, after market tax) and the game's slower average, after the planner's minimum gain. <strong>Spike: hold</strong> means a good pays at today's prices only, and its margin is far above the game's average, so it may soon drop.</p><p><strong>Gain / day</strong> is the switch's extra profit over the plan's horizon, net of the concrete; today's prices first, the game's below. A move or swap that would pay on its own keeps its own gain: the switch has to pay on top of it, at both prices. <strong>Payback</strong> is the concrete over the gain a day at the worse price. <strong>Break-even</strong> is the share of the old good's margin per PP the new good must keep for the switch to pay.</p><p>Each switch's gain is measured when the planner takes it, with the moves taken before it. Moves taken later can change a company's figures, so the step values on the Assignments tab can split the same gain differently.</p><p><strong>What a switch loses:</strong> specialisation is saved per good and never decays, so employees resume the new good's saved days and regain 1% a day (2% with Quick Study). Tools of another type go back to inventory. Specialist only works on their own good. Nothing is changed in the game.</p>`)}</div>`;
+    const heading = `<div class="tr-section-heading"><h3 class="tr-pane-title">Products</h3>${help('How a switch is judged', `<p>A company can switch to any other good for ${market?.changeItemCost ?? 5} concrete. The planner compares every good for every company, each with the moves, swaps and tool changes that go with re-tooling it, using the full employee model: saved specialisation per good, Specialist, Craftsman and Laborer, tools that fit, coworkers, wages and retirement. A company switched early in the plan can be switched again if a better good turns up once others have moved.</p><p><strong>Win at both prices:</strong> a switch is recommended only if the plan still gains at the worse of today's margin (recent trades) and the game's slower average, after the planner's minimum gain. <strong>Spike: hold</strong> means a good pays at today's prices only, and its margin is far above the game's average, so it may soon drop.</p><p><strong>Gain / day</strong> is the switch's extra profit over the plan's horizon, net of the concrete; today's prices first, the game's below. A move or swap that would pay on its own keeps its own gain: the switch has to pay on top of it, at both prices. <strong>Payback</strong> is the concrete over the gain a day at the worse price. <strong>Break-even</strong> is the share of the old good's margin per PP the new good must keep for the switch to pay.</p><p>Each switch's gain is measured when the planner takes it, with the moves taken before it. Moves taken later can change a company's figures, so the step values on the Assignments tab can split the same gain differently.</p><p><strong>What a switch loses:</strong> specialisation is saved per good and never decays, so employees resume the new good's saved days and regain 1% a day (2% with Quick Study). Tools of another type go back to inventory. Specialist only works on their own good. Nothing is changed in the game.</p>`)}</div>`;
     const searching = !!planRunning();
     const busy = text => `<div class="tr-refine" role="status"><span>${text}</span>${EmployeeAssignments.busyBar()}</div>`;
     if (!market || !shown) { $body.innerHTML = `${heading}${searching ? busy('The planner is comparing products with employee moves…') : '<p class="tr-muted">Loading prices and the plan…</p>'}`; return; }
