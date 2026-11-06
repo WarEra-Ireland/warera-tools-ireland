@@ -2895,10 +2895,33 @@ html[data-theme="light"] {
 .tr-cand.best { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
 .tr-cand-head { display: flex; justify-content: space-between; align-items: baseline; }
 .tr-cand-drop { min-width: 32px; min-height: 32px; padding: 0 6px; border: 0; background: none; color: var(--muted); font-size: 16px; cursor: pointer; }
-.tr-cand-always { display: grid; grid-template-columns: 1fr 1.3fr 1.3fr; gap: 8px; }
-.tr-cand-always .tr-cand-nat { grid-column: 1 / -1; }
-.tr-cand-stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
-.tr-cand-stats input { text-align: center; }
+.tr-cand-head .tr-cand-best { display: none; margin-right: auto; margin-left: 8px; }
+.tr-cand.best .tr-cand-head .tr-cand-best { display: inline-block; }
+.tr-cand-who { display: grid; grid-template-columns: minmax(0, 1fr) 84px; gap: 8px; align-items: end; }
+.tr-cand-who .tr-cand-pick { display: grid; gap: 4px; }
+.tr-cand-age input { text-align: center; }
+.tr-cand-pick-label { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--muted); }
+.tr-cand-pick-label .tr-gi, .tr-cand .tr-field .tr-gi { width: 14px; height: 14px; flex: none; }
+.tr-cand .tr-field > span:first-child { display: inline-flex; align-items: center; gap: 4px; }
+.tr-cand-stats { display: grid; gap: 6px; }
+.tr-cand-stats .tr-cand-pick { display: grid; grid-template-columns: 96px minmax(0, 1fr); align-items: center; gap: 8px; }
+.tr-seg { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); border: 1px solid var(--border-strong); border-radius: 6px; overflow: hidden; background: var(--bg); }
+.tr-seg label { position: relative; display: block; cursor: pointer; }
+.tr-seg label + label { border-left: 1px solid var(--border); }
+.tr-seg input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
+.tr-seg span { display: block; padding: 7px 4px; min-height: 34px; box-sizing: border-box; text-align: center; font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.tr-seg label:hover span { background: var(--panel-2); color: var(--text); }
+.tr-seg input:checked + span { background: var(--accent-dim); color: var(--text); font-weight: 600; }
+.tr-seg input:focus-visible + span { outline: 2px solid var(--focus); outline-offset: -2px; }
+.tr-cand-wage { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.tr-suffixed { display: flex; align-items: center; gap: 4px; color: var(--muted); }
+.tr-suffixed input { flex: 1; width: 100%; }
+.tr-cand-pick-gender .tr-seg span { font-size: 14px; }
+.tr-cand-wage input { -moz-appearance: textfield; appearance: textfield; }
+.tr-cand-wage input::-webkit-inner-spin-button, .tr-cand-wage input::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+@media (max-width: 600px) { .tr-seg span { min-height: 42px; padding-block: 11px; } }
+.tr-cand-wage input.tr-pos { color: var(--accent); }
+.tr-cand-wage input.tr-neg { color: var(--danger); }
 .tr-cand .tr-field input, .tr-cand .tr-field select { min-height: 36px; }
 .tr-cand-total small { display: block; font-size: 12px; }
 .tr-cand-why summary { font-size: 12px; color: var(--muted); }

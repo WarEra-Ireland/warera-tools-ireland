@@ -1237,14 +1237,18 @@ const EmployeeCore = (() => {
   const POTENTIALS = Array.from({ length: HIRE.maxPotential - HIRE.minPotential + 1 }, (_, i) => HIRE.minPotential + i);
 
   // A typed-in candidate over their working life, in PP. cand: { age,
-  // gender, wagePP (hourly wage ÷ V), production, responsibility, luck }.
+  // gender, wagePP (hourly wage ÷ V), expectation (the card's wage against
+  // the market, 1 = market), production, responsibility, luck }. Either
+  // wage reading will do: the card's expectation is the game's own, so it
+  // reads the trait without our V; the wage, when typed, sets the pay.
   // The trait and potential are hidden: one trait by roll weight, given
   // what the wage says about it (Greedy, Modest and flat Production move
   // the wage), and potential 3 to 10.
   // ctx.situation is the company seen from this candidate. `alt` prices
   // the energy a training uses; `bonus` is the company's, without
   // happiness. { value, output, trait, potential, happiness,
-  // wageExpectation (per paid point, averaged over the trait), odds: { greedy,
+  // wageExpectation (per paid point, averaged over the trait), reading (the
+  // wage against the market, as read), odds: { greedy,
   // modest }, spread }. spread is every way they could turn out, over the
   // trait and potential: [{ p, value }].
   function candidateValue(cand, ctx = {}, { bonus = 0, happinessLoss = DEFAULT_EMPLOYEE.happinessLoss, alt = 0 } = {}) {
@@ -1254,13 +1258,15 @@ const EmployeeCore = (() => {
     // The wage reading: wage ÷ (Production/4 × V). When the hidden trait's
     // flat Production is paid too, the expectation per paid point (Greedy
     // and Modest folded in, as the model's is) depends on the trait.
-    const reading = 4 * (cand.wagePP || 0) / production;
+    const shown = Number.isFinite(cand.wagePP) ? 4 * cand.wagePP / production : null;
+    const reading = Number.isFinite(cand.expectation) ? cand.expectation : shown ?? 0;
+    const pay = shown ?? reading;   // the wage paid, per shown point, ÷ V
     const responsibility = cand.responsibility ?? HIRE.avgStat;
     const happiness = hireHappiness(responsibility, happinessLoss);
     const e = {
       ...DEFAULT_EMPLOYEE, age: cand.age, production, traitProduction: 0, extraProduction: 0,
       responsibility, luck: cand.luck ?? HIRE.avgStat, bonus: withHappiness(bonus, happiness), happiness,
-      specialization: 0, wageExpectation: reading, happinessLoss, traits: [], trainingsPerDay: 1,
+      specialization: 0, wageExpectation: pay, happinessLoss, traits: [], trainingsPerDay: 1,
     };
     const hours = hoursLeft(e);
     const situation = { ...ctx.situation, gender };
@@ -1268,11 +1274,11 @@ const EmployeeCore = (() => {
       const paid = Math.max(1, production + hireProduction(t.code, e.age, situation));
       return { ...t, paid, mult: wageMult(t.code) * paid / production };
     }), reading).map(t => {
-      const w = reading * production / t.paid;
+      const w = pay * production / t.paid;
       // Its own output and wage; the trait priced at that expectation. Greedy
       // and Modest are already in the wage, so they add nothing more.
       const output = hourlyProfit({ ...e, wageExpectation: w }, ctx) * hours;
-      const value = WAGE_MULT[t.code] ? 0 : t.value + (reading - w) * t.wageBase;
+      const value = WAGE_MULT[t.code] ? 0 : t.value + (pay - w) * t.wageBase;
       return { ...t, w, output, value };
     });
     const mean = k => rolls.reduce((a, t) => a + t.p * t[k], 0);
@@ -1282,7 +1288,7 @@ const EmployeeCore = (() => {
     const p = code => rolls.find(t => t.code === code)?.p || 0;
     // Each trait by its odds, each potential equally likely.
     const spread = rolls.flatMap(t => pots.map(v => ({ p: t.p / pots.length, value: t.output + t.value + v })));
-    return { value: output + trait + potential, output, trait, potential, happiness, wageExpectation, odds: { greedy: p('greedy'), modest: p('modest') }, spread };
+    return { value: output + trait + potential, output, trait, potential, happiness, wageExpectation, reading, odds: { greedy: p('greedy'), modest: p('modest') }, spread };
   }
 
   // What a fresh set of candidates is worth when the pick sees only what a

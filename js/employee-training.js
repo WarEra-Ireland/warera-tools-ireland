@@ -1810,9 +1810,11 @@ const EmployeeTrainingTool = (() => {
   const LETTERS = 'ABCDEF';
   const todayUtc = () => new Date().toISOString().slice(0, 10);
   // The hire card shows the happiness Responsibility gives a newcomer
-  // (50 + 3 a point), not the stat, so that is what's typed.
-  const CAND_FIELDS = ['age', 'gender', 'nat', 'wage', 'production', 'happiness', 'luck'];
-  const blankCand = () => ({ age: '', gender: 'male', nat: '', wage: '', production: '', happiness: '', luck: '' });
+  // (50 + 3 a point), not the stat, so that is what's typed. `expect` is
+  // the card's coloured %: the wage against the market for their Production.
+  // Gender starts unset, so a candidate isn't priced as a man by default.
+  const CAND_FIELDS = ['age', 'gender', 'nat', 'wage', 'expect', 'production', 'happiness', 'luck'];
+  const blankCand = () => ({ age: '', gender: '', nat: '', wage: '', expect: '', production: '', happiness: '', luck: '' });
   const NEW_HIRE_HAPPINESS = 50;
   const candResponsibility = h => h == null ? null : (h - NEW_HIRE_HAPPINESS) / EC.CFG.respHappiness;
   // Candidates saved before cards showed every stat carry traits, a hidden
@@ -2111,15 +2113,33 @@ const EmployeeTrainingTool = (() => {
 
   // The wage as typed, per hour (the card may show it per day).
   const hourlyWage = c => { const w = numOrNull(c.wage); return w == null ? null : recruit.unit === 'day' ? w / 24 : w; };
+  const stat = n => Number.isInteger(n) && n >= 1 && n <= 4;
+  // What a candidate still needs before they can be priced, as words.
+  function candMissing(c) {
+    const age = numOrNull(c.age), wage = numOrNull(c.wage), pct = numOrNull(c.expect), out = [];
+    if (!c.nat) out.push('nationality');
+    if (!['male', 'female'].includes(c.gender)) out.push('gender');
+    if (!Number.isInteger(age) || age < 18 || age > 45) out.push('age (18–45)');
+    if (!stat(numOrNull(c.production))) out.push('Production');
+    if (!stat(numOrNull(c.luck))) out.push('Luck');
+    if (!stat(candResponsibility(numOrNull(c.happiness)))) out.push('happiness');
+    if (wage == null && pct == null) out.push('the wage or its %');
+    if (wage != null && wage < 0) out.push('a wage of 0 or more');
+    if (pct != null && pct <= -100) out.push('a % above −100');
+    return out;
+  }
   function priceCandidate(c, entry, alt) {
-    const age = numOrNull(c.age), wage = hourlyWage(c);
-    const [production, responsibility, luck] = [numOrNull(c.production), candResponsibility(numOrNull(c.happiness)), numOrNull(c.luck)];
-    if (entry?.rosterMissing || taken.size || !Number.isInteger(age) || age < 18 || age > 45
-      || wage == null || wage < 0 || !c.nat || !['male', 'female'].includes(c.gender)
-      || ![production, responsibility, luck].every(n => Number.isInteger(n) && n >= 1 && n <= 4) || !market?.ppValue) return null;
-    const newcomer = { nationality: c.nat, gender: c.gender, production, wage };
+    if (entry?.rosterMissing || taken.size || !market?.ppValue || candMissing(c).length) return null;
+    const age = +c.age, wage = hourlyWage(c), pct = numOrNull(c.expect);
+    const [production, responsibility, luck] = [+c.production, candResponsibility(+c.happiness), +c.luck];
+    // The card's % reads the hidden trait as the game set the wage; the
+    // wage, when typed, is what they're paid. Either stands in for the other.
+    const expectation = pct == null ? undefined : 1 + pct / 100;
+    const newcomer = { nationality: c.nat, gender: c.gender, production,
+      wage: wage ?? expectation * production / EC.CFG.outputDivisor * market.ppValue };
     const { ctx, opts } = setupFor(entry, newcomer);
-    const v = EC.candidateValue({ age, gender: c.gender, wagePP: wage / market.ppValue, production, responsibility, luck }, ctx, { ...opts, alt });
+    const v = EC.candidateValue({ age, gender: c.gender, wagePP: wage == null ? undefined : wage / market.ppValue, expectation,
+      production, responsibility, luck }, ctx, { ...opts, alt });
     const cw = coworkerImpact(entry, newcomer);
     // How often they turn out above bar, over the trait and potential.
     const beat = bar => v.spread.reduce((a, w) => w.value + cw.value > bar ? a + w.p : a, 0);
@@ -2127,26 +2147,58 @@ const EmployeeTrainingTool = (() => {
   }
 
   const PLACE_TEXT = { homeCore: 'in a home core region', home: 'in their home country', abroad: 'abroad' };
-  // One candidate as the game's card shows them: age, gender, nationality,
-  // wage and the three stats. The trait and potential show after hire.
-  function candCard(c, i) {
+  // Fields with few values are picked, not typed: a click, or the key shown
+  // (1–4, M or F) on a focused group, which also moves on to the next field.
+  const CAND_PICKS = {
+    gender: { label: 'Gender', opts: [['male', '♂ Male'], ['female', '♀ Female']], keys: { m: 'male', f: 'female' } },
+    production: { label: 'Prod', icon: 'production', opts: [1, 2, 3, 4].map(n => [String(n), String(n)]) },
+    luck: { label: 'Luck', icon: 'luck', opts: [1, 2, 3, 4].map(n => [String(n), String(n)]) },
+    happiness: { label: 'Happiness', icon: 'responsibility',
+      opts: [1, 2, 3, 4].map(r => String(NEW_HIRE_HAPPINESS + r * EC.CFG.respHappiness)).map(h => [h, h]) },
+  };
+  // The game colours the % green below the market and red above it.
+  const expectTone = v => { const n = numOrNull(v); return n == null || n === 0 ? '' : n < 0 ? 'tr-pos' : 'tr-neg'; };
+  // The company's country and the nationalities already on the team come
+  // first: most candidates are one of those.
+  function natOptions(selected, entry) {
+    if (!countries) return '<option value="">Loading countries…</option>';
+    const byId = new Map(countries.map(n => [n._id, n]));
+    const mix = nationalityMix(entry).sort((a, b) => b.count - a.count).map(x => x.nationality);
+    const common = [...new Set([entry?.region?.country, ...mix])].filter(id => byId.has(id));
+    let marked = false;
+    const opt = n => {
+      const sel = !marked && n._id === selected;
+      if (sel) marked = true;
+      return `<option value="${n._id}"${sel ? ' selected' : ''}>${escapeHtml(n.name)}</option>`;
+    };
+    const top = common.map(id => opt(byId.get(id))).join('');
+    return `<option value="">Choose…</option>${top ? `<optgroup label="Usual">${top}</optgroup><optgroup label="All countries">` : ''}${countries.map(opt).join('')}${top ? '</optgroup>' : ''}`;
+  }
+  // One candidate laid out as the game's card: nationality, gender, age,
+  // then Production, Luck and happiness, then the wage and its %. The
+  // trait and potential show after hire.
+  function candCard(c, i, entry) {
     const id = k => `tr-c${i}-${k}`;
-    const num = (k, label, attrs, cls = '') => `<label class="tr-field${cls}" for="${id(k)}"><span>${label}</span><input id="${id(k)}" type="number" data-c="${i}" data-k="${k}" value="${escapeHtml(String(c[k]))}" ${attrs} /></label>`;
-    const natOpts = countries
-      ? `<option value="">Choose…</option>${countries.map(n => `<option value="${n._id}"${n._id === c.nat ? ' selected' : ''}>${escapeHtml(n.name)}</option>`).join('')}`
-      : '<option value="">Loading countries…</option>';
+    const num = (k, label, attrs, { cls = '', suffix = '' } = {}) => `<label class="tr-field${cls}" for="${id(k)}"><span>${label}</span>${suffix ? '<span class="tr-suffixed">' : ''}<input id="${id(k)}" type="number" data-c="${i}" data-k="${k}" value="${escapeHtml(String(c[k]))}" ${attrs} />${suffix ? `<span aria-hidden="true">${suffix}</span></span>` : ''}</label>`;
+    const pick = k => {
+      const g = CAND_PICKS[k];
+      const keys = g.keys ? Object.keys(g.keys).map(x => x.toUpperCase()).join(' or ') : `1–${g.opts.length}`;
+      return `<div class="tr-cand-pick tr-cand-pick-${k}" role="radiogroup" aria-labelledby="${id(k)}-l">
+        <span class="tr-cand-pick-label" id="${id(k)}-l">${g.icon ? gameIcon(g.icon) : ''}${g.label}</span>
+        <div class="tr-seg" title="Click, or press ${keys}">${g.opts.map(([v, t]) => `<label><input type="radio" name="${id(k)}" value="${v}" data-c="${i}" data-k="${k}"${String(c[k]) === v ? ' checked' : ''} /><span>${t}</span></label>`).join('')}</div>
+      </div>`;
+    };
     return `<article class="tr-cand" id="tr-cand-${i}" aria-labelledby="tr-cand-h-${i}">
-      <div class="tr-cand-head"><strong id="tr-cand-h-${i}">Candidate ${LETTERS[i]}</strong>${recruit.cands.length > 1 ? `<button type="button" class="tr-cand-drop" data-r-drop="${i}" aria-label="Remove candidate ${LETTERS[i]}">×</button>` : ''}</div>
-      <div class="tr-cand-always">
-        ${num('age', 'Age', 'min="18" max="45" step="1" inputmode="numeric"')}
-        <label class="tr-field" for="${id('gender')}"><span>Gender</span><select id="${id('gender')}" data-c="${i}" data-k="gender">${[['male', 'Male'], ['female', 'Female']].map(([v, t]) => `<option value="${v}"${v === c.gender ? ' selected' : ''}>${t}</option>`).join('')}</select></label>
-        ${num('wage', `Wage /${recruit.unit === 'day' ? 'day' : 'h'}`, 'min="0" step="any" inputmode="decimal"')}
-        <label class="tr-field tr-cand-nat" for="${id('nat')}"><span>Nationality</span><select id="${id('nat')}" data-c="${i}" data-k="nat">${natOpts}</select></label>
+      <div class="tr-cand-head"><strong id="tr-cand-h-${i}">Candidate ${LETTERS[i]}</strong><span class="tr-badge tr-badge-train tr-cand-best">Best</span>${recruit.cands.length > 1 ? `<button type="button" class="tr-cand-drop" data-r-drop="${i}" aria-label="Remove candidate ${LETTERS[i]}">×</button>` : ''}</div>
+      <label class="tr-field" for="${id('nat')}"><span>Nationality</span><select id="${id('nat')}" data-c="${i}" data-k="nat">${natOptions(c.nat, entry)}</select></label>
+      <div class="tr-cand-who">
+        ${pick('gender')}
+        ${num('age', 'Age', 'min="18" max="45" step="1" inputmode="numeric" placeholder="18–45"', { cls: ' tr-cand-age' })}
       </div>
-      <div class="tr-cand-stats">
-        ${num('production', 'Prod', 'min="1" max="4" step="1" inputmode="numeric" required')}
-        ${num('happiness', 'Happiness', `min="${NEW_HIRE_HAPPINESS + EC.CFG.respHappiness}" max="${NEW_HIRE_HAPPINESS + 4 * EC.CFG.respHappiness}" step="${EC.CFG.respHappiness}" inputmode="numeric" required`)}
-        ${num('luck', 'Luck', 'min="1" max="4" step="1" inputmode="numeric" required')}
+      <div class="tr-cand-stats">${pick('production')}${pick('luck')}${pick('happiness')}</div>
+      <div class="tr-cand-wage">
+        ${num('wage', `${gameIcon('wage')}Wage /${recruit.unit === 'day' ? 'day' : 'h'}`, 'min="0" step="any" inputmode="decimal"')}
+        ${num('expect', `${gameIcon('negotiation')}vs market`, `step="0.1" inputmode="decimal" placeholder="±0.0" class="${expectTone(c.expect)}"`, { suffix: '%' })}
       </div>
       <div class="tr-cand-res" id="tr-cand-res-${i}"></div>
     </article>`;
@@ -2178,21 +2230,21 @@ const EmployeeTrainingTool = (() => {
         <small>A full company can't hire. Fire someone first, <button type="button" class="tr-link" data-reload>reload</button>, then type the candidates in here.${weakest ? ` Most worth replacing here: <button type="button" class="tr-link" data-go-tab="keep" data-go-emp="${weakest.emp._id}">${escapeHtml(weakest.emp.name)}</button> (${keepVerdict(weakest) === 'fire' ? 'Fire' : `${odds(weakest.chance)} replacement chance`}).` : ''}</small></div>`;
     } else {
       body = `<div id="tr-recruit-verdict"></div>
-      <div class="tr-cands">${recruit.cands.map(candCard).join('')}</div>
+      <div class="tr-cands">${recruit.cands.map((c, i) => candCard(c, i, entry)).join('')}</div>
       <div class="tr-recruit-actions">
         ${recruit.cands.length < MAX_SLOTS ? '<button type="button" data-r-add>Add a candidate</button>' : ''}
         <button type="button" data-r-rerolled title="Clears the candidates and counts the reroll">I rerolled</button>
         <button type="button" data-r-clear>Clear</button>
-        <span class="tr-muted">A Recruiter in the company adds a slot, up to 6.</span>
+        <span class="tr-muted">A Recruiter in the company adds a slot, up to 6. On a focused picker, 1–4, M or F picks and moves on.</span>
       </div>`;
     }
     const prefs = entry ? prefsHtml(hirePrefs(entry), `What to look for in ${escapeHtml(companyName(entry.company))}`) : '';
     $recruit.innerHTML = `
-      ${help('How candidates are valued', `<p>Each candidate is worth their output after wages until retirement, plus their trait, their trainings and what they change for the coworkers' traits. The happiness on the card is 50 plus 3 for each point of Responsibility, and lasts. Each point of happiness above 50 adds 1% to output.</p><p>The trait and potential show only after hire. The trait is the average roll, weighted by how likely each trait is. A wage expectation above 130% means Greedy, and one below 70% means Modest. Potential is averaged from 3 to 10. Each training counts only what it earns beyond the same 10 energy spent elsewhere.</p><p>The verdict compares the best candidate with a fresh set's likely pick, after what a new hire earns in the slot each working day. Reroll or wait when a fresh set is likely to do better.</p>`)}
+      ${help('How candidates are valued', `<p>Each candidate is worth their output after wages until retirement, plus their trait, their trainings and what they change for the coworkers' traits. The happiness on the card is 50 plus 3 for each point of Responsibility, and lasts. Each point of happiness above 50 adds 1% to output.</p><p>The coloured % on the card is the wage against the market rate for their Production. Type it, the wage, or both: the % reads the hidden trait the way the game set the wage, without our price for a production point, and the wage sets what they're paid. Each falls back on the other.</p><p>The trait and potential show only after hire. The trait is the average roll, weighted by how likely each trait is and by what the wage says: above +30% only a trait that raises the wage fits, such as Greedy, and below −30% Modest. Gendered traits roll only for the candidate's gender, and Misogynist, Man Hater, Girl Power and Band of Brothers count the coworkers of each gender. Potential is averaged from 3 to 10. Each training counts only what it earns beyond the same 10 energy spent elsewhere.</p><p>The verdict compares the best candidate with a fresh set's likely pick, after what a new hire earns in the slot each working day. Reroll or wait when a fresh set is likely to do better.</p>`)}
       ${prefs}
       <div class="tr-recruit-top">
         <label class="tr-field" for="tr-r-company"><span>Hiring into</span><select id="tr-r-company" data-r="company"${team ? '' : ' disabled'}>${companyOpts}</select></label>
-        ${full ? '' : `<label class="tr-field" for="tr-r-unit"><span>The card shows the wage</span><select id="tr-r-unit" data-r="unit"><option value="day"${recruit.unit === 'day' ? ' selected' : ''}>per day</option><option value="hour"${recruit.unit === 'hour' ? ' selected' : ''}>per hour</option></select></label>
+        ${full ? '' : `<label class="tr-field" for="tr-r-unit"><span>Wage on the card</span><select id="tr-r-unit" data-r="unit"><option value="day"${recruit.unit === 'day' ? ' selected' : ''}>per day</option><option value="hour"${recruit.unit === 'hour' ? ' selected' : ''}>per hour</option></select></label>
         <label class="tr-field" for="tr-r-rerolls"><span>Rerolls today <em>next: ${10 * 2 ** recruit.rerolls} energy</em></span><input id="tr-r-rerolls" type="number" data-r="rerolls" min="0" max="10" step="1" value="${recruit.rerolls}" inputmode="numeric" /></label>`}
       </div>
       ${body}`;
@@ -2496,9 +2548,9 @@ const EmployeeTrainingTool = (() => {
       const $card = document.getElementById(`tr-cand-${i}`);
       const $res = document.getElementById(`tr-cand-res-${i}`);
       $card.classList.remove('best');
-      if (!v) { $res.innerHTML = '<small class="tr-muted">Enter age 18–45, whole stats 1–4, a non-negative wage and nationality.</small>'; return; }
       const c = recruit.cands[i];
-      const wageText = `wage expectation ${Math.round(v.wageExpectation * 100)}%${v.odds.greedy > 0.995 ? ', so Greedy' : v.odds.modest > 0.995 ? ', so Modest'
+      if (!v) { const need = candMissing(c); $res.innerHTML = need.length ? `<small class="tr-muted">Still to enter: ${escapeHtml(need.join(', '))}.</small>` : ''; return; }
+      const wageText = `wage ${Math.round(v.reading * 100)}% of the market${v.odds.greedy > 0.995 ? ', so Greedy' : v.odds.modest > 0.995 ? ', so Modest'
         : v.odds.greedy < 0.005 ? ', so not Greedy' : ''}`;
       const money = moneyOf(v.total);
       const sure = v.beat(alt.value);
@@ -3468,9 +3520,30 @@ const EmployeeTrainingTool = (() => {
         }
         if (t.dataset.r === 'company' || t.dataset.r === 'unit') { recruit[t.dataset.r] = t.value; saveRecruit(); renderRecruitForm(); document.querySelector(`[data-r="${t.dataset.r}"]`)?.focus(); return; }
         else if (t.dataset.r === 'rerolls') recruit.rerolls = Math.max(0, Math.min(10, parseInt(t.value, 10) || 0));
-        else if (t.dataset.k) recruit.cands[+t.dataset.c][t.dataset.k] = t.value;
+        else if (t.dataset.k) {
+          recruit.cands[+t.dataset.c][t.dataset.k] = t.value;
+          if (t.dataset.k === 'expect') t.className = expectTone(t.value);
+        }
         else return;
         saveRecruit(); renderRecruitResult();
+      });
+      // On a focused picker, its key (1–4, M, F) picks and moves to the
+      // card's next field, so a card can be typed in without the mouse.
+      $recruit.addEventListener('keydown', ev => {
+        const t = ev.target;
+        if (t.type !== 'radio' || !t.dataset.k || ev.ctrlKey || ev.metaKey || ev.altKey) return;
+        const card = t.closest('.tr-cand');
+        const group = [...card.querySelectorAll(`input[name="${t.name}"]`)];
+        const keys = CAND_PICKS[t.dataset.k]?.keys;
+        const to = keys ? group.find(r => r.value === keys[ev.key.toLowerCase()]) : /^[1-9]$/.test(ev.key) ? group[+ev.key - 1] : null;
+        if (!to) return;
+        ev.preventDefault();
+        to.checked = true;
+        to.dispatchEvent(new Event('input', { bubbles: true }));
+        // One stop per field: a group's checked radio (or its first).
+        const stops = [...card.querySelectorAll('select, input')].filter(x => x.type !== 'radio'
+          || (card.querySelector(`input[name="${x.name}"]:checked`) || card.querySelector(`input[name="${x.name}"]`)) === x);
+        stops[stops.findIndex(x => x.name ? x.name === t.name : x === t) + 1]?.focus();
       });
       $recruit.addEventListener('click', ev => {
         const t = ev.target.closest('button'); if (!t) return;
