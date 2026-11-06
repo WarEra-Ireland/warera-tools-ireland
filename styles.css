@@ -2863,6 +2863,14 @@ html[data-theme="light"] {
 .tr-calc-sub { margin: 0 0 12px; font-size: 12px; color: var(--muted); }
 .tr-hand { display: grid; gap: 10px; margin: 16px 0; }
 .tr-tool-for { margin: 12px 0; font-size: 13px; }
+/* Over the hand while card values may still change. Done or not, it keeps
+   its height, so the hand below stays put. */
+.tr-refine { margin: 0 0 14px; font-size: 12px; color: var(--muted); display: grid; gap: 4px; }
+.tr-refine-bar { position: relative; height: 3px; border-radius: 2px; overflow: hidden; background: color-mix(in srgb, var(--accent) 15%, transparent); }
+.tr-refine-bar > i { position: absolute; inset: 0 auto 0 0; width: 35%; border-radius: inherit; background: var(--accent); animation: tr-refine 1.4s ease-in-out infinite; }
+.tr-refine.is-done .tr-refine-bar { visibility: hidden; }
+@keyframes tr-refine { from { transform: translateX(-100%); } to { transform: translateX(290%); } }
+@media (prefers-reduced-motion: reduce) { .tr-refine-bar > i { width: 100%; opacity: .5; transform: none; } }
 .tr-field { display: grid; gap: 4px; font-size: 12px; color: var(--muted); }
 .tr-field em { font-style: normal; color: var(--faint); }
 .tr-field input, .tr-field select {
@@ -3155,6 +3163,9 @@ html[data-theme="light"] {
 .tr-cs-table tr.muted td { color: var(--muted); }
 .tr-cs-best { font-size: 10px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin-left: 4px; }
 .tr-cs-controls { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; font-size: 12px; }
+/* Career simulation progress: how many of the careers asked for are done. */
+.tr-cs-bar { flex: 1 0 100%; height: 3px; border-radius: 2px; overflow: hidden; background: color-mix(in srgb, var(--accent) 15%, transparent); }
+.tr-cs-bar > i { display: block; height: 100%; background: var(--accent); transition: width .25s linear; }
 .tr-gc-bar { height: 5px; margin-top: 6px; border-radius: 3px; background: var(--border); overflow: hidden; }
 .tr-gc-bar i { display: block; height: 100%; background: var(--accent); }
 .tr-split { display: flex; height: 16px; margin-top: 6px; border-radius: 4px; overflow: hidden; font-size: 12px; font-weight: 700; color: var(--bg); }
@@ -3201,6 +3212,8 @@ html[data-theme="light"] {
 .tr-asg-seg button { padding: 5px 10px; border: 0; border-radius: 7px; background: none; color: var(--muted); font: inherit; font-size: 12px; cursor: pointer; white-space: nowrap; }
 .tr-asg-seg button[aria-pressed="true"] { background: var(--panel); color: var(--text); font-weight: 600; box-shadow: 0 0 0 1px var(--border); }
 [data-plan-status]:not(:empty) { margin: 0 0 10px; font-size: 13px; }
+[data-plan-status] .tr-refine { font-size: 13px; margin: 0; }
+.tr-products-stale { opacity: .5; pointer-events: none; transition: opacity .2s; }
 .tr-asg-hero { display: grid; grid-template-columns: minmax(220px, 1.4fr) repeat(4, minmax(110px, 1fr)); gap: 8px; margin-bottom: 14px; }
 .tr-asg-tile { padding: 12px 14px; border: 1px solid var(--border); border-radius: 12px; background: var(--panel); min-width: 0; }
 .tr-asg-k { font-size: 12px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); }

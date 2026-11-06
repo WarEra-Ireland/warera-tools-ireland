@@ -150,7 +150,12 @@ const EmployeeTrainingTool = (() => {
   // The open tab; emp is an employee asked for by the link, until the team loads.
   const view = { tab: 'overview', emp: null };
   // The background planner's latest result (EmployeeAssignments onResult).
-  let plan = null;
+  let plan = null, lastPlan = null;
+  // The planner's result, or while it runs again (or waits to, after a
+  // change) its last finished one for the same team and prices.
+  const currentPlan = () => plan && !plan.running ? plan : null;
+  const planRunning = () => plan?.running;
+  const shownPlan = () => currentPlan() || (lastPlan && lastPlan.team === team && lastPlan.market === market ? lastPlan.plan : null);
   // Cards marked as taken since the last load: employee id → { text, rolled }.
   // A recorded choice invalidates advice until the next server snapshot.
   const taken = new Map();
@@ -488,7 +493,7 @@ const EmployeeTrainingTool = (() => {
   };
   const ARG_SHORT = { production: 'Prod', responsibility: 'Happiness', luck: 'Luck', match: 'its product', other: 'other good' };
 
-  let cardPricer = null, cardRevision = null;
+  let cardPricer = null, cardRevision = null, lastPriced = null;
   // A number per object, for memo keys over objects that are replaced
   // rather than changed (team, market, employees).
   const objectIds = new WeakMap();
@@ -626,14 +631,22 @@ const EmployeeTrainingTool = (() => {
       const spread = c.card === 'wildCard' ? EC.wildCardOutcomes(e, ctx) : null;
       return { slot, c, value, outcomes: tv?.outcomes || [], spread, note: t?.unpriced, when: t?.when, blocks: blockedHabits(c, e, ctx) };
     }).filter(Boolean);
-    const batch = selectedPricing(rows.map(x => x.c), 'hand');
-    const group = batch.result?.groups[0];
-    if (batch.status === 'done') rows.forEach((row, i) => {
+    const cards = rows.map(x => x.c);
+    const batch = selectedPricing(cards, 'hand');
+    // While a newer valuation of this same hand runs (the assignment plan
+    // landed and moved tools), the last one stays on screen, so the cards
+    // and the pick don't flick back to current-company values.
+    const handKey = JSON.stringify([cardRevision, input.pick, cards]);
+    if (batch.status === 'done') lastPriced = { key: handKey, batch };
+    const shown = batch.status === 'pending' && lastPriced?.key === handKey ? lastPriced.batch : batch;
+    const group = shown.result?.groups[0];
+    if (shown.status === 'done') rows.forEach((row, i) => {
       const q = group.quotes[i];
       Object.assign(row, q, { note: q.note || row.note, detail: quoteDetail(q) });
     });
     rows.pricing = batch;
-    rows.scope = pricingLabel(batch);
+    rows.provisional = shown !== batch;
+    rows.scope = pricingLabel(shown);
     // Per-day values average over the employee's remaining working days.
     rows.days = EC.workingDays(e);
     return rows;
@@ -669,7 +682,7 @@ const EmployeeTrainingTool = (() => {
   // out because they can't be priced.
   function verdict(hand) {
     if (!hand.length) return { best: null, html: '' };
-    if (hand.pricing?.status === 'pending') return { best: null, html: '<p class="tr-calc-sub">Still working out the values. Wait before you pick.</p>' };
+    if (hand.pricing?.status === 'pending' && !hand.provisional) return { best: null, html: '' };
     const [best, next] = hand.filter(x => x.value !== null).sort((a, b) => b.value - a.value);
     if (!best) return { best: null, html: '<p class="tr-calc-sub">None of these cards can be priced. Pick by the traits.</p>' };
     const notes = [];
@@ -842,8 +855,9 @@ const EmployeeTrainingTool = (() => {
         if (careerJob !== job || data.id !== job.id) return;
         if (data.type === 'career:progress') {
           job.completed = data.completed;
-          const el = $calc.querySelector('[data-career-progress]');
+          const el = $calc.querySelector('[data-career-progress]'), bar = $calc.querySelector('[data-career-bar]');
           if (el) el.textContent = careerProgressText(job);
+          if (bar) bar.style.width = `${careerShare(job)}%`;
           return;
         }
         if (data.type === 'career:done') {
@@ -864,6 +878,7 @@ const EmployeeTrainingTool = (() => {
     } catch (error) { job.error = error.message; stopCareer(job); }
     renderResult();
   }
+  const careerShare = job => (100 * (job.start + job.completed) / (job.start + job.count)).toFixed(1);
   const careerProgressText = job => `Simulating careers: ${(job.start + job.completed).toLocaleString()} of ${(job.start + job.count).toLocaleString()}…`;
   // ±1.96 standard errors: the 95% sampling interval.
   const careerRange = r => r.standardError === null ? '' : `± ${fmtPP(1.96 * r.standardError)}`;
@@ -898,7 +913,8 @@ const EmployeeTrainingTool = (() => {
     }
     const more = (s?.n || 0) < CAREER_MAX;
     const controls = job?.running
-      ? `<span data-career-progress role="status">${careerProgressText(job)}</span> <button type="button" data-career-cancel>Cancel</button>`
+      ? `<span data-career-progress role="status">${careerProgressText(job)}</span> <button type="button" data-career-cancel>Cancel</button>
+        <div class="tr-cs-bar" aria-hidden="true"><i data-career-bar style="width:${careerShare(job)}%"></i></div>`
       : more ? `<button type="button" data-career>${s ? `Simulate ${Math.min(CAREER_MAX - s.n, s.n * 3).toLocaleString()} more careers` : 'Simulate careers'}</button>`
         : '<span class="tr-muted">Sample limit reached.</span>';
     return `<div class="tr-career">
@@ -1013,11 +1029,30 @@ const EmployeeTrainingTool = (() => {
     $calc.innerHTML = `
       ${note ? `<div class="tr-hand">${note}</div>` : ''}
       ${toolLine(hand)}
+      ${hand.length ? refineLine(hand) : ''}
       ${v.html}
       ${hand.length ? `<div class="tr-hand-row">${handCards(hand, v.best)}
         ${help('What the card values mean', `Each value is the extra profit per day the card adds, at the PP money value, averaged over the employee's remaining working days. Below it are the production points the card adds before retirement, counting coworkers and moves between your companies. ${escapeHtml(hand.scope)} Wild card averages every eligible trait equally, excluding held traits, conflicts, gender mismatches and partner traits, plus +${EC.CFG.wildCardStatGain} to each stat equally. Wages use hired and trained Production; Negotiation reduces wage expectation before Greedy or Modest applies. "Game" is the daily profit the game shows on the card: today's change only, at the market price, so it differs from the career average.`)}</div>
       ${careerPanel()}` : ''}
       ${warnings.length ? `<ul class="tr-facts">${warnings.map(w => `<li class="tr-warn">${w}</li>`).join('')}</ul>` : ''}`;
+  }
+
+  // One line over the hand, always there so the hand below doesn't move:
+  // a progress bar while values may still change, then what they rest on.
+  // Card values come in two steps: first with tools where they are now,
+  // then again once the assignment plan has placed them.
+  function refineLine(hand) {
+    const pending = hand.pricing?.status === 'pending', planning = !!plan?.running;
+    if (!pending && !planning) {
+      const text = hand.pricing?.status === 'done' ? (Object.keys(plannedTools()).length ? 'Final values, with tools placed by the assignment plan.' : 'Final values.')
+        : 'Current-company values.';
+      return `<div class="tr-refine is-done" role="status"><span>${text}</span><div class="tr-refine-bar" aria-hidden="true"></div></div>`;
+    }
+    const pick = hand.provisional ? 'The pick may still change.' : 'Wait before you pick.';
+    const text = pending && planning ? `Valuing the cards… ${pick}`
+      : pending ? `${plan && !plan.running ? 'Step 2 of 2: valuing the cards with the planned tools' : 'Valuing the cards'}… ${pick}`
+        : `Step 1 of 2: the assignment plan is placing tools; values may change after. ${pick}`;
+    return `<div class="tr-refine" role="status"><span>${text}</span>${EmployeeAssignments.busyBar()}</div>`;
   }
 
   // Over a hand where holding a tool changes a card's value (the employee
@@ -1618,8 +1653,8 @@ const EmployeeTrainingTool = (() => {
         groups.energy.push({ icon: '🎓', go: { tab: 'train', emp: r.emp._id },
         what: `Train ${escapeHtml(r.emp.name)}`,
         sub: `<span class="tr-act-company">${productIcon(r.entry.company.itemCode)} ${escapeHtml(companyName(r.entry.company))}</span>
-          <span class="tr-act-details"><span>${plural(r.left, 'training')} left</span>${traitsChip(r.emp)}<span>Age ${r.emp.age}</span></span>${r.pricing
-            ? `<span class="tr-act-notice" title="${escapeHtml(r.basis)}">${r.pricing === 'pending' ? 'Current company only; valuing moves…' : 'Current company only'}</span>` : ''}`,
+          <span class="tr-act-details"><span>${plural(r.left, 'training')} left</span>${traitsChip(r.emp)}<span>Age ${r.emp.age}</span></span>${r.pricing === 'fallback'
+            ? `<span class="tr-act-notice" title="${escapeHtml(r.basis)}">Current company only</span>` : ''}`,
         value: profit || `≈ ${signedPP(r.value)} PP`, unit: profit ? `≈ ${signedPP(r.value)} PP` : 'avg next hand' });
       }
       else if (r.kind === 'replace') {
@@ -1627,7 +1662,7 @@ const EmployeeTrainingTool = (() => {
         groups.energy.push({ icon: '🔁', go: { tab: 'keep', emp: r.emp._id },
         what: `Replace ${escapeHtml(r.emp.name)}`,
         sub: `<span class="tr-act-company">${productIcon(r.entry.company.itemCode)} ${escapeHtml(companyName(r.entry.company))}</span>
-          <span class="tr-act-details"><span title="Chance a fresh candidate set offers a better replacement">${odds(r.keep.chance)} better hire</span>${traitsChip(r.emp)}<span>Age ${r.emp.age}</span></span>${keepVerdict(r.keep) === 'fire' ? '<span class="tr-act-notice tr-warn">Costs more than they earn</span>' : ''}${r.keep.from ? `<span class="tr-act-notice tr-warn">Can be fired from ${utcTime(r.keep.from)}</span>` : ''}${plan?.running ? '<span class="tr-act-notice">Planner still checking moves</span>' : ''}${hirePrefs(without(r.entry, r.emp)).slice(0, 2).map(x => `<span class="tr-act-notice" title="${escapeHtml(x.why)}">Prefer ${escapeHtml(x.want)}</span>`).join('')}`,
+          <span class="tr-act-details"><span title="Chance a fresh candidate set offers a better replacement">${odds(r.keep.chance)} better hire</span>${traitsChip(r.emp)}<span>Age ${r.emp.age}</span></span>${keepVerdict(r.keep) === 'fire' ? '<span class="tr-act-notice tr-warn">Costs more than they earn</span>' : ''}${r.keep.from ? `<span class="tr-act-notice tr-warn">Can be fired from ${utcTime(r.keep.from)}</span>` : ''}${hirePrefs(without(r.entry, r.emp)).slice(0, 2).map(x => `<span class="tr-act-notice" title="${escapeHtml(x.why)}">Prefer ${escapeHtml(x.want)}</span>`).join('')}`,
         value: profit || `≈ ${signedPP(r.value)} PP`, unit: profit ? `≈ ${signedPP(r.value)} PP` : 'avg replacement' });
       }
       else groups.energy.push({ icon: '➕', go: { tab: 'hire', company: r.entry.company._id },
@@ -1691,9 +1726,26 @@ const EmployeeTrainingTool = (() => {
     const body = Object.entries(groups).filter(([k, list]) => k !== 'done' && list.length).map(([k, list]) =>
       `<li class="tr-act-group">${heads[k]}</li>${list.map(a => item(a, false)).join('')}`).join('');
     return `<div class="tr-section-heading"><h3 class="tr-pane-title" id="tr-acts-h">Next actions</h3>${help('How the list is ordered', `<p><strong>Do now</strong> lists training hands waiting for a choice, and moves the planner makes for employees marked Replace: moving is free and changes their verdict, so it comes before replacing them.</p><p><strong>Spend energy</strong> ranks actions by the production points each 10 energy earns before retirement. Training uses the average value of the best card in the next hand. Hiring uses the best candidate in a fresh set. Replacing uses that candidate's value, minus the value of keeping the employee and the cost of firing.</p><p>Replacement appears when a fresh hire wins at least two times in three, or the employee costs more than they earn. If training and replacing the same employee both qualify, only the better action appears.</p><p>Self-work is a step of its own, placed after the actions that earn more per 10 energy than your own work, and naming the companies making your best-margin product. When the bar would fill before training renews at 00:00 UTC, it says how many times to work to keep it from overflowing: it counts the actions above it first, and leaves a full bar at the reset for the next day's trainings. Otherwise it appears only when actions below it earn less than self-work.</p><p><strong>Check</strong> lists assignment suggestions and employees making the wrong product type.</p>`)}</div>
+      ${actionsStatus()}
       <ol class="tr-acts" id="tr-next-actions">${body || '<li class="tr-act-group">Nothing to do right now</li>'}</ol>
       ${groups.done.length ? `<details class="tr-more tr-done"${$team.querySelector('.tr-done')?.open ? ' open' : ''}><summary>Trained today (${groups.done.length}) <em>Ready at 00:00 UTC, in ${escapeHtml(formatDuration(untilReset()))}</em></summary><ol class="tr-acts">${groups.done.map(a => item(a, true)).join('')}</ol></details>` : ''}
       `;
+  }
+
+  // One line over Next actions, always there so the list keeps its place:
+  // a progress bar while the planner or the training values are still
+  // being worked out (the order may change), then what the values include.
+  function actionsStatus() {
+    const pending = feedMemo.batch?.status === 'pending' && feedMemo.jobs?.length !== 0 || !!plan?.running;
+    const keeping = keepRows().pending;
+    if (!pending && !keeping) {
+      const text = feedMemo.batch?.status === 'done' ? 'Up to date. Training values include employee moves.' : 'Up to date.';
+      return `<div class="tr-refine is-done" role="status"><span>${text}</span><div class="tr-refine-bar" aria-hidden="true"></div></div>`;
+    }
+    const text = plan?.running ? 'The planner is comparing assignments'
+      : pending ? 'Valuing trainings with employee moves' : 'Working out who is worth keeping';
+    const order = feedMemo.carried && !plan?.running ? 'The last values stay until it finishes.' : 'The order may change.';
+    return `<div class="tr-refine" role="status"><span>${text}… ${order}</span>${EmployeeAssignments.busyBar()}</div>`;
   }
 
   // Flags for an employee's row: Keep or replace verdict, mismatch, a
@@ -1808,6 +1860,12 @@ const EmployeeTrainingTool = (() => {
     const planning = !!plan?.running;
     const revision = JSON.stringify([cardRevision, todayUtc(), planning ? 'planning' : plan ? plan.tools : null]);
     if (feedMemo.revision !== revision) {
+      // The last feed priced with moves, for the same team, prices and day,
+      // stands in while this one is worked out (the planner ran again and
+      // moved tools), so Next actions doesn't fall back to current-company
+      // values and re-sort twice.
+      const base = JSON.stringify([cardRevision, todayUtc()]);
+      const carried = feedMemo.base !== base ? null : feedMemo.published ? feedMemo.rows : feedMemo.carried;
       const rows = energyFeed();
       const trains = planning ? [] : rows.filter(r => r.kind === 'train');
       const jobs = trains.map(r => {
@@ -1821,7 +1879,7 @@ const EmployeeTrainingTool = (() => {
       if (feedMemo.key) pricer.cancel(feedMemo.key);
       const key = jobs.length ? JSON.stringify(['feed', jobs]) : null;
       const batch = planning ? { status: 'pending' } : key ? pricer.request(key, jobs, pricingRank('feed')) : { status: 'fallback', reason: 'No trainings available.' };
-      feedMemo = { revision, batch, rows, jobs, key, published: false };
+      feedMemo = { revision, base, batch, rows, jobs, key, published: false, carried };
     }
     const { batch, jobs } = feedMemo;
     if (batch.status === 'done' && !feedMemo.published) {
@@ -1844,6 +1902,7 @@ const EmployeeTrainingTool = (() => {
         .sort((a, b) => (b.ready - a.ready) || b.value - a.value);
       feedMemo.published = true;
     }
+    if (batch.status === 'pending' && feedMemo.carried) return feedMemo.carried;
     if (batch.status !== 'done') return feedMemo.rows.map(r => ({ ...r,
       pricing: batch.status, basis: batch.status === 'pending' ? 'recalculating; current-company estimate' : `current-company fallback: ${batch.reason}` }));
     return feedMemo.rows;
@@ -2363,7 +2422,7 @@ const EmployeeTrainingTool = (() => {
     const rows = keepRows();
     const act = rows.filter(r => ['fire', 'replace'].includes(keepVerdict(r)));
     const r = rows.find(x => x.emp._id === input.pick);
-    if (!r && rows.pending) { $fire.innerHTML = '<p class="tr-muted" role="status">Working out who is worth keeping…</p>'; return; }
+    if (!r && rows.pending) { $fire.innerHTML = `<div class="tr-refine" role="status"><span>Working out who is worth keeping…</span>${EmployeeAssignments.busyBar()}</div>`; return; }
     if (!r) { $fire.innerHTML = `<p class="tr-muted">${escapeHtml(keepMemo.reasons.get(input.pick) || 'Choose an employee with a complete roster and verified stats.')}</p>`; return; }
     const { emp, entry } = r;
     const v = keepVerdict(r);
@@ -2400,7 +2459,8 @@ const EmployeeTrainingTool = (() => {
       : `Nobody is marked Fire or Replace. The highest replacement chance is ${odds(rows[0].chance)}, for ${rows[0] === r ? 'this employee' : `<button type="button" class="tr-link" data-go-tab="keep" data-go-emp="${rows[0].emp._id}">${escapeHtml(rows[0].emp.name)}</button>`}.`;
     $fire.innerHTML = `
       ${help('How this is worked out', `<p><strong>Worth keeping</strong> includes the employee's output, traits and remaining trainings, plus the value their traits add to coworkers.</p><p><strong>Worth replacing</strong> uses the best candidate from a fresh set, minus the hire's 10 energy. Firing costs coworkers nothing.</p><p>Both values subtract what a new hire would earn in that slot over the same working days. This accounts for the work you give up by keeping either employee in the slot.</p><p><strong>Replace</strong> means a fresh hire wins at least two times in three. <strong>Close</strong> means at least one time in three. <strong>Fire</strong> means the employee costs more than they earn.</p>`)}
-      ${rows.pending ? '<p class="tr-calc-sub" role="status">Updating for your latest change…</p>' : ''}
+      ${rows.pending ? `<div class="tr-refine" role="status"><span>Updating for your latest change…</span>${EmployeeAssignments.busyBar()}</div>`
+        : '<div class="tr-refine is-done" role="status"><span>Up to date.</span><div class="tr-refine-bar" aria-hidden="true"></div></div>'}
       <div class="tr-verdict tr-keep-${v}"><span class="tr-verdict-take">${VERDICT[v]}${v === 'close' ? ' call' : ''}</span><small>${why}</small>
         ${r.from ? `<small class="tr-warn">Just hired: can be fired from ${utcTime(r.from)}.</small>` : ''}</div>
       <div class="tr-keep-cols">
@@ -2631,27 +2691,34 @@ const EmployeeTrainingTool = (() => {
   function renderProducts() {
     if (!team) return;
     const $body = document.getElementById('tr-products-body');
-    const ready = market && plan && !plan.running && plan.products;
-    const list = ready ? EmployeeProducts.rows(team.companies.map(x => ({ id: x.company._id, product: x.company.itemCode, disabled: !!x.company.disabledAt })), plan, market) : null;
+    // While the planner runs again, its last finished plan for this team
+    // and prices stays up, dimmed, so the tab doesn't empty and refill.
+    const shown = shownPlan();
+    const ready = market && shown && !shown.running && shown.products;
+    const list = ready ? EmployeeProducts.rows(team.companies.map(x => ({ id: x.company._id, product: x.company.itemCode, disabled: !!x.company.disabledAt })), shown, market) : null;
     tabCount('products', list ? list.filter(r => r.verdict === 'switch').length : 0);
     if (paneHidden('products')) { stalePanes.add('products'); return; }
     stalePanes.delete('products');
     const heading = `<div class="tr-section-heading"><h3 class="tr-pane-title">Products</h3>${help('How a switch is judged', `<p>A company can switch to any other good for ${market?.changeItemCost ?? 5} concrete. The planner compares every good for every company, each with the moves, swaps and tool changes that go with re-tooling it, using the full employee model: saved specialisation per good, Specialist, Craftsman and Laborer, tools that fit, coworkers, wages and retirement. A company switched early in the plan can be switched again if a better good turns up once others have moved.</p><p><strong>Win at both prices:</strong> a switch is recommended only if the plan still gains at the worse of today's margin (recent trades, after market tax) and the game's slower average, after the planner's minimum gain. <strong>Spike: hold</strong> means a good pays at today's prices only, and its margin is far above the game's average, so it may soon drop.</p><p><strong>Gain / day</strong> is the switch's extra profit over the plan's horizon, net of the concrete; today's prices first, the game's below. A move or swap that would pay on its own keeps its own gain: the switch has to pay on top of it, at both prices. <strong>Payback</strong> is the concrete over the gain a day at the worse price. <strong>Break-even</strong> is the share of the old good's margin per PP the new good must keep for the switch to pay.</p><p>Each switch's gain is measured when the planner takes it, with the moves taken before it. Moves taken later can change a company's figures, so the step values on the Assignments tab can split the same gain differently.</p><p><strong>What a switch loses:</strong> specialisation is saved per good and never decays, so employees resume the new good's saved days and regain 1% a day (2% with Quick Study). Tools of another type go back to inventory. Specialist only works on their own good. Nothing is changed in the game.</p>`)}</div>`;
-    if (!market || !plan || plan.running) { $body.innerHTML = `${heading}<p class="tr-muted">${plan?.running ? 'The planner is comparing products with employee moves…' : 'Loading prices and the plan…'}</p>`; return; }
-    if (!plan.products) { $body.innerHTML = `${heading}<p class="tr-warn">Concrete has no recent price, so switches can't be costed and weren't compared. <button type="button" class="tr-link" data-reload>Retry</button></p>`; return; }
+    const searching = !!planRunning();
+    const busy = text => `<div class="tr-refine" role="status"><span>${text}</span>${EmployeeAssignments.busyBar()}</div>`;
+    if (!market || !shown) { $body.innerHTML = `${heading}${searching ? busy('The planner is comparing products with employee moves…') : '<p class="tr-muted">Loading prices and the plan…</p>'}`; return; }
+    if (!shown.products) { $body.innerHTML = `${heading}<p class="tr-warn">Concrete has no recent price, so switches can't be costed and weren't compared. <button type="button" class="tr-link" data-reload>Retry</button></p>`; return; }
     const entry = id => team.companies.find(x => x.company._id === id);
     const emps = new Map(team.companies.flatMap(x => x.employees.map(e => [e._id, { name: e.name, company: x.company._id }])));
     const today = id => {
       const x = entry(id), p = x && productFor(x.company.itemCode);
       return p && x.estimate ? ((x.estimate.production || 0) * p.perPP - (x.estimate.wageCost || 0) - (x.estimate.managerCost || 0)) * 24 : null;
     };
-    const out = EmployeeProducts.render(list, plan, {
+    const out = EmployeeProducts.render(list, shown, {
       esc: escapeHtml, productIcon, productName, perDay, tile, money: v => `₿${v.toFixed(3)}`, margin: v => `₿${v.toFixed(4)}`,
       company: id => companyLink(entry(id).company), companyName: id => entry(id) ? companyName(entry(id).company) : 'another company',
       colour: id => companyColour(entry(id).company), employee: id => emps.get(id) || null, today,
-      tool: id => plan.products.tools.find(t => t.id === id) || null,
+      tool: id => shown.products.tools.find(t => t.id === id) || null,
     });
-    $body.innerHTML = `${heading}${out.html}${plan.cancelled ? '<p class="tr-warn">The search was cut short, so a finished one may find more.</p>' : ''}`;
+    const stale = shown !== currentPlan();
+    $body.innerHTML = `${heading}${stale ? busy(searching ? 'The planner is comparing products again. The last results stay below until it finishes.' : 'Waiting to compare again. The last results stay below until it does.') : ''}
+      <div${stale ? ' class="tr-products-stale"' : ''}>${out.html}${shown.cancelled ? '<p class="tr-warn">The search was cut short, so a finished one may find more.</p>' : ''}</div>`;
   }
 
   /* ── Managers ────────────────────────────────────────────── */
@@ -3320,7 +3387,7 @@ const EmployeeTrainingTool = (() => {
     assignments = EmployeeAssignments.mount(document.getElementById('tr-assignments-body'), {
       getTeam: () => taken.size ? null : team, getMarket: () => market, productName, productIcon,
       companyName: id => { const x = team?.companies.find(c => c.company._id === id); return x ? companyName(x.company) : null; },
-      onResult: result => { plan = result; prefetchHands(); renderResult(); renderTeam(); renderFire(); renderProducts(); },
+      onResult: result => { plan = result; if (result && !result.running) lastPlan = { plan: result, team, market }; prefetchHands(); renderResult(); renderTeam(); renderFire(); renderProducts(); },
       onSettings: () => { renderResult(); renderTeam(); },
     });
     $load.addEventListener('click', () => runLoad($username.value));

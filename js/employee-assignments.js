@@ -441,13 +441,16 @@ const EmployeeAssignments = (() => {
       $('.tr-plan-actions').setAttribute('aria-busy', String(on));
     }
     function status(html) { $('[data-plan-status]').innerHTML = html; }
+    const busy = text => status(`<div class="tr-refine"><span>${text}</span>${busyBar()}</div>`);
+    // Once a search ends the line stays, at the same height, so the results don't move up.
+    const settled = text => status(`<div class="tr-refine is-done"><span>${text}</span><div class="tr-refine-bar" aria-hidden="true"></div></div>`);
     // Inputs changed: compare again once typing pauses. A tool with an
     // error waits for the fix, without taking focus.
     let rerun = null;
     function stale() {
       clearTimeout(rerun);
       runId++; stop(); best = null; setRunning(false); onResult(null);
-      status('<span class="tr-muted">Inputs changed. Comparing again…</span>');
+      busy('Inputs changed. Comparing again…');
       rerun = setTimeout(() => run({ auto: true }), 700);
       onSettings();
     }
@@ -912,7 +915,7 @@ const EmployeeAssignments = (() => {
       const id = runId, snapshot = prepared.snapshot;
       const started = Date.now();
       $('[data-plan-result]').classList.add('is-stale'); $('[data-plan-hero]').classList.add('is-stale');
-      status(`<span class="tr-muted">Comparing employee placements and tools ${over(snapshot.days)}…</span>`);
+      busy(`Comparing employee placements and tools ${over(snapshot.days)}…`);
       setRunning(true);
       onResult({ running: true });
       const tag = name => document.querySelector(`script[src*="js/${name}.js"]`)?.getAttribute('src')?.match(/[?&]v=([\w.-]+)/)?.[1] || '';
@@ -925,10 +928,10 @@ const EmployeeAssignments = (() => {
         if (data.type === 'progress') {
           best = { result: data.result, snapshot };
           const seconds = Math.round((Date.now() - started) / 1000);
-          status(`<span class="tr-muted">Searching… round ${data.result.search.rounds}, ${data.result.search.candidates.toLocaleString()} comparisons${seconds ? `, ${seconds} s` : ''}. Best so far ${signed(data.result.gain)} ${over(snapshot.days)}.</span>`);
+          busy(`Searching… round ${data.result.search.rounds}, ${data.result.search.candidates.toLocaleString()} comparisons${seconds ? `, ${seconds} s` : ''}. Best so far ${signed(data.result.gain)} ${over(snapshot.days)}.`);
           return;
         }
-        stop(); setRunning(false); status('');
+        stop(); setRunning(false); settled('Search finished.');
         renderResult(data.result, snapshot);
       };
       worker.onerror = ev => { ev.preventDefault?.(); console.warn('[planner] worker error', ev.message); if (running === id) fail('The planner stopped unexpectedly. Reload the page and try again.'); };
@@ -940,7 +943,7 @@ const EmployeeAssignments = (() => {
     function cancel() {
       if (!worker) return;
       runId++; stop(); setRunning(false);
-      if (best) { renderResult(best.result, best.snapshot, { cancelled: true }); status(''); }
+      if (best) { renderResult(best.result, best.snapshot, { cancelled: true }); settled('Search cancelled. Showing the best arrangement found.'); }
       else {
         status('<span class="tr-muted">Search cancelled before any improvement was found.</span>');
         for (const el of [$('[data-plan-result]'), $('[data-plan-hero]')]) { el.innerHTML = ''; el.classList.remove('is-stale'); }
@@ -979,6 +982,11 @@ const EmployeeAssignments = (() => {
       },
     };
   }
+  // An indeterminate progress bar for work whose length isn't known. Its
+  // phase follows the clock, so redrawing it every progress message doesn't
+  // restart the sweep (styles.css .tr-refine-bar, 1.4 s a sweep).
+  const BUSY_MS = 1400;
+  const busyBar = () => `<div class="tr-refine-bar" aria-hidden="true"><i style="animation-delay:${-(performance.now() % BUSY_MS).toFixed(0)}ms"></i></div>`;
   // Card valuations run on a few workers, each with its own session of the
   // same snapshot. A batch is split by employee, and each idle worker takes
   // the most urgent employee left, preferring ones it has priced before
@@ -1088,6 +1096,6 @@ const EmployeeAssignments = (() => {
     return { reset, request, reprioritize, cancel, get generation() { return generation; },
       dispose() { generation++; stopAll(); batches.clear(); } };
   }
-  return { mount, sanitize, fieldErrors, snapshotOf, careerDays, createCardPricer, toolLogOf, sparesOf, observeEquipped, breakEven, planCards };
+  return { mount, busyBar, sanitize, fieldErrors, snapshotOf, careerDays, createCardPricer, toolLogOf, sparesOf, observeEquipped, breakEven, planCards };
 })();
 if (typeof module !== 'undefined') module.exports = EmployeeAssignments;
