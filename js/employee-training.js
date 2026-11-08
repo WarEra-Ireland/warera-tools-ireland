@@ -1474,11 +1474,11 @@ const EmployeeTrainingTool = (() => {
   // [{ nationality, count }].
   function nationalityMix(entry) {
     const counts = new Map();
-    for (const emp of (team?.companies || []).flatMap(x => x.employees)) {
+    for (const emp of team.companies.flatMap(x => x.employees)) {
       if (emp.nationality) counts.set(emp.nationality, (counts.get(emp.nationality) || 0) + 1);
     }
     return counts.size ? [...counts].map(([nationality, count]) => ({ nationality, count }))
-      : [{ nationality: entry?.region?.country, count: 1 }];
+      : [{ nationality: entry.region?.country, count: 1 }];
   }
 
   // A hire into an empty slot is worth what a fresh set's pick turns out to
@@ -2018,17 +2018,10 @@ const EmployeeTrainingTool = (() => {
     return { times, energy: times * s.cost, after: left < energy, companies: (s.companies?.length ? s.companies : [s.company]).map(own) };
   }
 
-  const recruitEntry = () => team?.companies.find(x => x.company._id === recruit.company)
-    || team?.companies.find(x => x.employees.length < headcountCap(x.company)) || team?.companies[0] || null;
-
-  // The company seen by someone joining, or a typical one with no team loaded.
-  function setupFor(entry, newcomer) {
-    if (entry) return joinSetup(entry, teamMgmt(), newcomer);
-    return {
-      ctx: { ...EC.DEFAULT_CONTEXT, management: team?.management ?? 0, situation: { ...EC.DEFAULT_SITUATION, gender: newcomer.gender || 'male', place: 'home' } },
-      opts: { bonus: 0.25 },
-    };
-  }
+  // The company the Hire form is for. Only called with a team loaded, and a
+  // loaded team always has a company: loadTeam refuses an account without one.
+  const recruitEntry = () => team.companies.find(x => x.company._id === recruit.company)
+    || team.companies.find(x => x.employees.length < headcountCap(x.company)) || team.companies[0];
 
   // What a newcomer does to the traits the company's employees hold: a
   // matching hire helps a Nationalist; a foreign hire costs a Xenophobe and helps a
@@ -2040,7 +2033,7 @@ const EmployeeTrainingTool = (() => {
   function coworkerBase(entry) {
     let bases = coworkerBases.get(entry);
     if (bases?.market === market && bases.management === team?.management) return bases;
-    bases = (entry?.employees || []).map(emp => {
+    bases = entry.employees.map(emp => {
       const inp = inputsFor(emp, entry, { models: false });
       const e = employeeOf(inp), ctx = contextOf(inp);
       return { emp, inp, e, ctx,
@@ -2096,7 +2089,7 @@ const EmployeeTrainingTool = (() => {
   // Nationalist a local, a Cosmopolitan a nationality the company lacks.
   const PREF_MIN = 10;   // PP
   function hirePrefs(entry) {
-    if (!entry?.employees.length || !market?.ppValue) return [];
+    if (!entry.employees.length || !market?.ppValue) return [];
     const local = entry.region?.country;
     const at = ({ gender = 'male', nationality = local, production = 2.5 }) =>
       coworkerImpact(entry, { gender, nationality, production, wage: production / EC.CFG.outputDivisor * market.ppValue });
@@ -2139,7 +2132,7 @@ const EmployeeTrainingTool = (() => {
     return out;
   }
   function priceCandidate(c, entry, alt) {
-    if (entry?.rosterMissing || taken.size || !market?.ppValue || candMissing(c).length) return null;
+    if (entry.rosterMissing || taken.size || !market?.ppValue || candMissing(c).length) return null;
     const age = +c.age, wage = hourlyWage(c), pct = numOrNull(c.expect);
     const [production, responsibility, luck] = [+c.production, candResponsibility(+c.happiness), +c.luck];
     // The card's % reads the hidden trait as the game set the wage; the
@@ -2147,7 +2140,7 @@ const EmployeeTrainingTool = (() => {
     const expectation = pct == null ? undefined : 1 + pct / 100;
     const newcomer = { nationality: c.nat, gender: c.gender, production,
       wage: wage ?? expectation * production / EC.CFG.outputDivisor * market.ppValue };
-    const { ctx, opts } = setupFor(entry, newcomer);
+    const { ctx, opts } = joinSetup(entry, teamMgmt(), newcomer);
     const v = EC.candidateValue({ age, gender: c.gender, wagePP: wage == null ? undefined : wage / market.ppValue, expectation,
       production, responsibility, luck }, ctx, { ...opts, alt });
     const cw = coworkerImpact(entry, newcomer);
@@ -2174,7 +2167,7 @@ const EmployeeTrainingTool = (() => {
     if (!countries) return '<option value="">Loading countries…</option>';
     const byId = new Map(countries.map(n => [n._id, n]));
     const mix = nationalityMix(entry).sort((a, b) => b.count - a.count).map(x => x.nationality);
-    const common = [...new Set([entry?.region?.country, ...mix])].filter(id => byId.has(id));
+    const common = [...new Set([entry.region?.country, ...mix])].filter(id => byId.has(id));
     let marked = false;
     const opt = n => {
       const sel = !marked && n._id === selected;
@@ -2215,24 +2208,24 @@ const EmployeeTrainingTool = (() => {
   }
 
   // Hiring needs a free Break Room slot: a full company fires first
-  // (Keep or replace), reloads, then hires into the slot.
+  // (Keep or replace), reloads, then hires into the slot. The form is
+  // hidden until an account loads and is priced against its companies,
+  // so it waits for the team.
   function renderRecruitForm() {
-    if (!$recruit) return;
+    if (!$recruit || !team) return;
     const entry = recruitEntry();
-    if (entry && recruit.company !== entry.company._id) {
+    if (recruit.company !== entry.company._id) {
       recruit.company = entry.company._id;
       saveRecruit();
     }
-    const full = entry && entry.employees.length >= headcountCap(entry.company);
-    const companyOpts = team
-      ? team.companies.map(x => {
-        const cap = headcountCap(x.company), n = x.employees.length;
-        return `<option value="${x.company._id}"${x === entry ? ' selected' : ''}>${escapeHtml(`${companyLabel(x.company)} · ${n >= cap ? 'full' : `${cap - n} free`}`)}</option>`;
-      }).join('')
-      : '<option value="">Load your employees above to pick a company</option>';
+    const full = entry.employees.length >= headcountCap(entry.company);
+    const companyOpts = team.companies.map(x => {
+      const cap = headcountCap(x.company), n = x.employees.length;
+      return `<option value="${x.company._id}"${x === entry ? ' selected' : ''}>${escapeHtml(`${companyLabel(x.company)} · ${n >= cap ? 'full' : `${cap - n} free`}`)}</option>`;
+    }).join('');
     let body;
-    if (entry?.rosterMissing || taken.size) {
-      body = `<p class="tr-warn">${entry?.rosterMissing ? 'This employee list did not load.' : 'A training choice needs fresh game data.'} <button type="button" class="tr-link" data-reload>Reload</button> before comparing hires.</p>`;
+    if (entry.rosterMissing || taken.size) {
+      body = `<p class="tr-warn">${entry.rosterMissing ? 'This employee list did not load.' : 'A training choice needs fresh game data.'} <button type="button" class="tr-link" data-reload>Reload</button> before comparing hires.</p>`;
     } else if (full) {
       const rows = keepRows().filter(r => r.entry === entry);
       const weakest = rows.reduce((a, r) => !a || r.chance > a.chance ? r : a, null);
@@ -2248,12 +2241,12 @@ const EmployeeTrainingTool = (() => {
         <span class="tr-muted">A Recruiter in the company adds a slot, up to 6. Tip: you can type the card in with the keyboard: Tab between fields, and 1–4, M or F to pick.</span>
       </div>`;
     }
-    const prefs = entry ? prefsHtml(hirePrefs(entry), `What to look for in ${escapeHtml(companyName(entry.company))}`) : '';
+    const prefs = prefsHtml(hirePrefs(entry), `What to look for in ${escapeHtml(companyName(entry.company))}`);
     $recruit.innerHTML = `
       ${help('How candidates are valued', `<p>Each candidate is worth their output after wages until retirement, plus their trait, their trainings and what they change for the coworkers' traits. The happiness on the card is 50 plus 3 for each point of Responsibility, and lasts. Each point of happiness above 50 adds 1% to output.</p><p>Wage expectation is the coloured % on the card. Enter it, the wage, or both; either is enough. Wage expectation is the better clue to the hidden trait, so enter it when you can.</p><p>The trait and potential show only after hire. The trait is the average roll, weighted by how likely each trait is and by what the wage expectation says: above +30% the trait is likely one that raises the wage, such as Greedy, and below −30% Modest. Gendered traits roll only for the candidate's gender, and Misogynist, Man Hater, Girl Power and Band of Brothers count the coworkers of each gender. Potential is averaged from 3 to 10. Each training counts only what it earns beyond the same 10 energy spent elsewhere.</p><p>The verdict compares your best candidate with who you'd likely get from a new set, allowing for how long each would hold the slot. It says to reroll or wait when a new set is likely to do better by more than it costs.</p>`)}
       ${prefs}
       <div class="tr-recruit-top">
-        <label class="tr-field" for="tr-r-company"><span>Hiring into</span><select id="tr-r-company" data-r="company"${team ? '' : ' disabled'}>${companyOpts}</select></label>
+        <label class="tr-field" for="tr-r-company"><span>Hiring into</span><select id="tr-r-company" data-r="company">${companyOpts}</select></label>
         ${full ? '' : `<label class="tr-field" for="tr-r-unit"><span>Wage on the card</span><select id="tr-r-unit" data-r="unit"><option value="day"${recruit.unit === 'day' ? ' selected' : ''}>per day</option><option value="hour"${recruit.unit === 'hour' ? ' selected' : ''}>per hour</option></select></label>
         <label class="tr-field" for="tr-r-rerolls"><span>Rerolls today <em>next: ${10 * 2 ** recruit.rerolls} energy</em></span><input id="tr-r-rerolls" type="number" data-r="rerolls" min="0" max="10" step="1" value="${recruit.rerolls}" inputmode="numeric" /></label>`}
       </div>
@@ -2273,7 +2266,7 @@ const EmployeeTrainingTool = (() => {
   let freshMemo = { market: null, management: null, sets: new Map() };
   function freshSet(entry, alt, slots = recruit.cands.length) {
     if (freshMemo.market !== market || freshMemo.management !== team?.management) freshMemo = { market, management: team?.management, sets: new Map() };
-    const key = [entry?.company._id, (entry?.employees || []).map(objectId).join(','), alt, slots, JSON.stringify(nationalityMix(entry))].join('|');
+    const key = [entry.company._id, entry.employees.map(objectId).join(','), alt, slots, JSON.stringify(nationalityMix(entry))].join('|');
     let set = freshMemo.sets.get(key);
     if (!set) {
       if (freshMemo.sets.size >= 500) freshMemo.sets.delete(freshMemo.sets.keys().next().value);
@@ -2286,10 +2279,10 @@ const EmployeeTrainingTool = (() => {
   }
   function freshGroups(entry) {
     return nationalityMix(entry).map(({ nationality, count }) => {
-      const { ctx, opts } = setupFor(entry, { nationality, gender: 'male' });
+      const { ctx, opts } = joinSetup(entry, teamMgmt(), { nationality, gender: 'male' });
       return {
         weight: count, ctx, ...opts, key: `${nationality}|${ctx.situation.place}|${ctx.situation.homeCore}|${ctx.situation.otherNationalities}|${ctx.situation.sameNationalityCoworkers}`,
-        coworkers: entry?.employees.length ? (production, wagePP, gender) =>
+        coworkers: entry.employees.length ? (production, wagePP, gender) =>
           coworkerImpact(entry, { nationality, gender, production, wage: wagePP * market.ppValue }).value : null,
       };
     });
@@ -2402,7 +2395,7 @@ const EmployeeTrainingTool = (() => {
     side: () => { if (!$pick.hidden) renderSide(); },
     // The candidate form keeps what's typed; only the full-company view,
     // which lists keep verdicts, redraws when they land.
-    recruit: () => { const entry = recruitEntry(); if (entry && entry.employees.length >= headcountCap(entry.company)) renderRecruitForm(); },
+    recruit: () => { const entry = recruitEntry(); if (entry.employees.length >= headcountCap(entry.company)) renderRecruitForm(); },
     recruitForm: () => renderRecruitForm(),
     picker: () => renderPicker(),
     assignments: () => { assignments?.refresh(); assignments?.run({ auto: true }); },
@@ -3578,8 +3571,7 @@ const EmployeeTrainingTool = (() => {
       $recruit.addEventListener('input', ev => {
         const t = ev.target;
         if (t.dataset.c !== undefined) {
-          const entry = recruitEntry();
-          if (entry) recruit.company = entry.company._id;
+          recruit.company = recruitEntry().company._id;
         }
         if (t.dataset.r === 'unit' && t.value !== recruit.unit) {
           const f = t.value === 'day' ? 24 : 1 / 24;
