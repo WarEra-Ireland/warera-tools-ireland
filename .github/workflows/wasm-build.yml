@@ -1,0 +1,78 @@
+name: WASM build check
+
+# The site loads the employee model from js/wasm/, which wasm/build.sh builds
+# from wasm/. Those files are committed because Pages serves main with no
+# build step. The build is reproducible, so rebuilding here must give the
+# committed bytes: a difference means js/wasm/ is stale or was built from
+# other source. This only checks; it never commits or deploys.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "wasm/**"
+      - "js/wasm/**"
+      - ".github/workflows/wasm-build.yml"
+  pull_request:
+    paths:
+      - "wasm/**"
+      - "js/wasm/**"
+      - ".github/workflows/wasm-build.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The versions build.sh insists on: wasm-bindgen from Cargo.lock,
+      # wasm-opt from build.sh itself.
+      - name: Read pinned tool versions
+        id: pins
+        run: |
+          bindgen=$(awk '$0 == "name = \"wasm-bindgen\"" { getline; gsub(/[^0-9.]/, "", $3); print $3 }' wasm/Cargo.lock)
+          wasm_opt=$(sed -n 's/^wasm_opt_want=//p' wasm/build.sh)
+          echo "bindgen=$bindgen" >> "$GITHUB_OUTPUT"
+          echo "wasm_opt=$wasm_opt" >> "$GITHUB_OUTPUT"
+
+      - name: Install the Rust toolchain from rust-toolchain.toml
+        working-directory: wasm
+        run: rustup toolchain install
+
+      - name: Cache wasm-bindgen-cli
+        id: bindgen-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.wasm-bindgen
+          key: wasm-bindgen-cli-${{ steps.pins.outputs.bindgen }}-${{ runner.os }}
+
+      - name: Install wasm-bindgen-cli
+        if: steps.bindgen-cache.outputs.cache-hit != 'true'
+        working-directory: wasm
+        env:
+          BINDGEN: ${{ steps.pins.outputs.bindgen }}
+        run: cargo install --locked wasm-bindgen-cli --version "$BINDGEN" --root "$HOME/.wasm-bindgen"
+
+      - name: Install wasm-opt
+        env:
+          WASM_OPT: ${{ steps.pins.outputs.wasm_opt }}
+        run: |
+          curl -fsSL "https://github.com/WebAssembly/binaryen/releases/download/version_$WASM_OPT/binaryen-version_$WASM_OPT-x86_64-linux.tar.gz" | tar -xz -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/binaryen-version_$WASM_OPT/bin" >> "$GITHUB_PATH"
+          echo "$HOME/.wasm-bindgen/bin" >> "$GITHUB_PATH"
+
+      - name: Build
+        run: wasm/build.sh
+
+      - name: Compare with the committed build
+        run: |
+          changed=$(git status --porcelain -- js/wasm)
+          if [ -n "$changed" ]; then
+            echo "$changed"
+            echo "::error::js/wasm/ does not match a build of wasm/. Run wasm/build.sh, bump the ?v= tags in index.html and commit js/wasm/."
+            exit 1
+          fi

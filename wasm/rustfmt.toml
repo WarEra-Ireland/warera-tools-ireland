@@ -1,0 +1,5 @@
+# The Google Rust style guide's rustfmt settings that stable rustfmt has
+# (its hex_literal_case and format_macro_matchers need nightly), with
+# short items kept on one line where they fit.
+max_width = 100
+use_small_heuristics = "Max"

@@ -3007,6 +3007,7 @@ html[data-theme="light"] {
 .tr-badge-fire { background: var(--danger); color: var(--bg); }
 .tr-badge-replace { background: var(--warn); color: var(--bg); }
 .tr-badge-close { border: 1px solid var(--warn); background: none; color: var(--warn); }
+.tr-badge-later { border: 1px solid var(--danger); background: none; color: var(--danger); }
 .tr-badge-mismatch { border: 1px solid var(--warn); background: none; color: var(--warn); }
 .tr-badge-hand { background: var(--link); color: var(--bg); }
 .tr-badge-train { border: 1px solid var(--accent); background: none; color: var(--accent); }
@@ -3512,9 +3513,9 @@ html[data-theme="light"] {
 .tr-keep-odds { margin: 0 0 8px; }
 .tr-keep-steps { margin: 0 0 10px; padding-left: 20px; }
 .tr-keep-steps li { margin-bottom: 4px; }
-.tr-verdict.tr-keep-fire { border-color: var(--danger); }
+.tr-verdict.tr-keep-fire, .tr-verdict.tr-keep-later { border-color: var(--danger); }
 .tr-verdict.tr-keep-replace, .tr-verdict.tr-keep-close { border-color: var(--warn); }
-.tr-verdict.tr-keep-fire .tr-verdict-take { color: var(--danger); }
+.tr-verdict.tr-keep-fire .tr-verdict-take, .tr-verdict.tr-keep-later .tr-verdict-take { color: var(--danger); }
 .tr-verdict.tr-keep-replace .tr-verdict-take, .tr-verdict.tr-keep-close .tr-verdict-take { color: var(--warn); }
 @media (max-width: 600px) {
   .tr-keep-cols { grid-template-columns: minmax(0, 1fr); }

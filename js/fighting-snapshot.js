@@ -381,7 +381,7 @@ const FightingSnapshot = (() => {
     const [books, sales, gamePrices, trades] = await Promise.all([
       trpcManyValues('tradingOrder.getTopOrders', orderBookCodes.map(itemCode => ({ itemCode }))),
       trpcManyValues('transaction.getPaginatedTransactions',
-        productCodes.map(itemCode => ({ transactionType: 'trading', itemCode, limit: Employees.CFG.priceSampleTrades }))),
+        productCodes.map(itemCode => ({ transactionType: 'trading', itemCode, limit: Employees.PRICE_TRADES.sample }))),
       fs_trpc('itemTrading.getPrices', {}).then(stamped).catch(() => null),
       trpcManyValues('transaction.getPaginatedTransactions',
         gear.map(itemCode => ({ transactionType: 'itemMarket', itemCode, limit: TRADE_SAMPLES }))),

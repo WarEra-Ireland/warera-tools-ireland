@@ -1,4 +1,4 @@
-/* ═══════════════════════════════════════════════════════════════════
+/*
  *  EMPLOYEE EVENTS: what each choice does, and its expected value
  *
  *  The game API returns a pending event's choices with the server's
@@ -6,7 +6,7 @@
  *  kept as EMPLOYEE_EVENTS (js/employee-event-data.js). priceOption weighs
  *  a choice's outcomes by the chance, pricing each effect through a
  *  callback (the Training page prices them with EmployeeCore).
- * ═══════════════════════════════════════════════════════════════════ */
+ */
 const EmployeeEvents = (() => {
   // A choice's expected value: its cost, plus each band's effects weighted
   // by the server's chance. Crits take a share of successes (critFails of

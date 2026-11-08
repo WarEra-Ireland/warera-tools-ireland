@@ -1,4 +1,4 @@
-/* ═══════════════════════════════════════════════════════════════════
+/*
  *  TOP PRODUCTS
  *
  *  What each company earns now, and what it would earn making something
@@ -38,10 +38,10 @@
  *  recently has no price rather than a stale one.
  *
  *  Switching product costs company.changeItemCost concrete. When rosters
- *  load, each company's switch is judged on the shared model
- *  (product-switch 05): the snapshot Employee Training plans from
+ *  load, each company's switch is judged on the shared model:
+ *  the snapshot Employee Training plans from
  *  (EmployeeAssignments.snapshotOf), each company re-tooled on its own
- *  (ProductSwitchCore.singleSwitches), so saved specialisation per good,
+ *  (EmployeePlanner.singleSwitches), so saved specialisation per good,
  *  Specialist, Craftsman and Laborer, tools that stop fitting, coworkers,
  *  wages and retirement all count. A switch is recommended only if it
  *  gains at the worse of today's margin and the game's average, after the
@@ -51,7 +51,7 @@
  *  comparison, which holds output fixed and says so.
  *
  *  Access: Irish citizens only (enforceIrishOnly). bypass=1 lifts it.
- * ═══════════════════════════════════════════════════════════════════ */
+ */
 const ProductPickerTool = (() => {
   const companyUrlFor = id => `${GAME_BASE}/company/${id}`;
 
@@ -253,10 +253,10 @@ const ProductPickerTool = (() => {
     : Math.max(0, sk.total - ((sk.value ?? sk.total) - (sk.level ?? 0)));
 
   /**
-   * Each company's best switch on the shared model (product-switch 05):
+   * Each company's best switch on the shared model:
    * the snapshot Employee Training plans from, with the planner inputs the
    * player saved there, each company re-tooled on its own and evaluated at
-   * today's and the game's margins (ProductSwitchCore.singleSwitches).
+   * today's and the game's margins (EmployeePlanner.singleSwitches).
    * `toolLog` is Employee Training's (loadToolLog), for spare tools; without
    * it only equipped tools count. `now` is for tests. Returns
    * { rows, byId, days } or { reason } when the model can't run.
@@ -283,7 +283,7 @@ const ProductPickerTool = (() => {
     try { raw = JSON.parse(localStorage.getItem(`tr-assignments-v1:${S.userId}`) || 'null'); } catch { /* storage blocked: defaults */ }
     const { errors, snapshot } = EA.snapshotOf(team, market, EA.sanitize(raw).settings, now);
     if (errors.length) return { reason: errors.join(' ') };
-    const out = ProductSwitchCore.singleSwitches(snapshot);
+    const out = EmployeePlanner.singleSwitches(snapshot);
     if (!out) return { reason: 'Switches could not be compared.' };
     if (out.errors) return { reason: out.errors.join(' ') };
     return { ...out, byId: new Map(out.rows.map(r => [r.id, r])) };
@@ -401,7 +401,7 @@ const ProductPickerTool = (() => {
   };
   const help = key => sectionHelp(...HELP[key]);
 
-  /* ── Rendering ─────────────────────────────────────────── */
+  // --- Rendering ---
   const num = (v, dp = 2) => v == null || !isFinite(v) ? '–'
     : v.toLocaleString(undefined, { minimumFractionDigits: dp, maximumFractionDigits: dp });
   const money = v => v == null || !isFinite(v) ? '–' : `${v < 0 ? '−' : ''}₿${num(Math.abs(v), Math.abs(v) < 10 ? 2 : 0)}`;
@@ -650,7 +650,7 @@ const ProductPickerTool = (() => {
     { key: 'cost', label: 'Switch cost' },
   ];
 
-  /* ── Switch verdicts (product-switch 05) ───────────────────
+  /* --- Switch verdicts ---
    *  Names as the Products tab of Employee Training (EmployeeProducts.VERDICT);
    *  each links there for the plan with employee moves. */
   const VERDICT_KIND = { switch: 'ok', spike: 'warn', hold: 'warn', stay: 'muted' };
@@ -772,7 +772,7 @@ const ProductPickerTool = (() => {
     </details>`;
   }
 
-  /* ── Phone layout ──────────────────────────────────────────
+  /* --- Phone layout ---
    *  Below 720px the desktop cards are hidden (styles.css) and this shows
    *  instead: income tiles, the best product, a ranked product list
    *  and one card per company. It has no what-if fields. */

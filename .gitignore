@@ -31,3 +31,8 @@ __pycache__/
 .scratch/
 # Local planning tickets — kept on disk, never committed.
 tickets/
+
+# Node build of the employee model crate, for the tests only
+# (tests/model.cjs, written by wasm/build.sh). Never deployed.
+js/wasm-node/
+

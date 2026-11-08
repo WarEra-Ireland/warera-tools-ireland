@@ -1,0 +1,66 @@
+/*
+ *  EMPLOYEE TRAIT TEXT  (display data, no rules)
+ *  Each trait's name, its effect as the game words it (when), and for a
+ *  trait the model prices only partly or not at all, why (note). The rules
+ *  (polarity, roll weight, gender, partner, argument, how much is priced
+ *  and the hourly effect) are in the employee model crate (wasm/src/traits.rs,
+ *  wasm/src/hourly.rs); EmployeeCore merges the two into EC.TRAIT and
+ *  EC.TRAITS, and logs a code missing from either.
+ */
+const EMPLOYEE_TRAIT_TEXT = {
+  handy: { name: 'Handy', when: '+40% output while holding a tool' },
+  improviser: { name: 'Improviser', when: '+25% output without a tool' },
+  nationalist: { name: 'Nationalist', when: '+10 happiness with a coworker of the same nationality' },
+  xenophobe: { name: 'Xenophobe', when: '−2 Production and −5 happiness with a coworker of another nationality' },
+  cosmopolitan: { name: 'Cosmopolitan', when: '+2 Prod per other nationality, cap +4' },
+  talksToMachines: { name: 'Talks to Machines', when: 'Doubles Automated Engine output while the holder is the only employee' },
+  loner: { name: 'Loner', when: '+100% output and +5 happiness as the sole employee' },
+  sociable: { name: 'Sociable', when: '+25% output per coworker, capped at +50%; −10 happiness alone' },
+  comic: { name: 'Comic', when: '−1 Prod, coworkers +10 happiness; multiple Comics do not stack' },
+  mentor: { name: 'Mentor', when: 'a coworker with lower Production before peer effects gains +2 Production; self −1 Production' },
+  foreman: { name: 'Foreman', when: 'coworkers +9 happiness' },
+  rival: { name: 'Rival', when: '+3 Production with a stronger coworker before peer effects; −1 otherwise; no effect alone' },
+  primaDonna: { name: 'Prima Donna', when: '+20% output if highest paid; otherwise −10 happiness; no effect alone' },
+  bully: { name: 'Bully', when: '+2 Prod, coworkers −10 happiness' },
+  envious: { name: 'Envious', when: '−5 happiness per better-paid coworker' },
+  oldFriends: { name: 'Old Friends', when: '+15% output while the linked employee is present' },
+  nemesis: { name: 'Nemesis', when: '−15% output while the linked employee is present' },
+  sweethearts: { name: 'Sweethearts', when: '+20% output while the linked employee is present' },
+  girlPower: { name: 'Girl Power', when: '+15% output per female coworker, capped at +30%' },
+  bandOfBrothers: { name: 'Band of Brothers', when: '+15% output per male coworker, capped at +30%' },
+  manHater: { name: 'Man Hater', when: '−15% output per male coworker, capped at −30%' },
+  misogynist: { name: 'Misogynist', when: '−15% output per female coworker, capped at −30%' },
+  specialist: { name: 'Specialist', when: '+3 Production and +5 happiness when producing its good; takes the company\'s good when gained' },
+  craftsman: { name: 'Craftsman', when: '+3 Prod on products, −1 on raw' },
+  laborer: { name: 'Laborer', when: '+3 Prod on raw, −1 on products' },
+  quickStudy: { name: 'Quick Study', when: 'specialization grows 2× as fast' },
+  stockpiler: { name: 'Stockpiler', when: 'ignores the storage-full penalty' },
+  claustrophobe: { name: 'Claustrophobe', when: '−20% output at storage level 2 or below' },
+  veteran: { name: 'Veteran', when: '+20% output after 30 days in the company' },
+  creatureOfHabit: { name: 'Creature of Habit', when: '−30% output for 3 days after a move' },
+  diamondInTheRough: { name: 'Diamond in the Rough', when: '+1 to its randomly assigned stat per 10 days in the same company, capped at +4' },
+  burnout: { name: 'Burnout', when: '−1 all stats per 20 days, cap −3' },
+  lateBloomer: { name: 'Late Bloomer', when: '+2 Production per 10 years over age 40, capped at +6' },
+  earlyBloomer: { name: 'Early Bloomer', when: '+6 Production below age 40, then −2 per 10 years, none from 60' },
+  wornOut: { name: 'Worn Out', when: '−2 Production per 10 years over age 50, capped at −6' },
+  patriot: { name: 'Patriot', when: '+2 Production and +10 happiness in a core region of their home country' },
+  homesick: { name: 'Homesick', when: '−2 Production and −10 happiness outside their home country' },
+  expat: { name: 'Expat', when: '+2 Production outside their home country' },
+  taxShy: { name: 'Tax Shy', when: '−1% output per income tax percentage point, capped at −30%' },
+  statist: { name: 'Statist', when: '+6 happiness when income tax is at least 20%' },
+  greedy: { name: 'Greedy', when: 'wage +20%' },
+  modest: { name: 'Modest', when: 'wage −15%' },
+  climber: { name: 'Climber', when: 'wage expectation +0.02 per week employed' },
+  loyal: { name: 'Loyal', when: 'halves happiness losses' },
+  flightRisk: { name: 'Flight Risk', when: 'quits below 50 happiness, not 30', note: 'raises the chance of losing the employee' },
+  anchor: { name: 'Anchor', when: 'never quits; −50% output while unhappy', note: 'protection against quitting is not priced' },
+  scavenger: { name: 'Scavenger', when: '2× toolbox chance, −25% output' },
+  salvager: { name: 'Salvager', when: 'loots with storage full' },
+  gambler: { name: 'Gambler', when: '+3 Luck, −15% output' },
+  luckyCharm: { name: 'Lucky Charm', when: 'coworkers +3 Luck' },
+  jinx: { name: 'Jinx', when: 'coworkers −2 Luck' },
+  recruiter: { name: 'Recruiter', when: '+1 candidate slot', note: 'more candidates to hire from' },
+  trainer: { name: 'Trainer', when: 'coworkers +2 trainings a day', note: 'additional coworker training requires a roster and energy budget' },
+};
+
+if (typeof module !== 'undefined') module.exports = EMPLOYEE_TRAIT_TEXT;

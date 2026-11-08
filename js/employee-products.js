@@ -1,4 +1,4 @@
-/* Products tab of Employee Training (product-switch ticket 04): per
+/* Products tab of Employee Training: per
  * company, whether to re-tool it onto another good, read from the
  * planner's joint search (EmployeePlanner.recommend with `switches`).
  * DOM-free: rows() turns the plan into verdicts, render() into HTML with
@@ -8,12 +8,12 @@
  *   switch  the plan re-tools the company; it gains at the worse of today's
  *           margin and the game's average, after the minimum gain
  *   spike   it would pay at today's prices only, and today's margin is far
- *           above the game's average (ProductSwitchCore.SPIKE_RATIO)
+ *           above the game's average (EmployeeModel.SPIKE_RATIO)
  *   hold    it would pay at today's prices only, without a spike
  *   stay    no other good clears both prices
  *   off     the planner left the company out (plan.excluded) */
 const EmployeeProducts = (() => {
-  const PS = typeof module !== 'undefined' ? require('./product-switch-core.js') : ProductSwitchCore;
+  const EP = typeof module !== 'undefined' ? require('./employee-planner.js') : EmployeePlanner;
   const TOP = 3;
 
   /* companies: [{ id, product, disabled }] in getCompanies order.
@@ -24,7 +24,7 @@ const EmployeeProducts = (() => {
    * current and the switched-to or held good's margins), alternatives: the TOP other goods by worse-of-two margin, each
    * { code, live, game, worse, ratio, spike } }. */
   function rows(companies, plan, market) {
-    const sets = PS.priceSets(market || {}), products = plan?.products || { switches: [], holds: [] };
+    const sets = EP.priceSets(market || {}), products = plan?.products || { switches: [], holds: [] };
     const margin = code => ({ code, live: sets.live[code] ?? null, game: sets.game[code] ?? null, worse: sets.worse(code), ratio: sets.ratio(code), spike: sets.spike(code) });
     const codes = Object.keys(sets.worseSet).filter(code => sets.worse(code) != null);
     return companies.map(c => {

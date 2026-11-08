@@ -54,6 +54,8 @@ js/
   daily-profit.js Daily Profit calculator
   product-picker.js Top products (best product per company, v0.27)
   employee-core.js  Training card value model, no DOM (also runs in Node)
+  employee-model.js Loads the employee model (WASM) on the page and in the planner worker
+  wasm/           Built employee model: no-modules glue + .wasm (from wasm/build.sh, committed)
   employee-training.js Employee Training (#training)
   sp-advisor-core.js Skill Point Advisor rules (cost curve, skill formulas)
   fighting-core.js     Fighting build core: pure evaluateStrategy (damage, costs, ledger, pill phases)
@@ -71,6 +73,7 @@ js/
   router.js       Loaded last. Hash routing + view switching.
 images/           Item icons used by the advisor and clock-in tools
 worker/           Cloudflare Worker: the API proxy with the key pool
+wasm/             Rust crate of the employee model; see wasm/README.md
 ```
 
 Script load order in `index.html` matters and is fixed: `shared.js` first, then the tools, then `router.js` last. Shared helpers must exist before any tool runs, and the router must run after every tool global is defined.

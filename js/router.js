@@ -126,9 +126,31 @@
 
     const tool = tools[name];
     if (tool && !isHeld(name) && typeof tool.activate === 'function') {
-      try { tool.activate(params); }
-      catch (e) { console.error(`Failed to activate ${name}:`, e); }
+      const activate = () => {
+        try { tool.activate(params); }
+        catch (e) { console.error(`Failed to activate ${name}:`, e); }
+      };
+      const token = ++activation;
+      if (!MODEL_VIEWS.has(name)) activate();
+      else EmployeeModel.ready.then(() => { if (token === activation) activate(); },
+        () => { if (token === activation) modelFailed(name); });
     }
+  }
+
+  // Tools that call the employee model (js/employee-model.js) on the main
+  // thread activate once it is ready: the .wasm loads after the router runs.
+  // Only the latest navigation activates, so a quick switch away and back
+  // doesn't activate twice.
+  const MODEL_VIEWS = new Set(['training', 'products', 'fighting-build']);
+  let activation = 0;
+  function modelFailed(name) {
+    const view = document.querySelector(`.view[data-view="${name}"]`);
+    if (!view || view.querySelector('.model-error')) return;
+    const note = document.createElement('p');
+    note.className = 'status error model-error';
+    note.setAttribute('role', 'alert');
+    note.textContent = "Couldn't load the employee model. Reload the page to try again.";
+    view.prepend(note);
   }
 
   // The active player (the most recent in RecentPlayers) rides along into
