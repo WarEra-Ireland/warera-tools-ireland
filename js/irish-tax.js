@@ -61,6 +61,8 @@ const IrishTaxGate = (() => {
   }
 
   async function tryUnlock(password) {
+    const insecure = insecurePageMessage('Unlocking this tool');
+    if (insecure) { $gateError.textContent = insecure; return; }
     $gateBtn.disabled = true;
     $gateError.textContent = '';
     try {

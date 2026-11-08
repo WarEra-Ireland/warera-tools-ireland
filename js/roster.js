@@ -1060,10 +1060,7 @@ const RosterTool = (() => {
       applyView();
     } catch (e) {
       $content.innerHTML = '';
-      const friendly = (typeof isTransientError === 'function' && isTransientError(e))
-        ? `The data server is having a moment (${e.message}). Wait a few seconds and try again.`
-        : e.message;
-      setStatus(friendly, true);
+      setStatus(e.message, true);
     } finally {
       running = false;
       // Only release it if it's still ours, matching makeSteps.

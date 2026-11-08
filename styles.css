@@ -360,6 +360,9 @@ footer a:hover { color: var(--text); }
 
 .step-body { flex: 1; min-width: 0; }
 .step-title { color: var(--muted); font-weight: 500; transition: color 0.2s; }
+.step-elapsed { color: var(--muted); font-weight: 400; }
+.steps-stall { font-size: 13px; color: var(--muted); padding: 8px 2px 2px; }
+.steps-stall.error { color: var(--danger); }
 .step[data-state="active"] .step-title,
 .step[data-state="error"]  .step-title { color: var(--text); }
 .step[data-state="done"]   .step-title { color: var(--muted); }

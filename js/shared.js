@@ -11,14 +11,16 @@
  *
  *  On localhost it points at `wrangler dev` (worker/README.md) so local work
  *  runs on a development API key instead of production's quota. Aim a page
- *  at a different Worker with ?proxy=<origin>, which sticks for the tab:
+ *  at a different Worker with ?proxy=<origin>, before or inside the hash:
  *  #advisor?proxy=https://warera-proxy.0x5ca1ab1e.workers.dev
+ *  Nothing is stored: router.js moves a hash ?proxy= in front of the '#',
+ *  where every hash rewrite keeps it, so the override lasts exactly as long
+ *  as it is in the address bar. Deleting it reloads the page without it.
  *
  *  The param is `proxy`, not `worker`: a "worker" in this game is a player
  *  (see worker.getWorkers, clock-in wages), so ?worker=<username> is an easy
  *  thing to type by mistake. Anything that isn't an http(s) URL is ignored
- *  with a console warning rather than stored, so a stray value can't quietly
- *  break every request in the tab.
+ *  with a console warning.
  */
 const WORKER_PROD = 'https://warera-proxy.0x5ca1ab1e.workers.dev';
 const WORKER_BASE = (() => {
@@ -32,17 +34,8 @@ const WORKER_BASE = (() => {
   const hashQuery = location.hash.split('?')[1] || '';
   const raw = new URLSearchParams(hashQuery).get('proxy')
            || new URLSearchParams(location.search).get('proxy');
-  let override = null;
-  if (raw && isProxyUrl(raw)) override = raw;
-  else if (raw) console.warn(`ignoring ?proxy=${raw} — not an http(s) URL`);
-
-  let saved = null;
-  try {
-    if (override) sessionStorage.setItem('proxyBase', override);
-    saved = sessionStorage.getItem('proxyBase');
-  } catch { /* storage blocked; an override still applies to this load */ }
-  const chosen = override || saved;
-  if (chosen) return chosen.replace(/\/+$/, '');
+  if (raw && isProxyUrl(raw)) return raw.replace(/\/+$/, '');
+  if (raw) console.warn(`ignoring ?proxy=${raw} — not an http(s) URL`);
   return /^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname)
     ? 'http://localhost:8787'
     : WORKER_PROD;
@@ -258,14 +251,30 @@ const RecentPlayers = (() => {
   return { remember, forget, clear, mount, refresh, active };
 })();
 
+/*
+ *  Browser crypto (crypto.subtle, crypto.randomUUID) exists only on a secure
+ *  page: https://, or http:// on localhost. Plain http:// on any other
+ *  address (a LAN or tailnet IP, say) withholds it, and the tool would fail
+ *  with a bare TypeError. Returns what to tell the user, or null when the
+ *  page is secure. `what` starts the sentence: 'Unlocking this tool'.
+ */
+function insecurePageMessage(what) {
+  if (window.isSecureContext) return null;
+  return `${what} needs a secure page: open it over https:// or on localhost. Plain http:// on any other address turns off the browser encryption it relies on.`;
+}
+
+// One formatter, reused: toLocaleString with options builds a new one each
+// call, which is tens of times slower over a big table.
+const FMT_NUM = new Intl.NumberFormat(undefined, {maximumFractionDigits: 0});
 function fmtNum(v) {
   if (v == null) return null;
-  if (typeof v === 'number') return v.toLocaleString(undefined, {maximumFractionDigits: 0});
+  if (typeof v === 'number') return FMT_NUM.format(v);
   return String(v);
 }
 function fmt(v, dp = 2) {
   if (!isFinite(v)) return '0';
-  return v.toFixed(dp).replace(/\.?0+$/, '');
+  // Trim trailing zeros after the point only: fmt(180, 0) is "180", not "18".
+  return v.toFixed(dp).replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '');
 }
 function flag(code) {
   if (!code || code.length !== 2) return '🌐';
@@ -349,7 +358,8 @@ function enforceIrishOnly(country, username) {
 function isTransientError(err) {
   if (err?.network || err?.timeout) return true;
   if (err && (err.status === 429 || (err.status >= 500 && err.status < 600))) return true;
-  const msg = String(err?.message || '').toLowerCase();
+  // dataError()s keep the technical text in .detail; their message is for players.
+  const msg = `${err?.message || ''} ${err?.detail || ''}`.toLowerCase();
   return /http (429|50[234])|no available server|timed? ?out|fetch failed|network ?error/.test(msg);
 }
 
@@ -678,13 +688,40 @@ function trpc(endpoint, inputOrInputs = {}, {
 }
 
 /*
- *  What a failed data request means, in words a player can act on. Every
- *  tool shows err.message from trpc(), so this is the one place the wording
- *  lives. The procedure and status follow in brackets for bug reports.
- *
- *  `body` is the parsed error response, if any: the proxy answers
- *  { error: 'text' } or { error: { message } }, and the game's tRPC errors
- *  carry { error: { message } } or { error: { json: { message } } }.
+ *  What players are told when War Era data can't be loaded: plain words, with
+ *  no endpoints or status codes. Every tool shows err.message from trpc(), so
+ *  this is the one place the wording lives. The technical text (procedure,
+ *  status and the server's own reason) goes on err.detail and to the console
+ *  for whoever is debugging; isTransientError() reads both.
+ */
+const DATA_MESSAGES = {
+  rateLimited: (secs) => `We've used up our requests to War Era for the moment. ${secs
+    ? `They refresh in about ${secs} seconds; try again then.` : 'They refresh within a minute; try again then.'}`,
+  originNotAllowed: () => `This copy of the tools isn't allowed to load War Era data. Use the tools at https://we.hawtre.net instead.${
+    location.hostname === 'we.hawtre.net' ? '' : ' (Previewing a copy? Add ?proxy=<your Worker URL> to the address.)'}`,
+  serverError: () => "War Era's servers aren't answering properly right now. Try again in a minute.",
+  refused: () => "War Era didn't provide some of the data this needs. Try again later, and let us know if it keeps happening.",
+  unreadable: () => "War Era sent back something we couldn't read. Try again in a minute.",
+  timedOut: () => 'War Era took too long to answer. Try again in a minute.',
+  unreachable: () => "Couldn't reach our data service. Check your internet connection; if you use an ad or privacy blocker, allow this site.",
+};
+
+function dataError(message, detail, props = {}) {
+  console.warn(`[trpc] ${detail}`);
+  return Object.assign(new Error(message), { detail }, props);
+}
+
+function _messageForStatus(status, retryAfterSecs = null) {
+  if (status === 429) {
+    return DATA_MESSAGES.rateLimited(Number.isFinite(retryAfterSecs) && retryAfterSecs > 0 ? Math.ceil(retryAfterSecs) : null);
+  }
+  return status >= 500 ? DATA_MESSAGES.serverError() : DATA_MESSAGES.refused();
+}
+
+/*
+ *  The server's own reason from an error response, for err.detail: the proxy
+ *  answers { error: 'text' } or { error: { message } }, and the game's tRPC
+ *  errors carry { error: { message } } or { error: { json: { message } } }.
  */
 function _apiErrorText(body) {
   const item = Array.isArray(body) ? body[0] : body;
@@ -693,46 +730,12 @@ function _apiErrorText(body) {
   return typeof text === 'string' && text.trim() ? text.trim().slice(0, 200) : null;
 }
 
-function apiErrorMessage({ label = 'request', status = null, body = null, network = false, timeout = false, retryAfterSecs = null } = {}) {
-  const where = status ? `${label}, HTTP ${status}` : `${label}, no response`;
-  const text = _apiErrorText(body);
-  let say;
-  if (network) {
-    say = "Couldn't reach the data server. Check your internet connection and try again. If it keeps happening, the server may be down.";
-  } else if (timeout) {
-    say = 'The game took too long to answer. Try again in a moment.';
-  } else if (status === 403 && text === 'origin not allowed') {
-    const here = typeof location !== 'undefined' ? ` (${location.origin})` : '';
-    say = `The data server doesn't accept requests from this address${here}. Use the main site, or, for a development copy, add this address to the proxy's ALLOWED_ORIGINS.`;
-  } else if (status === 403) {
-    say = text && text !== 'Forbidden' ? `The game refused this request: ${text}`
-      : 'The game refused this request. It may need a Premium account, or be closed to API tokens.';
-  } else if (status === 401) {
-    say = "The game didn't accept the data server's API key, so nothing can be loaded right now.";
-  } else if (status === 404) {
-    say = "The game doesn't recognise this request. It may have changed in a game update; please report it.";
-  } else if (status === 413 || status === 414 || status === 431) {
-    say = 'This request was too large for the data server. Try fewer items at once.';
-  } else if (status === 429) {
-    const wait = Number.isFinite(retryAfterSecs) && retryAfterSecs > 0 ? ` Try again in about ${Math.ceil(retryAfterSecs)}s.` : ' Try again shortly.';
-    say = `The game's request limit is reached: rate limited, all API keys are busy.${wait}`;
-  } else if (status === 503 && text === 'game API token not configured') {
-    say = 'The data server has no game API key set up, so nothing can be loaded.';
-  } else if (status >= 500) {
-    say = "The game's servers had a problem. Try again in a minute.";
-  } else {
-    say = text ? `The request failed: ${text}` : 'The request failed.';
-  }
-  return `${say} (${where})`;
-}
-
 function _trpcResponseError(item, label) {
   if (!item?.error) return null;
   const msg = item.error.message || item.error.data?.message || 'unknown error';
-  const err = new Error(`${label} → ${String(msg).slice(0, 120)}`);
   const status = item.error.data?.httpStatus ?? item.error.data?.status ?? item.error.status;
-  if (Number.isInteger(status)) err.status = status;
-  return err;
+  return dataError(_messageForStatus(status), `${label} → ${String(msg).slice(0, 120)}`,
+    Number.isInteger(status) ? { status } : {});
 }
 
 function _trpcResponseValue(item) {
@@ -801,10 +804,8 @@ async function _trpcExec(endpoint, inputOrInputs = {}, {
       res = await fetch(url, ctrl ? { signal: ctrl.signal } : undefined);
     } catch (e) {
       if (e.name === 'AbortError') throw e;
-      // No response at all: offline, DNS, CORS or the server is down.
-      const err = new Error(apiErrorMessage({ label, network: true }));
-      err.network = true;
-      throw err;
+      // No response at all: offline, DNS, CORS, a blocker, or the server is down.
+      throw dataError(DATA_MESSAGES.unreachable(), `${label} → no response (${e.message})`, { network: true });
     }
     if (!res.ok) {
       // A 429 here means every key in the proxy's pool is rate-limited, not
@@ -813,17 +814,24 @@ async function _trpcExec(endpoint, inputOrInputs = {}, {
       // isTransientError()/_retryDelayMs() can wait out the window rather
       // than burning attempts on the ~400ms backoff.
       const body = await res.json().catch(() => null);
-      const err = new Error(apiErrorMessage({ label, status: res.status, body,
-        retryAfterSecs: Number(res.headers.get('Retry-After')) }));
-      err.status = res.status;
+      const text = _apiErrorText(body);
+      // The Worker only serves the site's own address (and local
+      // development). Anywhere else a player needs the real site; a
+      // developer previewing elsewhere needs ?proxy=.
+      const message = res.status === 403 && text === 'origin not allowed'
+        ? DATA_MESSAGES.originNotAllowed()
+        : _messageForStatus(res.status, Number(res.headers.get('Retry-After')));
+      const err = dataError(message, `${label} → HTTP ${res.status}${text ? `: ${text}` : ''}`, { status: res.status });
       const retryAfterMs = _retryAfterMs(res.headers);
       if (retryAfterMs != null) err.retryAfterMs = retryAfterMs;
       throw err;
     }
-    const json = await res.json();
+    const json = await res.json().catch(() => {
+      throw dataError(DATA_MESSAGES.unreadable(), `${label} → response isn't JSON`);
+    });
     if (batch) {
       if (!Array.isArray(json) || json.length !== inputOrInputs.length) {
-        throw new Error(`${label} → malformed response`);
+        throw dataError(DATA_MESSAGES.unreadable(), `${label} → malformed response`);
       }
       const settled = json.map((item, index) => {
         const reason = _trpcResponseError(item, `${endpoint}[${index}]`);
@@ -843,7 +851,7 @@ async function _trpcExec(endpoint, inputOrInputs = {}, {
     if (responseError) throw responseError;
     return _trpcResponseValue(item);
   } catch (e) {
-    if (e.name === 'AbortError') { e = new Error(apiErrorMessage({ label, timeout: true })); e.timeout = true; }
+    if (e.name === 'AbortError') e = dataError(DATA_MESSAGES.timedOut(), `${label} → timed out after ${timeoutMs} ms`, { timeout: true });
     if (attempt < MAX_ATTEMPTS && isTransientError(e)) {
       const delay = _retryDelayMs(e, attempt);
       if (delay != null) {
@@ -1156,14 +1164,13 @@ function makeRateLimitStep(rootEl) {
       row.innerHTML =
         '<div class="step-icon"></div>' +
         '<div class="step-body">' +
-          '<div class="step-title">Rate limited by the game API</div>' +
+          '<div class="step-title">We\'ve used up our requests to War Era for the moment</div>' +
           '<div class="step-sub"></div>' +
         '</div>' +
         '<div class="step-count"></div>';
       rootEl.appendChild(row);
     }
-    const what = Number.isFinite(itemCount) ? `${itemCount} request${itemCount === 1 ? '' : 's'}` : 'requests';
-    row.querySelector('.step-sub').textContent = `Waiting for the limit to reset, then retrying ${what}.`;
+    row.querySelector('.step-sub').textContent = 'They refresh when the countdown ends, and loading carries on by itself.';
     tick();
     // The 1s interval only animates the countdown; removal is pinned to the
     // deadline itself, so the row can't outlive the wait by up to a tick.
@@ -1175,17 +1182,79 @@ function makeRateLimitStep(rootEl) {
   return { show, clear };
 }
 
-function makeSteps(rootEl) {
+/*
+ *  Stalled-step watch. A request with no timeout that never answers (a hung local Worker, say)
+ *  would leave a step spinning in silence. While a step is active this
+ *  shows how long it has waited; once one step waits STALL_MS, a notice in
+ *  the panel says so and whether the API proxy answers its health check,
+ *  rechecked every HEALTH_EVERY_MS. `onStall` lets a tool offer its own
+ *  retry, described by `retryHint`. */
+function makeStallWatch(rootEl, { onStall = null, retryHint = 'Reload the page to try again.' } = {}) {
+  const STALL_MS = 15000, HEALTH_EVERY_MS = 30000;
+  let timer = null, step = null, since = 0, checked = 0, epoch = 0;
+
+  const elapsedOf = (el) => el.querySelector('.step-elapsed')
+    || el.querySelector('.step-title').appendChild(Object.assign(document.createElement('span'), { className: 'step-elapsed' }));
+  const notice = (text, isError) => {
+    let el = rootEl.querySelector('.steps-stall');
+    if (!text) { el?.remove(); return; }
+    if (!el) el = rootEl.appendChild(Object.assign(document.createElement('div'), { className: 'steps-stall' }));
+    el.textContent = text;
+    el.classList.toggle('error', !!isError);
+  };
+  function clearMarks() {
+    rootEl.querySelectorAll('.step-elapsed').forEach(e => e.remove());
+    notice('');
+  }
+  async function tick() {
+    const el = rootEl.querySelector('.step[data-state="active"]');
+    if (el !== step) { clearMarks(); step = el; since = Date.now(); checked = 0; }
+    if (!el) { stop(); return; }
+    const waited = Date.now() - since;
+    if (waited >= 3000) elapsedOf(el).textContent = ` · ${Math.floor(waited / 1000)} s`;
+    if (waited < STALL_MS || Date.now() - checked < HEALTH_EVERY_MS) return;
+    checked = Date.now();
+    const mine = epoch;
+    const what = el.querySelector('.step-title').firstChild?.textContent?.trim() || 'this step';
+    if (onStall) onStall();
+    notice(`Still waiting on "${what}" after ${Math.floor(waited / 1000)} s. Checking our data service…`);
+    let up = false;
+    try { up = (await fetch(`${WORKER_BASE}/healthz`, { signal: AbortSignal.timeout(5000) })).ok; } catch { up = false; }
+    if (mine !== epoch || step !== el) return;
+    const local = /^https?:\/\/(localhost|127\.0\.0\.1)/.test(WORKER_BASE);
+    notice(up
+      ? `Still waiting on "${what}". War Era is slow to answer right now. Keep waiting, or: ${retryHint}`
+      : `Still waiting on "${what}". Our data service isn't responding right now. ${retryHint}${
+          local ? ` (Local development: check that \`wrangler dev\` is running at ${WORKER_BASE}, and restart it if it has stuck.)` : ''}`, !up);
+  }
+  function start() {
+    if (timer) return;
+    timer = setInterval(tick, 1000);
+    tick();   // time the step from when it starts, not from the first interval
+  }
+  function stop() {
+    epoch += 1;
+    if (timer) { clearInterval(timer); timer = null; }
+    step = null;
+    clearMarks();
+  }
+  return { start, stop };
+}
+
+function makeSteps(rootEl, stallOptions) {
   const rateLimit = makeRateLimitStep(rootEl);
+  const stall = makeStallWatch(rootEl, stallOptions);
 
   function setStep(n, state, { sub, count } = {}) {
     const el = rootEl.querySelector(`.step[data-step="${n}"]`);
     if (!el) return;
     el.dataset.state = state;
+    if (state === 'active') stall.start();
     if (sub   !== undefined) el.querySelector('.step-sub').textContent   = sub   ?? '';
     if (count !== undefined) el.querySelector('.step-count').textContent = count ?? '';
   }
   function reset() {
+    stall.stop();
     rootEl.classList.remove('hidden', 'fading');
     rateLimit.clear();
     // This panel owns rate-limit reporting for as long as it's on screen.
@@ -1197,6 +1266,7 @@ function makeSteps(rootEl) {
     }
   }
   function markActiveAsError(message) {
+    stall.stop();
     const active = rootEl.querySelector('.step[data-state="active"]');
     if (active) {
       active.dataset.state = 'error';
@@ -1213,6 +1283,7 @@ function makeSteps(rootEl) {
   // Stop reporting into a panel the user can no longer see. Only give up the
   // global handler if it's still ours - another tool may have claimed it.
   function release() {
+    stall.stop();
     rateLimit.clear();
     if (getRateLimitHandler() === rateLimit.show) setRateLimitHandler(null);
   }

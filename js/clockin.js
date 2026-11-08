@@ -240,10 +240,7 @@ const ClockInTool = (() => {
       }
     } catch (e) {
       steps.markActiveAsError(e.message);
-      const friendly = isTransientError(e)
-        ? `The data server is having a moment (${e.message}). Wait a few seconds and try again.`
-        : `Error: ${e.message}`;
-      setStatus(friendly, true);
+      setStatus(e.message, true);
     } finally {
       running = false;
       $run.disabled = false;

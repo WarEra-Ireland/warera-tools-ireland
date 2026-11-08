@@ -63,7 +63,7 @@ const DailyProfitTool = (() => {
       try { user = await resolveUsername(raw); }
       catch (e) {
         steps.markActiveAsError('Lookup failed');
-        throw new Error(isTransientError(e) ? `The data server is having a moment (${e.message}). Try again shortly.` : `Username lookup failed: ${e.message}`);
+        throw new Error(isTransientError(e) ? e.message : `Username lookup failed: ${e.message}`);
       }
       if (!user) { steps.markActiveAsError('No user found'); throw new Error(`No War Era user found with username "${raw}".`); }
       enforceIrishOnly(user.country ?? user.countryId, user.username);

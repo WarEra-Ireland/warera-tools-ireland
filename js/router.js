@@ -74,6 +74,38 @@
     return { view, params: new URLSearchParams(queryStr) };
   }
 
+  // Tools rewrite their own hash with replaceState once a load resolves. Now
+  // that opening a tool starts a load, one can finish after the user has moved
+  // on, so drop a rewrite that names a different view than the one showing.
+  const nativeReplaceState = history.replaceState.bind(history);
+  history.replaceState = function (state, title, url) {
+    if (url != null) {
+      const target = parseRoute(new URL(url, location.href).hash).view;
+      if (VALID.has(target) && target !== parseRoute().view) return;
+    }
+    return nativeReplaceState(state, title, url);
+  };
+
+  // ?proxy= picks the Worker (shared.js) and must outlive every hash
+  // rewrite, so it lives in front of the '#', which rewrites keep. A hash
+  // ?proxy= is moved there; on a later hash edit the page reloads, because
+  // shared.js only reads it at load.
+  function hoistProxy({ reload }) {
+    const route = parseRoute();
+    const proxy = route.params.get('proxy');
+    if (proxy == null) return false;
+    route.params.delete('proxy');
+    const search = new URLSearchParams(location.search);
+    search.set('proxy', proxy);
+    const queryStr = route.params.toString();
+    // ':' and '/' are legal in a query, so leave the URL readable.
+    const readable = search.toString().replace(/%3A/gi, ':').replace(/%2F/gi, '/');
+    const url = `${location.pathname}?${readable}#${route.view}${queryStr ? `?${queryStr}` : ''}`;
+    if (reload) location.replace(url);
+    else nativeReplaceState(null, '', url);
+    return reload;
+  }
+
   function setView(name, { updateHash = true, params = new URLSearchParams() } = {}) {
     if (!VALID.has(name)) name = DEFAULT_VIEW;
     views.forEach(v => v.classList.toggle('active', v.dataset.view === name));
@@ -115,11 +147,13 @@
   }
 
   window.addEventListener('hashchange', () => {
+    if (hoistProxy({ reload: true })) return;
     const r = parseRoute();
     withActivePlayer(r);
     setView(r.view, { updateHash: false, params: r.params });
   });
 
+  hoistProxy({ reload: false });
   pauseViews();
 
   const initial = parseRoute();

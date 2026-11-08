@@ -23,7 +23,7 @@ On `localhost` the site calls a local Worker at `http://localhost:8787` (see [`w
 cd worker && npx wrangler dev --port 8787 --ip 127.0.0.1   # needs worker/.dev.vars with a game API key
 ```
 
-The production Worker only accepts the live site's origin, so previews on another host (e.g. Tailscale) pass `?proxy=<worker origin>`, which sticks for the tab: `https://<host>:8000/?proxy=https://<host>:8787#training`. That origin must also be in `.dev.vars` `ALLOWED_ORIGINS`.
+The production Worker only accepts the live site's origin, so previews on another host (e.g. Tailscale) pass `?proxy=<worker origin>`, which the router keeps in front of the `#` so it survives navigation (nothing is stored): `https://<host>:8000/?proxy=https://<host>:8787#training`. That origin must also be in `.dev.vars` `ALLOWED_ORIGINS`.
 
 ## How a contributor should think about this
 

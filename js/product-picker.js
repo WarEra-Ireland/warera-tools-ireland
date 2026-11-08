@@ -924,9 +924,7 @@ const ProductPickerTool = (() => {
       render();
     } catch (e) {
       steps.hide();
-      setStatus(isTransientError(e)
-        ? `The data server is having a moment (${e.message}). Wait a few seconds and try again.`
-        : `Error: ${e.message}`, true);
+      setStatus(e.message, true);
     } finally {
       $go.disabled = false;
     }

@@ -119,7 +119,7 @@ const WealthMonitorTool = (() => {
       catch (e) {
         steps.markActiveAsError('Lookup failed');
         throw new Error(isTransientError(e)
-          ? `The data server is having a moment (${e.message}). Wait a few seconds and try again.`
+          ? e.message
           : `Username lookup failed: ${e.message}`);
       }
       if (!user) {

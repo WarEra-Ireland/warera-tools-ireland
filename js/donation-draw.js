@@ -694,7 +694,7 @@ const IrelandDonationDrawTool = (() => {
     } catch (error) {
       steps.markActiveAsError(error.message || 'Load failed');
       setStatus(isTransientError(error)
-        ? 'The data server is having a moment. Wait a few seconds and Refresh.'
+        ? error.message
         : `Donation draw failed to load: ${error.message}`, true);
       dataComplete = false;
       eligibilityComplete = false;

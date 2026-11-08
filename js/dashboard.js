@@ -943,10 +943,7 @@ const DashboardTool = (() => {
       fillBuddy(full);
     } catch (e) {
       $grid.innerHTML = '';
-      const friendly = isTransientError(e)
-        ? `The data server is having a moment (${e.message}). Wait a few seconds and try again.`
-        : e.message;
-      setStatus(friendly, true);
+      setStatus(e.message, true);
     } finally {
       running = false;
       $load.disabled = false;

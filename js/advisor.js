@@ -434,10 +434,7 @@ const AdvisorTool = (() => {
       render();
     } catch (e) {
       steps.hide();
-      const friendly = isTransientError(e)
-        ? `The data server is having a moment (${e.message}). Wait a few seconds and try again.`
-        : `Error: ${e.message}`;
-      setStatus(friendly, true);
+      setStatus(e.message, true);
     } finally {
       $go.disabled = false;
     }
