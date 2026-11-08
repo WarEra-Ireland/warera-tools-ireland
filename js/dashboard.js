@@ -571,7 +571,7 @@ const DashboardTool = (() => {
       const row = (p, i) => `<div class="dash-row">
           <div class="dash-row-main">
             <div class="dash-row-title"><span class="dash-rank">${i + 1}</span><a href="${GAME_BASE}/user/${escapeHtml(p.user._id)}" target="_blank" rel="noopener"><strong>${escapeHtml(p.user.username)}</strong> ↗</a></div>
-            <span class="dash-top-v">${ManagerCore.points(p.user)}<small>/11</small></span>
+            <span class="dash-top-v">${ManagerCore.points(p.user)}<small> points</small></span>
           </div>
           <div class="dash-sub small">${p.openSlots} of ${p.companies} manager job${p.companies === 1 ? '' : 's'} available</div>
         </div>`;

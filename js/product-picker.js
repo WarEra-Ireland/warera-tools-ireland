@@ -28,8 +28,8 @@
  *  the money value of a production point that the game sets every wage
  *  from: an employee is paid ppValue × expectation (70–130%) for each base
  *  point, and produces (1 + bonus) points for it. The bonus counted is the
- *  owner's Management and the manager (+2% a point, +44% together at most)
- *  plus +5% in a core region. The threshold excludes individual happiness,
+ *  owner's Management and the manager (+2% a point each, uncapped: 24% +
+ *  24% shows as 48% in the game) plus +5% in a core region. The threshold excludes individual happiness,
  *  traits and specialization.
  *
  *  Prices are the volume-weighted average of each item's latest market
@@ -60,7 +60,6 @@ const ProductPickerTool = (() => {
   const PRICE_MAX_AGE_MS = 24 * 3600 * 1000;
   const CHANGE_ITEM_COST_FALLBACK = 5;
   const MGMT_PCT_PER_POINT = 2;
-  const MGMT_CAP_PCT = 44;
   const CORE_REGION_PCT = 5;
   const WAGE_EXPECTATION_MIN = 70;
   const WAGE_EXPECTATION_MAX = 130;
@@ -312,7 +311,7 @@ const ProductPickerTool = (() => {
   }
 
   /** The employee bonus that applies in a company, as a percentage. */
-  const employeeBonusPct = (m, c) => Math.min(MGMT_CAP_PCT, m.mgmtPct + c.managerPct) + c.corePct;
+  const employeeBonusPct = (m, c) => m.mgmtPct + c.managerPct + c.corePct;
 
   /**
    * The highest wage expectation (%) at which an employee still earns more

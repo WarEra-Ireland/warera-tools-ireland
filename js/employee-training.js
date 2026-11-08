@@ -199,7 +199,7 @@ const EmployeeTrainingTool = (() => {
     const gameMargin = gameValues && ppValue > 0 ? EC.gameMargins(items, gameValues, ppValue) : {};
     return { ppValue: ppValue > 0 ? ppValue : null, list, types, rarity, gameMargin, engineLevels: config?.upgradesConfig?.automatedEngine?.levels || {},
       // Manager pricing: Management levels → points, and the market's rate band per point.
-      managementLevels: config?.skills?.management?.levels || null, managerRates: ManagerCore.rateBand(wageStats),
+      managementLevels: config?.skills?.management?.levels || null, managerRates: ManagerCore.rateBand(wageStats, config?.skills?.management?.levels),
       // Product switches: the concrete a switch takes, priced at recent trades.
       concretePrice: price.concrete ?? null, changeItemCost: config?.company?.changeItemCost ?? 5 };
   }

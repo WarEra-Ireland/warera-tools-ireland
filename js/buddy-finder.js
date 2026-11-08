@@ -141,7 +141,7 @@ const BuddyFinderTool = (() => {
   }
 
   function availableCell(p) {
-    if (ManagerCore.canManage(p)) return `<strong>${ManagerCore.points(p.user)}</strong>${muted('/11')}`;
+    if (ManagerCore.canManage(p)) return `<strong>${ManagerCore.points(p.user)}</strong>${muted(' points')}`;
     if (p.job) return muted(`Managing ${p.employer ? profileLink(p.employer) : 'an Irish company'}`);
     return muted(`Level ${p.user.leveling?.level ?? '?'}`);
   }

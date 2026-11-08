@@ -1,26 +1,37 @@
 /* Management points, manager pricing and the Irish buddy pool. */
 const ManagerCore = (() => {
-  const MAX_POINTS = 11;
-  const MAX_LEVEL = 10;
-  const points = user => Math.min(MAX_POINTS, Math.max(1, user.skills?.management?.total ?? 1));
-
   /*
-   *  Management level 0–10 gives 1–11 points (gameConfig
-   *  skills.management.levels[n].value). A manager contract's
-   *  `managementLevel` is the level, not points. `levels` is that config
-   *  object; without it, points are level + 1.
+   *  Management points are the skill's value at a level: gameConfig
+   *  skills.management.levels[n].value, 1–11 for levels 0–10. Prestige
+   *  and strategic-resource bonuses add levels on top, and past the table
+   *  the game carries on by its last step (its skill value lookup), so a
+   *  manager contract's `managementLevel` of 11 is 12 points and nothing
+   *  here is capped. A profile's management total already counts them.
+   *  `levels` is that config object; without it, the game's own table.
    */
-  const levelPoints = (level, levels) => levels?.[level]?.value ?? level + 1;
+  const GAME_LEVELS = Object.fromEntries(Array.from({ length: 11 }, (_, n) => [n, { value: n + 1 }]));
+  const topLevel = levels => Math.max(...Object.keys(levels).map(Number));
+  function levelPoints(level, levels) {
+    if (levels[level] !== undefined) return levels[level].value;
+    const top = topLevel(levels);
+    if (level <= 0 || top < 1) return levels[0]?.value ?? 0;
+    return levels[top].value + (level - top) * (levels[top].value - levels[top - 1].value);
+  }
+  const points = user => Math.max(1, user.skills?.management?.total ?? 1);
   function pointsFromLevel(level, levels) {
-    const n = Number.isFinite(level) ? Math.min(MAX_LEVEL, Math.max(0, Math.round(level))) : 0;
-    return levelPoints(n, levels);
+    return levelPoints(Number.isFinite(level) ? Math.max(0, Math.round(level)) : 0, levels || GAME_LEVELS);
   }
-  // The game's inverse (module 86436 fw): nearest level, clamped to 0–10.
+  // The game's inverse (module 86436 fw): nearest level, from 0 up to the
+  // table's top level, the range an offer's minimum can take.
   function levelFromPoints(pts, levels) {
-    const zero = levelPoints(0, levels), step = levelPoints(1, levels) - zero;
+    const table = levels || GAME_LEVELS;
+    const zero = levelPoints(0, table), step = levelPoints(1, table) - zero;
     const n = Math.round((pts - zero) / step);
-    return Number.isFinite(n) ? Math.min(MAX_LEVEL, Math.max(0, n)) : 0;
+    return Number.isFinite(n) ? Math.min(topLevel(table), Math.max(0, n)) : 0;
   }
+  // The points of the top ordinary level (11): the market quotes manager
+  // pay for a manager with this many (the client divides by it).
+  const ordinaryMaxPoints = levels => levelPoints(topLevel(levels || GAME_LEVELS), levels || GAME_LEVELS);
 
   // Money in the game has 6 decimals (module 88445 yL).
   const round6 = x => Number.isFinite(x) ? Math.round(x * 1e6) / 1e6 : 0;
@@ -61,20 +72,23 @@ const ManagerCore = (() => {
   const irelandView = (row, isBuddy) => isBuddy ? { ...row, costDay: 0, profitDay: row.valueDay } : row;
 
   /*
-   *  managerOffer.getWageStats quotes hourly wages for an 11-point manager.
-   *  Per point, rounded as the game's offer form does (module 93053 qr):
-   *  min up and max down to 4 decimals, so a rate inside stays allowed.
+   *  managerOffer.getWageStats quotes hourly wages for a manager at the top
+   *  ordinary level (ordinaryMaxPoints, 11). Per point, rounded as the
+   *  game's offer form does (module 93053 qr): min up and max down to 4
+   *  decimals, so a rate inside stays allowed. `points` is that divisor.
    */
-  function rateBand(stats) {
+  function rateBand(stats, levels) {
     const range = stats?.allowedRange;
     if (!range) return null;
+    const per = ordinaryMaxPoints(levels);
     return {
-      min: Math.ceil(range.min / MAX_POINTS * 1e4) / 1e4,
-      max: Math.floor(range.max / MAX_POINTS * 1e4) / 1e4,
-      average: range.average / MAX_POINTS,
-      top: stats.topOffer != null ? stats.topOffer / MAX_POINTS : null,
-      // The real ceiling: an offer's rate × 11 can't pass allowedRange.max.
-      cap: Math.floor(range.max / MAX_POINTS * 1e6) / 1e6,
+      min: Math.ceil(range.min / per * 1e4) / 1e4,
+      max: Math.floor(range.max / per * 1e4) / 1e4,
+      average: range.average / per,
+      top: stats.topOffer != null ? stats.topOffer / per : null,
+      // The real ceiling: an offer's rate × those points can't pass allowedRange.max.
+      cap: Math.floor(range.max / per * 1e6) / 1e6,
+      points: per,
     };
   }
 
@@ -122,7 +136,7 @@ const ManagerCore = (() => {
     // floor, and still a profit after the price allowance.
     const worth = profitMin != null && profitMin >= CHURN.minGain && robustGain(profitMin, HOURS * minPoints * breakEvenRate) >= 0;
     return { verdict, rate, top, minPoints, minLevel: levelFromPoints(minPoints), worth,
-      profitMin, profitMax: profitAt(breakEvenRate, rate, MAX_POINTS) };
+      profitMin, profitMax: profitAt(breakEvenRate, rate, band.points ?? ordinaryMaxPoints()) };
   }
 
   /*
@@ -330,7 +344,7 @@ const ManagerCore = (() => {
       : band && rate < band.min ? 'unfillable'
         : band && rate < round6(topRate(band)) ? 'slow' : 'ok';
     return { status, rate, minPoints, lowMin: minPoints < SUGGESTED_MIN_POINTS, citizenship: offer.citizenship || null,
-      profitMin: profitAt(breakEvenRate, rate, minPoints), profitMax: profitAt(breakEvenRate, rate, MAX_POINTS) };
+      profitMin: profitAt(breakEvenRate, rate, minPoints), profitMax: profitAt(breakEvenRate, rate, band?.points ?? ordinaryMaxPoints(levels)) };
   }
 
   /*
