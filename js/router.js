@@ -35,7 +35,7 @@
   const VALID = new Set([
     'home', 'community', 'gov', 'mu', 'buddy-finder', 'donation-draw',
     'advisor', 'clockin', 'softcap', 'products', 'training', 'profit', 'profit-dev', 'wealth', 'buddy', 'battle-orders',
-    'dashboard', 'roster', 'tax', 'tax-dev', 'factory-tax',
+    'fighting-build', 'dashboard', 'roster', 'tax', 'tax-dev', 'factory-tax',
   ]);
   const LANDING = new Set(['dashboard', 'home', 'community', 'gov']);
   const DEFAULT_VIEW = 'dashboard';
@@ -54,6 +54,7 @@
     products: ProductPickerTool,
     training: EmployeeTrainingTool,
     profit: DailyProfitTool,
+    'fighting-build': FightingBuildTool,
     'profit-dev': DailyProfitDevTool,
     wealth: WealthMonitorTool,
     'donation-draw': IrelandDonationDrawTool,
@@ -135,7 +136,7 @@
   // shows the same player. Removing the active player leaves none active.
   const PLAYER_VIEWS = new Set([
     'dashboard', 'home', 'advisor', 'clockin', 'softcap', 'products', 'training',
-    'profit', 'profit-dev', 'wealth', 'buddy-finder',
+    'profit', 'profit-dev', 'wealth', 'buddy-finder', 'fighting-build',
   ]);
   function withActivePlayer(r) {
     if (!PLAYER_VIEWS.has(r.view) || r.params.get('u')) return;

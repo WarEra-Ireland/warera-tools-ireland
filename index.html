@@ -38,7 +38,7 @@
 })();
 </script>
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 3 2'%3E%3Crect width='1' height='2' fill='%23009A49'/%3E%3Crect x='1' width='1' height='2' fill='white'/%3E%3Crect x='2' width='1' height='2' fill='%23FF7900'/%3E%3C/svg%3E" />
-<link rel="stylesheet" href="styles.css?v=20261108" />
+<link rel="stylesheet" href="styles.css?v=20261112" />
 <link rel="stylesheet" href="community.css?v=20261103" />
 </head>
 <body>
@@ -837,6 +837,94 @@
     </details>
   </section>
 
+  <!-- Fighting Build Optimiser. Reachable only by going to #fighting-build
+       directly: no tab, tool-card or link points here.
+       Powered by FightingBuildTool (js/fighting-build.js). -->
+  <section class="view" data-view="fighting-build">
+    <div class="tool-header">
+      <div class="title-block">
+        <h2><span>⚔️</span> Fighting Build Optimiser</h2>
+        <p>Searches skill, gear, pill and company builds for the most damage your income can carry, at current market prices.</p>
+      </div>
+    </div>
+    <div class="wip-banner" role="note">
+      🧪 <strong>Work in progress.</strong> This tool is experimental and still being built. Expect rough edges, and check close calls against the game before you act on them.
+    </div>
+
+    <div class="stg-idbar">
+      <div class="stg-idbar-row">
+        <input id="fb-username" type="text" placeholder="Your War Era username" autocomplete="off" spellcheck="false" />
+        <button id="fb-go" class="btn-primary">Load</button>
+      </div>
+      <div class="stg-recent hidden" id="fb-recent"></div>
+    </div>
+
+    <div id="fb-steps" class="steps hidden">
+      <div class="step" data-state="pending" data-step="1">
+        <div class="step-icon"></div>
+        <div class="step-body">
+          <div class="step-title">Finding user</div>
+          <div class="step-sub"></div>
+        </div>
+        <div class="step-count"></div>
+      </div>
+      <div class="step" data-state="pending" data-step="2">
+        <div class="step-icon"></div>
+        <div class="step-body">
+          <div class="step-title">Loading profile and game config</div>
+          <div class="step-sub"></div>
+        </div>
+        <div class="step-count"></div>
+      </div>
+      <div class="step" data-state="pending" data-step="3">
+        <div class="step-icon"></div>
+        <div class="step-body">
+          <div class="step-title">Loading companies, employees and managers</div>
+          <div class="step-sub"></div>
+        </div>
+        <div class="step-count"></div>
+      </div>
+      <div class="step" data-state="pending" data-step="4">
+        <div class="step-icon"></div>
+        <div class="step-body">
+          <div class="step-title">Pricing products, consumables and equipment</div>
+          <div class="step-sub"></div>
+        </div>
+        <div class="step-count"></div>
+      </div>
+    </div>
+    <div id="fb-restore-steps" class="steps hidden">
+      <div class="step" data-state="pending" data-step="1">
+        <div class="step-icon"></div>
+        <div class="step-body">
+          <div class="step-title">Reading your saved search</div>
+          <div class="step-sub"></div>
+        </div>
+        <div class="step-count"></div>
+      </div>
+      <div class="step" data-state="pending" data-step="2">
+        <div class="step-icon"></div>
+        <div class="step-body">
+          <div class="step-title">Restoring each search</div>
+          <div class="step-sub"></div>
+        </div>
+        <div class="step-count"></div>
+      </div>
+      <div class="step" data-state="pending" data-step="3">
+        <div class="step-icon"></div>
+        <div class="step-body">
+          <div class="step-title">Combining the results</div>
+          <div class="step-sub"></div>
+        </div>
+        <div class="step-count"></div>
+      </div>
+    </div>
+    <div id="fb-replay" class="fb-replay hidden" role="status"></div>
+    <div id="fb-status" class="status hidden"></div>
+    <div id="fb-hint" class="hint">Enter your War Era username above to begin, or
+      <label class="fb-link">replay a saved search<input class="fb-replay-file" type="file" accept="application/json,.json" hidden></label>.</div>
+    <div id="fb-out" class="fb-out"></div>
+  </section>
 
     <!-- ─── SP advisor view ────────────────────────── -->
 <section class="view" data-view="sp-advisor">
@@ -1494,14 +1582,14 @@
 <script src="js/clockin.js?v=20261108"></script>
 <script src="js/wealth.js?v=20261108"></script>
 <script src="js/product-picker.js?v=20261108b"></script>
-<script src="js/employee-core.js?v=20261106"></script>
+<script src="js/employee-core.js?v=20261109"></script>
 <script src="js/employee-planner.js?v=20261105b"></script>
 <script src="js/product-switch-core.js?v=20261106"></script>
 <script src="js/employee-career.js?v=20261103"></script>
 <script src="js/employee-assignments.js?v=20261106i"></script>
 <script src="js/employee-products.js?v=20261105a"></script>
 <script src="js/employee-trait-icons.js?v=20261103a"></script>
-<script src="js/employee-training.js?v=20261108c"></script>
+<script src="js/employee-training.js?v=20261109"></script>
 <script src="js/daily-profit.js?v=20261108"></script>
 <script src="js/daily-profit-dev.js?v=20261108"></script>
 <script src="js/dashboard.js?v=20261108b"></script>
@@ -1513,10 +1601,18 @@
 <script src="js/battle-orders.js?v=20261108"></script>
 <script src="js/roster.js?v=20261108"></script>
 <script src="js/no-resets-table.js?v=20260906c"></script>
-<script src="js/sp-advisor-core.js?v=20260906c"></script>
+<script src="js/sp-advisor-core.js?v=20261112"></script>
+<script src="js/fighting-core.js?v=20261112"></script>
+<script src="js/fighting-snapshot.js?v=20261112"></script>
+<script src="js/fighting-search.js?v=20261112"></script>
+<script src="js/fighting-store.js?v=20261112"></script>
+<script src="js/fighting-compare.js?v=20261112"></script>
+<script src="js/fighting-progress.js?v=20261021-compat"></script>
+<script src="js/fighting-replay.js?v=20261112"></script>
+<script src="js/fighting-build.js?v=20261112"></script>
 <script src="js/sp-advisor.js?v=20261103"></script>
 <script src="js/softcap.js?v=20261108"></script>
 <script src="js/toolkit.js?v=20261105a"></script>
-<script src="js/router.js?v=20261108"></script>
+<script src="js/router.js?v=20261109"></script>
 </body>
 </html>

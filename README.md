@@ -50,10 +50,19 @@ js/
   clockin.js      Manager Check-In Monitor
   softcap.js      Gear Softcap Advisor
   buddy-finder.js Buddy Finder (public)
+  profit-core.js  Daily Profit economics + model loader (shared with the dashboard)
   daily-profit.js Daily Profit calculator
   product-picker.js Top products (best product per company, v0.27)
   employee-core.js  Training card value model, no DOM (also runs in Node)
   employee-training.js Employee Training (#training)
+  sp-advisor-core.js Skill Point Advisor rules (cost curve, skill formulas)
+  fighting-core.js     Fighting build core: pure evaluateStrategy (damage, costs, ledger, pill phases)
+  fighting-search.js   Fighting build search: deterministic, resumable frontier and role picks
+  fighting-store.js    Saved fighting build snapshots (localStorage, JSON export/import)
+  fighting-progress.js Latest search inputs and per-worker checkpoints (IndexedDB)
+  fighting-replay.js   A search's inputs as a file, and checks that a replay of it matches
+  fighting-snapshot.js Fighting build input snapshot: the optimiser's only fetcher
+  fighting-build.js    Fighting Build Optimiser page (#fighting-build)
   wealth.js       Wealth tracker
   donation-draw.js Ireland Donation Draw
   mu.js           Irish Military Units
@@ -233,6 +242,18 @@ Winner history is also versioned in `localStorage` and keyed by the exact normal
 ### Buddy System Monitor (`buddy.js`) and Battle Orders (`battle-orders.js`)
 
 Both are password-encrypted (see Access control). Buddy System Monitor is the MoE-facing oversight version of Buddy Finder: it tracks every reciprocal employment pair across the Irish economy and flags strays and mismatches. Battle Orders is an MoD-facing live battle tracker with MU order compliance and a Discord push for commanders. Their gate code is public; the tool logic lives inside the encrypted payload.
+
+### Fighting Build Optimiser (`fighting-build.js`)
+
+Work in progress, link-only: `#fighting-build` has no tab, card or link pointing to it. Loads a player into one frozen input snapshot (`fighting-snapshot.js`, the only part that fetches; every price records its fetch time, trade date, tax basis and source) and searches builds with `fighting-search.js`: skill allocations within the real ordinary budget (prestige fixed), priced equipment targets, food, ammunition, company setups and pilled strategies (a buff loadout with a debuff companion, averaged over the 23.5 h pill schedule). Each build is evaluated by the pure `fighting-core.js`: daily damage, daily fighting cost, cost per 1,000 damage, the equipment purchase price, and a daily ledger of toggleable income streams giving the daily balance, with provisional-assumption labels. The page shows four role picks (saver, self-funding, moderate and full spender), charts of the four-figure frontier against daily balance and purchase price, frontier browsing and the selected build's details. The search is deterministic for a snapshot, seed and depth; the page runs it in slices for about fifteen seconds, "Search longer" adds about two minutes, and Stop keeps completed rounds. Skill and company locks, an optional soft equipment budget, a data-age chip that reloads the full snapshot, and saved snapshots (`fighting-store.js`, exportable as JSON; each keeps only its build and is valued afresh with the page's loaded market prices and settings) round it out. Company income comes from the NPC employee and manager models (`employee-core.js`, `manager-core.js`): output and wages per employee, the owner's and a manager's Management bonus, the manager job and the owner's own work. Products and their inputs are priced at the volume-weighted average of their latest trades over the past day (`EmployeeCore.tradePrice`), as in Employee Training.
+
+The latest search is saved in IndexedDB (`fb-search-progress`), separate from saved build snapshots in localStorage. It stores the frozen inputs, settings and each worker's checkpoint: seed, random state, completed rounds, explored IDs and frontier archive. Workers write directly every five seconds and on completion or Stop. The page does the same when workers are unavailable. Calculation caches stay in memory and rebuild after restoration.
+
+Opening the tool restores a matching saved search paused, with its original prices and profile. "Search longer" continues it. Loading a player, changing search settings or refreshing through the data-age chip replaces the saved search. A reload during a search can lose rounds since the last completed save. Incompatible search or model versions and damaged checkpoints are rejected. Storage failures leave the search usable and show a warning.
+
+Only one search is retained per browser origin. Run IDs prevent older tabs and workers from overwriting its checkpoints. Older writes cannot roll a seed back to a smaller depth.
+
+The footer under a finished search lists what it covered and its model, search and input fingerprint. "Download search inputs" saves the frozen snapshot with each seed's completed rounds (`fighting-replay.js`); "Replay a search…" (also offered before a player is loaded) runs each seed to exactly those rounds and confirms the evaluated count and kept builds match the file. A changed fingerprint or a different model or search version is reported before and after replaying, not refused. A replay, and any change made while viewing one, saves nothing in IndexedDB, so the player's own saved search is untouched; "Back to your search" restores it. Builds saved while replaying are marked as shared by the file's player. The file includes that player's profile and staff.
 
 ### Daily Profit (`daily-profit.js`)
 

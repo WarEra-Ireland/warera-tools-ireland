@@ -43,6 +43,10 @@ const EmployeeCore = (() => {
     rarityWeights: { common: 55, uncommon: 25, rare: 13, epic: 5, legendary: 2 },
     managementShift: { uncommon: 1, rare: 0.6, epic: 0.3, legendary: 0.1 },   // per owner Management level
     luckShift: { uncommon: 0.5, rare: 0.3, epic: 0.15, legendary: 0.05 },
+    // Products sell at the volume-weighted average of their latest trades:
+    // up to this many, none older than this.
+    priceSampleTrades: 100,
+    priceMaxAgeHours: 24,
   };
   const RARITIES = ['common', 'uncommon', 'rare', 'epic', 'legendary'];
 
@@ -258,6 +262,20 @@ const EmployeeCore = (() => {
       out[code] = (valueOf(code) * pp(code) - inputs) / it.productionPoints;
     }
     return out;
+  }
+
+  // A product's market price: the volume-weighted average of its latest
+  // trades (transaction.getPaginatedTransactions with transactionType
+  // 'trading' and limit CFG.priceSampleTrades), leaving out any older than
+  // CFG.priceMaxAgeHours before `now`. null with none left.
+  function tradePrice(trades, now = Date.now()) {
+    const cutoff = now - CFG.priceMaxAgeHours * 3600 * 1000;
+    let money = 0, qty = 0;
+    for (const tx of trades || []) {
+      if (!(tx?.quantity > 0) || typeof tx.money !== 'number' || new Date(tx.createdAt).getTime() < cutoff) continue;
+      money += tx.money; qty += tx.quantity;
+    }
+    return qty > 0 ? money / qty : null;
   }
 
   // Value of a card over the employee's remaining working life. `memo`
@@ -1506,7 +1524,7 @@ const EmployeeCore = (() => {
   return {
     toolboxRate, CFG, RARITIES, NUMERIC_CARDS, PROD_TRAIT_CARDS, TRAIT_CARDS, DEFAULT_EMPLOYEE, DEFAULT_CONTEXT, LADDER_FLAGS,
     TRAITS, TRAIT, DEFAULT_SITUATION, HABIT_POLARITY, EXCLUSIVE, currentTraits, ownTraitProduction, paidProduction,
-    cardPool, cardOutcomes, gameDailyProfit, gameMargins, wildCardOutcomes, secondWindValue, energyOn, expectedMax, trainingOutlook, rolledTraitValue, futureLuckValue,
+    cardPool, cardOutcomes, gameDailyProfit, gameMargins, tradePrice, wildCardOutcomes, secondWindValue, energyOn, expectedMax, trainingOutlook, rolledTraitValue, futureLuckValue,
     potentialValue, candidateValue, freshSetValue, freshSetWarm,
     comparisonProduction, productionStanding, peerProduction, nationalitySituation, locationSituation, eligibleTraits, wildCardRisk, canNegotiate, traitValue, traitChart, traitUnit,
     drill, neg, wind, cardValue, rankTier, rankHand, rarityOdds, ladder,

@@ -38,8 +38,6 @@ const EmployeeTrainingTool = (() => {
   const statGainText = (k, n) => k === 'responsibility' ? `+${respHappiness(n)} happiness` : `+${n} ${STAT[k] || k}`;
   const RARITY_NAME = { common: 'Common', uncommon: 'Uncommon', rare: 'Rare', epic: 'Epic', legendary: 'Legendary' };
   const IRELAND = IRELAND_COUNTRY_ID;
-  const PRICE_SAMPLE_TRADES = 100;
-  const PRICE_MAX_AGE_MS = 24 * 3600 * 1000;
   const PRODUCT_NAME = { cocain: 'Pill', coca: 'Mysterious Plant', cookedFish: 'Cooked Fish', heavyAmmo: 'Heavy Ammo', lightAmmo: 'Light Ammo' };
   const words = code => code.replace(/([A-Z])/g, ' $1').replace(/^./, ch => ch.toUpperCase());
   const productName = code => PRODUCT_NAME[code] || words(code);
@@ -171,17 +169,13 @@ const EmployeeTrainingTool = (() => {
     const items = config?.items || {};
     const codes = Object.keys(items).filter(c => items[c]?.productionPoints);
     const pages = await trpcManyValues('transaction.getPaginatedTransactions', codes.map(itemCode => ({
-      transactionType: 'trading', itemCode, limit: PRICE_SAMPLE_TRADES,
+      transactionType: 'trading', itemCode, limit: EC.CFG.priceSampleTrades,
     })), { fresh: true });
-    const cutoff = Date.now() - PRICE_MAX_AGE_MS;
+    const now = Date.now();
     const price = {};
     pages.forEach((page, i) => {
-      let money = 0, qty = 0;
-      for (const tx of page?.items || []) {
-        if (!(tx.quantity > 0) || typeof tx.money !== 'number' || new Date(tx.createdAt).getTime() < cutoff) continue;
-        money += tx.money; qty += tx.quantity;
-      }
-      if (qty > 0) price[codes[i]] = money / qty;
+      const value = EC.tradePrice(page?.items, now);
+      if (value != null) price[codes[i]] = value;
     });
     const list = codes.flatMap(code => {
       if (price[code] == null || !(ppValue > 0)) return [];

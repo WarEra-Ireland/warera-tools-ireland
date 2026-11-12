@@ -3593,3 +3593,600 @@ html[data-theme="light"] #site-footer { --footer-former-1: #8995a5; --footer-for
 @media (max-width: 400px) {
   .footer-stats-heading { flex-wrap: wrap; gap: 8px; }
 }
+
+/* --- Fighting Build Optimiser --- */
+.fb-out .status { margin: 12px 0; }
+.fb-note { color: var(--muted); font-size: 13px; margin: 8px 0 12px; }
+.fb-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; margin: 12px 0 20px; }
+.fb-tile { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; }
+.fb-tile-label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+.fb-tile-value { font-size: 24px; font-weight: 600; margin: 4px 0; font-variant-numeric: tabular-nums; }
+.fb-tile-sub { color: var(--muted); font-size: 12px; }
+.fb-h { font-size: 15px; margin: 20px 0 4px; }
+.fb-table { width: 100%; border-collapse: collapse; font-size: 13px; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+.fb-table th, .fb-table td { padding: 7px 10px; border-bottom: 1px solid var(--border); text-align: left; }
+.fb-table th { color: var(--muted); font-weight: 500; background: var(--panel-2); }
+.fb-table .num { text-align: right; font-variant-numeric: tabular-nums; }
+/* Employees: one row each, tiles in fixed columns so values line up. */
+.fb-staff { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 2px 12px; font-size: 13px; }
+.fb-staff-row { display: grid; grid-template-columns: minmax(0, 1fr) repeat(3, 140px); gap: 8px; align-items: center; padding: 8px 0; }
+.fb-staff-row + .fb-staff-row { border-top: 1px solid var(--border); }
+.fb-staff-company { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; padding: 12px 0 4px; border-top: 1px solid var(--border); }
+.fb-staff-company:first-child { border-top: 0; }
+.fb-staff-company .fb-staff-value { margin-left: auto; font-weight: 600; font-variant-numeric: tabular-nums; }
+.fb-staff-off { opacity: .55; }
+.fb-staff-who { display: flex; flex-direction: column; min-width: 0; overflow-wrap: anywhere; }
+.fb-staff-status { color: var(--muted); font-size: 11.5px; }
+.fb-staff-status .fb-tag { white-space: nowrap; }
+.fb-staff-tile { background: var(--panel-2); border-radius: 6px; padding: 5px 9px; text-align: right; font-variant-numeric: tabular-nums; }
+.fb-staff-tile small { display: block; color: var(--muted); font-size: 10.5px; text-transform: uppercase; letter-spacing: .04em; white-space: nowrap; }
+.fb-staff-tile span { font-weight: 600; }
+.fb-staff-neg span { color: var(--danger); }
+.fb-sustainable .fb-tile-value { color: var(--accent); }
+.fb-unsustainable .fb-tile-value { color: var(--danger); }
+.fb-detail { color: var(--muted); font-size: 12px; margin-top: 2px; }
+.fb-toggle { cursor: pointer; display: inline-flex; align-items: center; }
+.fb-tag { color: var(--muted); font-size: 11px; border: 1px solid var(--border); border-radius: 3px; padding: 0 4px; }
+/* Search details footer and replay banner */
+.fb-details { margin-top: 18px; padding-top: 12px; border-top: 1px solid var(--border); }
+.fb-details-label { margin: 0 0 6px; font-size: 11.5px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+.fb-details-chips { display: flex; flex-wrap: wrap; gap: 6px; font-size: 12px; }
+.fb-details-chips .fb-pin-chip { white-space: normal; }
+.fb-details .fb-note { font-size: 12px; margin: 8px 0; }
+.fb-details-tags { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 12px; }
+.fb-details-tags .fb-tag, .fb-replay code { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 11.5px; }
+.fb-details-tags .fb-tag { padding: 1px 6px; }
+#fb-search-details > .fb-note { font-size: 12px; }
+#fb-progress-note:empty { display: none; }
+.fb-link { color: var(--link); cursor: pointer; text-decoration: underline; }
+.fb-replay { margin: 12px 0; padding: 12px 14px; border: 1px solid var(--link); border-radius: 8px;
+  background: color-mix(in srgb, var(--link) 7%, var(--panel)); font-size: 13px; }
+.fb-replay.hidden { display: none; }
+.fb-replay-ok { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 7%, var(--panel)); }
+.fb-replay-warn { border-color: var(--warn); background: color-mix(in srgb, var(--warn) 7%, var(--panel)); }
+.fb-replay p { margin: 4px 0 0; color: var(--muted); font-size: 12.5px; }
+.fb-replay ul { list-style: none; margin: 8px 0 0; padding: 0; color: var(--muted); font-size: 12.5px; }
+.fb-replay li { padding: 2px 0; }
+.fb-replay code { color: var(--text); overflow-wrap: anywhere; }
+.fb-replay .fb-pos { color: var(--accent); }
+.fb-replay .fb-warn { color: var(--warn); }
+.fb-replay .fb-muted { color: var(--muted); font-size: 12.5px; }
+.fb-replay .fb-controls { margin: 10px 0 0; }
+.fb-replay-seeds { display: grid; grid-template-columns: max-content 1fr max-content; gap: 6px 10px; align-items: center;
+  margin-top: 10px; font-size: 12px; color: var(--muted); }
+.fb-replay-seeds .fb-num { font-weight: 400; text-align: right; }
+.fb-replay-track { height: 6px; border-radius: 3px; background: var(--panel-2); overflow: hidden; }
+.fb-replay-track span { display: block; height: 100%; background: var(--accent); transition: width 0.3s; }
+.fb-off td { opacity: .55; }
+.fb-total td { font-weight: 600; }
+.fb-note select { margin-left: 4px; }
+.fb-controls { display: flex; flex-wrap: wrap; gap: 10px 18px; font-size: 13px; color: var(--muted); margin: 8px 0; }
+.fb-controls input { margin-left: 4px; }
+.fb-controls input[type="number"] { width: 90px; }
+.fb-controls select { margin-left: 4px; }
+.fb-controls input[type="checkbox"] { width: auto; margin: 0 4px 0 0; }
+/* Setup: the battle and the money as two cards; once they scroll away a
+   one-line summary pins to the top. The pin takes no room in the flow. */
+.fb-setup { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 16px 0 8px; }
+.fb-setup-card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 10px 14px; min-width: 0; }
+.fb-setup-title { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 8px; }
+.fb-setup-fields { display: flex; flex-wrap: wrap; gap: 10px 16px; }
+.fb-setup-fields label { width: 132px; display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: var(--muted); }
+.fb-setup-fields input[type="number"] { width: 110px; font-size: 15px; padding: 5px 8px; font-variant-numeric: tabular-nums; }
+.fb-setup-fields select { font-size: 13px; padding: 6px 8px; }
+/* The battle's four fields as two columns at every width, never three and one. */
+.fb-setup-grid { display: grid; grid-template-columns: repeat(2, 132px); }
+.fb-setup-card .fb-controls { margin: 10px 0 0; }
+.fb-setup-card .fb-note { font-size: 12px; margin: 8px 0 0; }
+.fb-setup-active { grid-column: 1 / -1; margin: 0; display: flex; flex-wrap: wrap; gap: 6px; font-size: 12px; }
+.fb-pin { position: sticky; top: 0; z-index: 5; height: 0; }
+.fb-pinned { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 6px 0; background: var(--bg); border-bottom: 1px solid var(--border);
+  font-size: 12px; color: var(--muted); opacity: 0; transform: translateY(-6px); pointer-events: none; transition: opacity .15s, transform .15s; }
+.fb-pinned.fb-shown { opacity: 1; transform: none; pointer-events: auto; }
+.fb-pin-chip { border: 1px solid var(--border); border-radius: 999px; padding: 2px 9px; background: var(--panel); color: var(--text); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.fb-pin-chip span { color: var(--muted); }
+.view[data-view="fighting-build"] button.fb-pin-go { font-size: inherit; line-height: inherit; border-radius: 999px; padding: 2px 9px; background: var(--panel); }
+.view[data-view="fighting-build"] button.fb-pin-go:hover { border-color: var(--muted); }
+.view[data-view="fighting-build"] button.fb-pin-go.fb-pin-on { border-color: var(--accent); }
+.fb-pin-go svg { width: 11px; height: 11px; margin-right: 3px; vertical-align: -1px; color: var(--muted); }
+.fb-pin-on svg { color: var(--accent); }
+.fb-pin-chip .fb-pill-icon { width: 1.1em; height: 1.1em; vertical-align: -0.2em; margin: 0 2px 0 0; }
+.fb-pin-strip { display: contents; }
+.fb-pin-rest { flex: 1 1 auto; min-width: 0; display: flex; flex-wrap: wrap; gap: 6px; }
+.fb-flash { animation: fb-flash 1.2s ease-out; }
+@keyframes fb-flash { from { border-color: var(--accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 35%, transparent); } }
+.fb-search-bar { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 16px; margin: 12px 0 4px; font-size: 13px; }
+.fb-search-heading { display: flex; align-items: baseline; gap: 8px; }
+#fb-search-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+#fb-search-text strong { font-size: 14px; font-weight: 600; color: var(--text); }
+.fb-search-count { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+#fb-longer, #fb-stop { display: block; width: 100%; min-height: 44px; margin-top: 16px; font-size: 14px; }
+.fb-refresh-info { margin-top: 14px; }
+.fb-refresh-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.fb-refresh-hint { color: var(--muted); font-size: 13px; }
+/* Age of the loaded data, coloured by staleness; click reloads. */
+.fb-age { --age: var(--accent); display: inline-flex; align-items: center; gap: 6px; min-height: 36px; padding: 0 14px 0 11px; border-radius: 999px; font-size: 13px; font-variant-numeric: tabular-nums;
+  color: var(--age); background: color-mix(in srgb, var(--age) 9%, transparent); border-color: color-mix(in srgb, var(--age) 40%, var(--border)); }
+.fb-age:hover:not(:disabled) { background: color-mix(in srgb, var(--age) 16%, transparent); border-color: var(--age); }
+.fb-age[data-age="old"] { --age: var(--warn); }
+.fb-age[data-age="stale"] { --age: var(--danger); }
+.fb-age svg { flex: none; width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.6; }
+.fb-roles { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px; margin: 12px 0; }
+.fb-role { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px;
+  /* Label, rule, damage and balance share rows across the cards, so a short rule doesn't lift its card's numbers. */
+  display: grid; grid-row: span 4; grid-template-rows: subgrid; row-gap: 0; align-content: start; }
+.fb-role[data-fb-select] { cursor: pointer; }
+.fb-role.fb-selected { border-color: var(--accent); }
+.fb-role-rule { color: var(--muted); font-size: 12px; margin: 2px 0 6px; }
+.fb-role .fb-tile-value small { font-size: 12px; font-weight: 400; color: var(--muted); }
+.fb-tag-warn { color: var(--danger); border-color: var(--danger); }
+.fb-tag-own { color: var(--warn); border-color: var(--warn); }
+/* Pilled matches the chart's pilled series. */
+.fb-tag-pilled { color: var(--fb-series-2); border-color: var(--fb-series-2); }
+.fb-pill-icon { width: 1.2em; height: 1.2em; vertical-align: -0.25em; margin-right: 2px; }
+.fb-num { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
+.fb-num.fb-pos { color: var(--accent); }
+.fb-num.fb-neg { color: var(--danger); }
+.fb-legend { display: flex; flex-wrap: wrap; gap: 6px 16px; align-items: center; font-size: 12px; margin: 8px 0; }
+.fb-legend .fb-note { margin: 0; }
+.fb-chart { margin: 0; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 8px 10px; }
+.fb-chart figcaption { font-size: 13px; font-weight: 600; margin: 2px 0 4px; }
+.fb-chart svg { width: 100%; height: auto; display: block; }
+.fb-grid { stroke: var(--border); stroke-width: 1; }
+.fb-zero { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 3 3; }
+.fb-axis { fill: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.fb-axis-title { fill: var(--muted); font-size: 12px; }
+/* Categorical slots 1–2 (validated for both surfaces); shape is the secondary encoding. */
+.view[data-view="fighting-build"] { --fb-series-1: #3987e5; --fb-series-2: #d95926; }
+html[data-theme="light"] .view[data-view="fighting-build"] { --fb-series-1: #2a78d6; --fb-series-2: #eb6834; }
+.fb-unpilled { fill: var(--fb-series-1); }
+.fb-pilled { fill: var(--fb-series-2); }
+.fb-pt { stroke: var(--panel); stroke-width: 2; cursor: pointer; }
+.fb-pt-pick { stroke: var(--text); stroke-width: 2; }
+.fb-pt-saved { stroke-dasharray: 3 2; }
+.fb-pt-sel { stroke: var(--accent); stroke-width: 3; }
+.fb-pt.fb-pt-counter { opacity: .55; cursor: default; }
+.fb-legend .fb-pt-counter { opacity: .55; }
+.fb-hold-row { align-items: center; }
+.fb-hold-budget { flex: 0 1 auto; }
+.fb-hold-budget button { white-space: nowrap; }
+.fb-counter-link { stroke: var(--accent); stroke-width: 1.5; stroke-dasharray: 4 3; pointer-events: none; }
+.fb-hit { fill: transparent; cursor: pointer; }
+.fb-pt-label { fill: var(--text); font-size: 12px; pointer-events: none; paint-order: stroke; stroke: var(--panel); stroke-width: 3px; }
+/* Chart controls: a segmented choice of how many builds, and full screen. */
+.fb-chart-bar { display: flex; align-items: center; gap: 8px; margin: 4px 0 6px; }
+.fb-views { display: flex; flex: 0 1 280px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 10px; padding: 2px; }
+.fb-views button { flex: 1; min-width: 44px; height: 32px; padding: 0 10px; border: 0; border-radius: 8px; background: none; color: var(--muted); }
+.fb-views button:hover:not(:disabled) { background: none; color: var(--text); }
+.fb-views button.fb-on, .fb-views button.fb-on:hover { background: var(--panel); color: var(--text); box-shadow: 0 1px 3px rgba(0,0,0,.4); }
+.fb-icon-btn { margin-left: auto; width: 38px; height: 38px; padding: 0; display: grid; place-items: center; border-radius: 10px; background: var(--panel-2); }
+.fb-chart-howto { margin-top: 8px; }
+/* Dragging across the chart: sideways is ours, up and down scrolls the page. */
+.fb-chart svg { touch-action: pan-y; user-select: none; -webkit-user-select: none; }
+.fb-scrubbing .fb-chart svg { cursor: ew-resize; }
+.fb-guide { stroke: var(--accent); stroke-width: 1; stroke-dasharray: 2 3; opacity: .8; pointer-events: none; }
+.fb-ybadge { fill: var(--accent); pointer-events: none; }
+.fb-ybadge-text { fill: var(--bg); font-size: 11px; font-weight: 700; font-variant-numeric: tabular-nums; pointer-events: none; }
+/* The slider: one equal step a build, coloured by pill state, with the net
+   daily cost over the thumb and marks over the named builds. */
+.fb-track { position: relative; height: 50px; margin-top: 30px; touch-action: none; cursor: pointer; outline: none; user-select: none; -webkit-user-select: none; }
+.fb-track-steps { position: absolute; left: 0; right: 0; top: 20px; height: 12px; display: flex; gap: var(--fb-gap, 3px); }
+.fb-track-steps span { flex: 1; border-radius: 3px; opacity: .4; transition: opacity .15s; }
+.fb-track-steps span.fb-done { opacity: 1; }
+.fb-seg-u { background: var(--fb-series-1); }
+.fb-seg-p { background: var(--fb-series-2); }
+.fb-mark { position: absolute; top: 4px; transform: translateX(-50%); font-size: 10px; line-height: 1; color: var(--muted); }
+.fb-mark-mine { color: var(--accent); }
+.fb-thumb { position: absolute; top: 11px; width: 30px; height: 30px; margin-left: -15px; box-sizing: border-box; border-radius: 50%;
+  background: var(--text); border: 3px solid var(--accent); box-shadow: 0 2px 10px rgba(0,0,0,.6); pointer-events: none;
+  transition: left .14s cubic-bezier(.2,.8,.2,1); }
+.fb-thumb.fb-thumb-off { background: var(--panel); }
+.fb-track:focus-visible .fb-thumb { outline: 2px solid var(--text); outline-offset: 3px; }
+.fb-bubble { position: absolute; bottom: 46px; transform: translateX(-50%); padding: 3px 8px; border-radius: 8px; white-space: nowrap; pointer-events: none;
+  background: var(--accent); color: var(--bg); font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums;
+  transition: left .14s cubic-bezier(.2,.8,.2,1); }
+.fb-bubble::after { content: ""; position: absolute; left: 50%; bottom: -4px; margin-left: -4px; border: 4px solid transparent; border-bottom: 0; border-top-color: var(--accent); }
+.fb-dragging .fb-thumb, .fb-dragging .fb-bubble { transition: none; }
+.fb-track-ends { display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); margin-top: -6px; }
+.fb-jumps { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; margin-top: 10px; padding-bottom: 2px; }
+.fb-jumps::-webkit-scrollbar { display: none; }
+.fb-jumps button { flex: none; height: 32px; padding: 0 12px; border-radius: 999px; background: var(--panel-2); font-size: 12.5px; }
+.fb-jumps button.fb-on { border-color: var(--accent); color: var(--accent); }
+.fb-stepper { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
+.fb-stepper-mid { flex: 1; min-width: 0; text-align: center; }
+.fb-stepper-mid .fb-note { margin: 2px 0 0; }
+.fb-nav { flex: none; width: 44px; height: 44px; padding: 0; border-radius: 50%; background: var(--panel-2); font-size: 22px; line-height: 1; touch-action: manipulation; }
+.fb-delta { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-top: 8px; font-size: 12px; color: var(--muted); }
+.fb-delta > div { background: var(--panel-2); border-radius: 10px; padding: 6px 8px; }
+.fb-delta b { display: block; font-size: 15px; }
+.fb-delta-val { color: var(--text); font-variant-numeric: tabular-nums; }
+.fb-delta > div > .fb-delta-val:first-child { display: block; font-size: 15px; font-weight: 700; }
+.fb-delta-head { grid-column: 1 / -1; margin: 0; }
+.fb-tooltip { position: fixed; z-index: 50; pointer-events: none; background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; font-size: 12px; color: var(--text); box-shadow: 0 4px 14px rgba(0,0,0,.25); }
+.fb-tooltip.hidden { display: none; }
+/* Full-screen chart: over the page (or the screen, through the Fullscreen API). */
+.fb-chart-wrap.fb-chart-full { position: fixed; inset: 0; z-index: 1000; display: flex; flex-direction: column;
+  background: var(--bg); padding: 8px 12px; overflow: hidden; }
+.fb-chart-full .fb-chart { padding: 0; border: 0; background: none; }
+.fb-chart-head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; font-size: 14px; margin-bottom: 4px; }
+.fb-chart-head .fb-legend { margin: 0; }
+.fb-chart-head #fb-chart-close { margin-left: auto; padding: 6px 14px; font-size: 14px; }
+.fb-chart-sel { font-size: 13px; margin-top: 6px; }
+body.fb-noscroll { overflow: hidden; }
+.fb-panel { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 8px 14px; margin: 10px 0; }
+.fb-panel summary { cursor: pointer; font-size: 14px; font-weight: 600; padding: 4px 0; }
+.fb-scroll-x { overflow-x: auto; }
+.fb-manual-phase { margin: 16px 0 6px; font-size: 13px; }
+.fb-manual-phase .fb-detail { font-weight: 400; margin-left: 6px; }
+/* The editor: gear slots as tiles that open the picker, consumables as rows of tiles. */
+.fb-pick-slots { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(230px, 100%), 1fr)); gap: 8px; margin: 6px 0 10px; }
+.fb-pick-slot, .fb-pick-item, .fb-pick-card, .fb-pick-roll { display: flex; align-items: center; gap: 10px; text-align: left; font: inherit; color: var(--text);
+  background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 8px 10px; cursor: pointer; }
+.fb-pick-slot:hover, .fb-pick-item:hover, .fb-pick-card:hover, .fb-pick-roll:hover { border-color: var(--muted); }
+.fb-pick-slot:focus-visible, .fb-pick-item:focus-visible, .fb-pick-card:focus-visible, .fb-pick-roll:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.fb-picked { border-color: var(--accent) !important; box-shadow: inset 0 0 0 1px var(--accent); }
+.fb-slot-empty { background: var(--panel-2); border: 1px dashed var(--border); box-shadow: none; }
+.fb-slot-empty img { opacity: .35; filter: grayscale(1); }
+.fb-pick-label { font-size: 12px; color: var(--muted); margin: 10px 0 4px; }
+.fb-pick-row { display: flex; flex-wrap: wrap; gap: 6px; }
+.fb-pick-item { padding: 5px 10px 5px 6px; gap: 8px; }
+.fb-pick-item > span:last-child { display: flex; flex-direction: column; line-height: 1.2; }
+/* Skill segments in the editor are buttons. */
+.fb-skill-edit .fb-seg { padding: 0; cursor: pointer; height: 18px; flex: 1 1 0; max-width: 28px; }
+.fb-skill-edit .fb-seg:hover:not(:disabled) { border-color: var(--sk); }
+.fb-skill-edit .fb-seg.locked { opacity: .3; cursor: not-allowed; }
+.fb-skill-step { margin-left: auto; display: inline-flex; gap: 4px; }
+.fb-skill-step button { min-width: 30px; }
+.fb-lock-btn { margin-left: auto; min-width: 30px; display: inline-flex; align-items: center; justify-content: center; color: var(--muted); }
+.fb-lock-on .fb-lock-btn { color: var(--accent); border-color: var(--accent); }
+.fb-lock-row:not(.fb-lock-on) .fb-skill-name { color: var(--muted); }
+.fb-lock-row:not(.fb-lock-on) .fb-sk-badge { background: var(--panel-2); box-shadow: inset 0 0 0 1px var(--border); }
+.fb-lock-row:not(.fb-lock-on) .fb-sk-badge svg { fill: var(--muted); }
+/* The gear picker: a dialog, a sheet from the bottom on a phone. */
+.fb-picker { width: min(680px, calc(100vw - 24px)); max-height: min(86vh, 900px); overflow: auto; padding: 14px 16px 18px;
+  background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 12px; }
+.fb-picker::backdrop { background: rgba(0, 0, 0, .55); }
+.fb-picker-head { display: flex; align-items: center; gap: 10px; position: sticky; top: -14px; background: var(--bg); padding: 4px 0 8px; z-index: 1; }
+.fb-picker-head h3 { margin: 0; font-size: 16px; flex: 1; }
+.fb-pick-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(250px, 100%), 1fr)); gap: 8px; }
+.fb-pick-stat { display: grid; grid-template-columns: minmax(80px, auto) 1fr 72px auto; align-items: center; gap: 10px; margin: 8px 0; font-size: 13px; }
+.fb-pick-stat input[type="range"] { width: 100%; accent-color: var(--accent); }
+.fb-pick-stat input[type="number"] { width: 72px; }
+.fb-pick-price { display: flex; flex-direction: column; gap: 4px; background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+  padding: 10px 12px; margin: 12px 0; font-size: 13px; }
+.fb-pick-price input { width: 100px; margin-left: 6px; }
+.fb-pick-rolls { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(220px, 100%), 1fr)); gap: 6px; }
+.fb-pick-roll { justify-content: space-between; padding: 8px 10px; }
+.fb-pick-roll-price { font-variant-numeric: tabular-nums; font-weight: 600; white-space: nowrap; }
+.fb-manual-apply { align-items: center; margin-top: 14px; }
+.fb-compare-headline { display: grid; gap: 4px; background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+  padding: 10px 14px; margin: 8px 0 12px; font-size: 13px; }
+.fb-compare td { overflow-wrap: anywhere; }
+.fb-compare td.num { white-space: nowrap; overflow-wrap: normal; }
+.fb-compare .fb-gear { align-items: flex-start; }
+/* Collapsible sections: the summary line is the folded section's overview. */
+.fb-fold { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; margin: 10px 0; }
+.fb-fold > summary { display: flex; align-items: baseline; gap: 12px; padding: 10px 14px; cursor: pointer; list-style: none; }
+:is(.fb-fold, .fb-shop-group) > summary::-webkit-details-marker { display: none; }
+:is(.fb-fold, .fb-shop-group) > summary::before { content: '▸'; color: var(--muted); display: inline-block; transition: transform .15s; }
+:is(.fb-fold, .fb-shop-group)[open] > summary::before { transform: rotate(90deg); }
+.fb-fold-title { font-size: 14px; font-weight: 600; white-space: nowrap; }
+/* Overrides set in this fold constrain every build. */
+.fb-fold.fb-fold-on { border-color: var(--accent); }
+.fb-fold.fb-fold-on > summary :is(.fb-fold-sum, .fb-fold-head) { color: var(--accent); }
+/* Hand-entered prices, in place of market ones, show amber. */
+.fb-fold.fb-fold-own { border-color: var(--warn); }
+.fb-fold.fb-fold-own > summary :is(.fb-fold-sum, .fb-fold-head) { color: var(--warn); }
+/* A missing price stops the figures: red. */
+.fb-fold.fb-fold-missing { border-color: var(--danger); }
+.fb-fold.fb-fold-missing > summary :is(.fb-fold-sum, .fb-fold-head) { color: var(--danger); }
+.fb-fold-sum { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 12px; color: var(--muted); font-size: 13px;
+  font-variant-numeric: tabular-nums; white-space: nowrap; }
+/* The summary stays on one line: the detail gives way first, then the headline
+   figure at the right. */
+.fb-fold-detail { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.fb-fold-head { min-width: 0; overflow: hidden; text-overflow: ellipsis; margin-left: auto; color: var(--text); }
+.fb-fold-head .fb-num { font-weight: inherit; }
+.fb-fold-unit { color: var(--muted); }
+.fb-fold-body { padding: 0 14px 12px; min-width: 0; }
+/* A section just filled in (a build copied to yours): a highlight that fades. */
+.fb-fold.fb-flash { animation: fb-flash 1.6s ease-out; }
+@keyframes fb-flash { from { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-dim); } }
+.fb-fold-body > .fb-note:first-child { margin-top: 0; }
+/* Section help: the shared help button pinned top-right. */
+.fb-has-help { position: relative; }
+.fb-fold.fb-has-help > summary { position: relative; padding-right: 46px; }
+.fb-setup-card.fb-has-help, .fb-search-bar.fb-has-help { padding-right: 46px; }
+.fb-has-help .section-help { position: absolute; top: 4px; right: 5px; }
+.fb-search-bar .section-help { top: 8px; right: 8px; }
+.fb-has-help .section-help-content { cursor: default; }
+/* While a search runs its results wait, dimmed, and are drawn once at the end. */
+.fb-busy #fb-roles, .fb-busy #fb-charts, .fb-busy #fb-build { opacity: .45; transition: opacity .2s; }
+/* The selected build's details, waiting for the slider to rest. */
+#fb-build.fb-pending { opacity: .6; transition: opacity .15s; }
+.fb-spinner { width: 14px; height: 14px; flex: none; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%;
+  animation: fb-spin .8s linear infinite; }
+@keyframes fb-spin { to { transform: rotate(360deg); } }
+.fb-compare + .fb-compare { margin-top: 12px; }
+.fb-compare td.fb-better { color: var(--accent); font-weight: 600; }
+.fb-compare tr.fb-diff td:first-child { box-shadow: inset 3px 0 0 var(--warn); }
+.fb-compare tr.fb-compare-phase th { background: var(--panel-2); }
+.fb-small { padding: 2px 8px; font-size: 12px; }
+.fb-file { cursor: pointer; border: 1px solid var(--border); border-radius: 8px; padding: 6px 12px; color: var(--text); background: var(--panel); }
+.fb-file input { display: none; }
+/* Saved snapshots: one card per build, figures in a 2×2 grid; the less used actions sit behind ⋯. */
+.fb-saved-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 10px; }
+.fb-saved-card { background: var(--panel-2); border: 1px solid var(--border); border-radius: 10px; padding: 10px; min-width: 0; }
+.fb-saved-card.fb-saved-on { border-color: var(--accent); }
+.fb-saved-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
+.fb-saved-name { font-weight: 600; min-width: 0; overflow-wrap: anywhere; }
+.fb-saved-name .fb-detail { font-weight: 400; }
+.fb-saved-tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; margin: 8px 0; }
+.fb-saved-tile { background: var(--panel); border-radius: 6px; padding: 6px 8px; }
+.fb-saved-k { color: var(--muted); font-size: 11px; }
+.fb-saved-v { font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.fb-saved-sub { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.fb-saved-chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; font-weight: 400; }
+/* When a saved build was saved, relative, full date on hover. */
+.fb-saved-chip { --age: var(--muted); display: inline-flex; align-items: center; padding: 0 7px; border-radius: 999px; font-size: 11px; line-height: 18px;
+  font-variant-numeric: tabular-nums; cursor: default; color: var(--age); background: color-mix(in srgb, var(--age) 9%, transparent);
+  border: 1px solid color-mix(in srgb, var(--age) 40%, var(--border)); }
+.fb-saved-foot { display: flex; gap: 6px; margin-top: 8px; }
+.fb-saved-foot button, .fb-saved-more > summary { padding: 6px 10px; font-size: 12px; }
+.fb-saved-foot .fb-saved-chart { flex: 1; }
+.fb-saved-foot .fb-saved-chart[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+.fb-saved-more { position: relative; }
+.fb-saved-more > summary { list-style: none; cursor: pointer; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); line-height: 1.5; }
+.fb-saved-more > summary::-webkit-details-marker { display: none; }
+.fb-saved-more[open] > summary { background: var(--panel-2); }
+.fb-saved-menu { position: absolute; right: 0; bottom: calc(100% + 4px); z-index: 5; display: flex; flex-direction: column; min-width: 170px;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 4px; box-shadow: 0 8px 24px rgba(0, 0, 0, .35); }
+.view[data-view="fighting-build"] .fb-saved-menu button { border: 0; background: none; text-align: left; padding: 7px 10px; font-size: 13px; }
+.view[data-view="fighting-build"] .fb-saved-menu button:hover { background: var(--panel-2); }
+.view[data-view="fighting-build"] .fb-saved-menu .fb-saved-remove { color: var(--danger); }
+.fb-leader { stroke: var(--muted); stroke-width: 1; }
+/* Hollow marker: gear over the equipment budget. */
+.fb-pt.fb-pt-over { fill: var(--panel); stroke-width: 2.5; }
+.fb-pt.fb-unpilled.fb-pt-over { stroke: var(--fb-series-1); }
+.fb-pt.fb-pilled.fb-pt-over { stroke: var(--fb-series-2); }
+.fb-legend circle.fb-pt-over { fill: none; stroke: var(--fb-series-1); stroke-width: 2; }
+
+/* Gear as slot tiles: as in the game, the item's picture on a background in
+   its rarity colour (armour pictures are the same for every tier). Colours follow the game's convention;
+   the rarity is also written beside the tile. */
+.fb-slot { --rar: var(--muted); position: relative; display: inline-grid; place-items: center; width: 40px; height: 40px; flex: none;
+  border-radius: 7px; border: 1px solid color-mix(in srgb, var(--rar) 70%, #000);
+  background: radial-gradient(circle at 50% 35%, color-mix(in srgb, var(--rar) 85%, #fff), var(--rar) 45%, color-mix(in srgb, var(--rar) 55%, #000));
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.18); }
+.view[data-view="fighting-build"] { --rar-common: #9ca3af; --rar-uncommon: #22c55e; --rar-rare: #3b82f6; --rar-epic: #a855f7; --rar-legendary: #f59e0b; --rar-mythic: #ef4444; }
+html[data-theme="light"] .view[data-view="fighting-build"] { --rar-common: #6b7280; --rar-uncommon: #16a34a; --rar-rare: #2563eb; --rar-epic: #9333ea; --rar-legendary: #ca8a04; --rar-mythic: #dc2626; }
+/* After .fb-slot, whose own --rar is only the fallback. */
+.fb-rar-common { --rar: var(--rar-common); } .fb-rar-uncommon { --rar: var(--rar-uncommon); } .fb-rar-rare { --rar: var(--rar-rare); }
+.fb-rar-epic { --rar: var(--rar-epic); } .fb-rar-legendary { --rar: var(--rar-legendary); } .fb-rar-mythic { --rar: var(--rar-mythic); }
+.fb-slot img { width: 32px; height: 32px; object-fit: contain; filter: drop-shadow(0 2px 2px rgba(0,0,0,.45)); }
+/* Consumables and loot: a smaller tile beside the item's name. */
+.fb-slot-sm { width: 32px; height: 32px; border-radius: 6px; }
+.fb-slot-sm img { width: 24px; height: 24px; }
+.fb-item { gap: 8px; }
+/* Shopping list: a fold per phase (or gear and consumables), each item one
+   line of item, daily use, unit price, quantity and cost in columns. */
+#fb-shop-body { container-type: inline-size; }
+.fb-shop-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; margin: 4px 0 10px; padding: 10px 12px;
+  background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px; }
+.fb-shop-ctl { display: flex; align-items: center; gap: 10px; }
+.fb-shop-ctl-gear { margin-left: auto; }
+.fb-shop-key { color: var(--muted); font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+.fb-shop-note { flex-basis: 100%; margin: 0; color: var(--muted); font-size: 12px; }
+.fb-shop-seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; background: var(--bg); }
+.fb-shop-seg > button, .fb-shop-seg > label { border: 0; border-right: 1px solid var(--border); border-radius: 0; background: none; color: var(--muted);
+  font-size: 13px; font-weight: 600; padding: 6px 11px; margin: 0; }
+.fb-shop-seg > :last-child { border-right: 0; }
+.fb-shop-seg > button:hover { color: var(--text); }
+.fb-shop-seg > button[aria-pressed="true"] { background: var(--accent-dim); color: var(--text); }
+.fb-shop-seg-input { display: inline-flex; align-items: center; gap: 2px; font-weight: 400; line-height: normal; cursor: text; }
+#fb-shop-days { width: 44px; margin: 0; padding: 0 2px; border: 0; border-radius: 0; background: none; color: var(--text);
+  font: inherit; font-weight: 600; line-height: normal; text-align: center; }
+.fb-shop-groups { display: grid; gap: 8px; }
+.fb-shop-group { background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px; min-width: 0; }
+.fb-shop-group > summary { display: flex; align-items: baseline; gap: 8px; padding: 8px 12px; cursor: pointer; list-style: none; }
+.fb-shop-title { font-size: 12px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+.fb-shop-buff .fb-shop-title { color: var(--accent); }
+.fb-shop-debuff .fb-shop-title { color: var(--danger); }
+.fb-shop-count { color: var(--muted); font-size: 12px; }
+.fb-shop-sub { margin-left: auto; font-weight: 600; font-variant-numeric: tabular-nums; }
+.fb-shop-head, .fb-shop-row { display: grid; grid-template-columns: minmax(0, 1fr) 64px 76px 52px 76px; gap: 0 10px;
+  align-items: center; padding: 6px 12px; border-top: 1px solid var(--border); }
+.fb-shop-head { color: var(--muted); font-size: 11px; padding-block: 4px; }
+.fb-shop-head > span:not(:first-child), .fb-shop-fig { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.fb-shop-qty { color: var(--muted); }
+.fb-shop-cost { font-weight: 600; }
+.fb-shop-more, .fb-shop-open { display: none; }
+.fb-shop-item { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; min-width: 0; }
+.fb-shop-tags { margin-left: auto; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px; }
+.fb-shop-tags .fb-tag { white-space: nowrap; }
+.fb-shop-src { cursor: help; }
+.fb-shop-cash { text-align: right; color: var(--text); font-weight: 600; font-size: 14px; padding: 10px 2px 0; }
+.fb-shop-cash span { color: var(--accent); font-variant-numeric: tabular-nums; }
+/* A pilled build on a wide screen: the buff set beside the debuff set, and
+   what both phases use across the bottom. Below 1300px a half-width line
+   can't fit a gear card, its source chip and four figure columns, so the
+   chips wrap; the groups stack until then. */
+@container (min-width: 1300px) {
+  .fb-shop-groups.fb-shop-phased { grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; }
+  .fb-shop-phased .fb-shop-both { grid-column: 1 / -1; }
+}
+.view[data-view="fighting-build"] button.fb-rename-btn { padding: 0 3px; border: 0; background: none; color: var(--link); font-size: 12px; line-height: 1; }
+.view[data-view="fighting-build"] input.fb-rename { width: 100%; max-width: 260px; }
+.fb-loadout { display: flex; flex-wrap: wrap; gap: 4px; }
+.fb-gear { display: inline-flex; align-items: center; gap: 10px; }
+.fb-gear-text { display: flex; flex-direction: column; gap: 2px; line-height: 1.25; }
+.fb-gear-name { font-weight: 600; font-size: 13px; }
+.fb-gear-rarity { margin-left: 4px; font-weight: 500; font-size: 10px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.fb-gear-stats { display: flex; flex-wrap: wrap; gap: 2px 10px; font-size: 12px; color: var(--muted); }
+.fb-gear-stats b { color: var(--text); font-variant-numeric: tabular-nums; }
+
+/* Skills as on the game's skills page: two groups, each skill in its game
+   colour, levels as segments. Hatched segments are fixed prestige levels. */
+.view[data-view="fighting-build"] { --sk-orange: #fb923c; --sk-red: #f87171; --sk-gray: #94a3b8; --sk-green: #4ade80; --sk-lightgreen: #a3e635;
+  --sk-deeporange: #f97316; --sk-pink: #f472b6; --sk-blue: #60a5fa; --sk-amber: #fbbf24; --sk-purple: #c084fc; }
+html[data-theme="light"] .view[data-view="fighting-build"] { --sk-orange: #c2410c; --sk-red: #dc2626; --sk-gray: #64748b; --sk-green: #16a34a;
+  --sk-lightgreen: #4d7c0f; --sk-deeporange: #c2410c; --sk-pink: #db2777; --sk-blue: #2563eb; --sk-amber: #b45309; --sk-purple: #9333ea; }
+.fb-sk-orange { --sk: var(--sk-orange); } .fb-sk-red { --sk: var(--sk-red); } .fb-sk-gray { --sk: var(--sk-gray); } .fb-sk-green { --sk: var(--sk-green); }
+.fb-sk-lightgreen { --sk: var(--sk-lightgreen); } .fb-sk-deeporange { --sk: var(--sk-deeporange); } .fb-sk-pink { --sk: var(--sk-pink); }
+.fb-sk-blue { --sk: var(--sk-blue); } .fb-sk-amber { --sk: var(--sk-amber); } .fb-sk-purple { --sk: var(--sk-purple); }
+.fb-skill-groups { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(340px, 100%), 1fr)); gap: 12px; }
+.fb-skill-group { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 10px 14px 4px; }
+.fb-skill-group h4 { margin: 0 0 6px; font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.fb-skill { padding: 6px 0 8px; border-top: 1px solid var(--border); }
+.fb-skill:first-of-type { border-top: 0; }
+.fb-skill-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; font-size: 13px; }
+.fb-skill-value { color: var(--sk); font-weight: 700; font-variant-numeric: tabular-nums; min-width: 42px; }
+.fb-sk-badge { display: inline-flex; align-items: center; justify-content: center; flex: none; align-self: center; width: 24px; height: 24px;
+  border-radius: 6px; background: color-mix(in srgb, var(--sk) 18%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--sk) 40%, transparent); }
+.fb-sk-badge svg { width: 16px; height: 16px; fill: var(--sk); }
+.fb-skill-name { font-weight: 600; }
+.fb-skill-level { color: var(--muted); font-size: 12px; }
+
+/* Debuff spend-down: summary tiles, a meter per bar, and the floor by hour. */
+.fb-db-tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin: 4px 0 10px; }
+.fb-db-tile { display: flex; flex-direction: column; gap: 2px; padding: 10px 12px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 10px; min-width: 0; }
+.fb-db-tile-label { color: var(--muted); font-size: 12px; }
+.fb-db-tile-value { font-size: 24px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.15; }
+.fb-db-progress { display: block; height: 4px; margin-top: 6px; border-radius: 4px; background: var(--border); overflow: hidden; }
+.fb-db-progress span { display: block; height: 100%; border-radius: 4px; background: var(--muted); }
+.fb-db-meters { display: grid; gap: 14px; margin: 10px 0 6px; }
+.fb-db-meter-head { display: flex; align-items: center; gap: 8px; font-size: 13px; margin-bottom: 6px; }
+.fb-db-meter-name { font-weight: 600; }
+.fb-db-meter-now { margin-left: auto; font-weight: 700; font-variant-numeric: tabular-nums; }
+.fb-db-track { position: relative; height: 14px; border-radius: 4px; overflow: hidden;
+  background: repeating-linear-gradient(90deg, transparent 0 calc(10% - 2px), var(--border) calc(10% - 2px) 10%), var(--panel-2);
+  box-shadow: inset 0 0 0 1px var(--border); }
+.fb-db-keep, .fb-db-spend { position: absolute; top: 0; bottom: 0; left: 0; }
+.fb-db-keep { background: color-mix(in srgb, var(--sk) 35%, transparent); }
+.fb-db-spend { background: var(--sk); border-left: 2px solid var(--panel); }
+.fb-db-floor { position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: var(--text); }
+.fb-db-meter-foot { display: flex; justify-content: space-between; gap: 10px; flex-wrap: wrap; font-size: 12px; color: var(--muted); margin-top: 5px; }
+.fb-db-meter-foot strong { color: var(--text); }
+.fb-db-below { color: var(--warn); }
+.fb-db-legend { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; color: var(--muted); }
+.fb-db-legend > span { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.fb-db-key { display: inline-block; width: 12px; height: 10px; border-radius: 2px; }
+.fb-db-key-keep { background: color-mix(in srgb, var(--muted) 35%, transparent); }
+.fb-db-key-spend { background: var(--muted); }
+.fb-db-key-floor { width: 2px; background: var(--text); }
+.fb-db-h { margin: 16px 0 2px; font-size: 13px; }
+.fb-db-cols { display: flex; gap: 4px; align-items: stretch; margin: 8px 0 6px; }
+.fb-db-col { flex: 0 1 56px; min-width: 0; display: flex; flex-direction: column; align-items: center; gap: 4px; font-variant-numeric: tabular-nums; }
+.fb-db-col-pct { font-size: 11px; color: var(--muted); }
+.fb-db-col-track { position: relative; width: 100%; max-width: 44px; height: 90px; border-radius: 4px; background: var(--panel-2); box-shadow: inset 0 0 0 1px var(--border); overflow: hidden; }
+.fb-db-col-track span { position: absolute; left: 0; right: 0; bottom: 0; border-radius: 4px 4px 0 0; background: color-mix(in srgb, var(--muted) 55%, transparent); }
+.fb-db-col-when { font-size: 11px; color: var(--muted); white-space: nowrap; }
+.fb-db-col-now .fb-db-col-track span { background: var(--text); }
+.fb-db-col-now .fb-db-col-pct, .fb-db-col-now .fb-db-col-when { color: var(--text); font-weight: 700; }
+.fb-db-col:hover .fb-db-col-track { box-shadow: inset 0 0 0 1px var(--muted); }
+.fb-db-table summary { cursor: pointer; font-size: 12px; color: var(--link); margin: 4px 0 8px; }
+.fb-db-foot { align-items: center; margin-top: 12px; }
+@media (max-width: 600px) {
+  .fb-db-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .fb-db-tiles .fb-db-tile:first-child { grid-column: 1 / -1; }
+  .fb-db-tile-value { font-size: 20px; }
+  .fb-db-col-when { font-size: 10px; letter-spacing: -0.2px; }
+}
+.fb-skill-change { margin-left: auto; font-size: 11px; font-variant-numeric: tabular-nums; color: var(--muted); }
+.fb-skill-change.up::before { content: '▲ '; color: var(--accent); }
+.fb-skill-change.down::before { content: '▼ '; color: var(--danger); }
+.fb-segs { display: flex; gap: 3px; margin-top: 5px; }
+.fb-seg { width: 22px; height: 14px; border-radius: 3px; background: var(--panel-2); border: 1px solid var(--border); }
+.fb-seg.on { border-color: transparent; background: linear-gradient(180deg, var(--sk), color-mix(in srgb, var(--sk) 70%, #000)); }
+.fb-seg.prestige { border-color: var(--sk); background: repeating-linear-gradient(-45deg, color-mix(in srgb, var(--sk) 70%, transparent) 0 3px, transparent 3px 6px); }
+.fb-seg.over { border-style: dashed; }
+
+/* Form controls in the house style instead of browser defaults. */
+.view[data-view="fighting-build"] input[type="number"] {
+  background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 5px 8px;
+  font: inherit; font-size: 13px; font-variant-numeric: tabular-nums; -moz-appearance: textfield; appearance: textfield; }
+.view[data-view="fighting-build"] input[type="number"]::-webkit-outer-spin-button,
+.view[data-view="fighting-build"] input[type="number"]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.view[data-view="fighting-build"] input[type="number"]::placeholder { color: var(--muted); opacity: .7; }
+.view[data-view="fighting-build"] select {
+  -webkit-appearance: none; appearance: none; background-color: var(--bg); color: var(--text); border: 1px solid var(--border);
+  border-radius: 6px; padding: 5px 28px 5px 9px; font: inherit; font-size: 13px; cursor: pointer;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%238b94a3' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 10px center; }
+.view[data-view="fighting-build"] select option { background: var(--panel); color: var(--text); }
+.view[data-view="fighting-build"] input[type="number"]:focus, .view[data-view="fighting-build"] select:focus {
+  outline: none; border-color: var(--accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 25%, transparent); }
+.view[data-view="fighting-build"] input[type="number"]:disabled { opacity: .45; cursor: not-allowed; }
+.view[data-view="fighting-build"] input[type="checkbox"] {
+  -webkit-appearance: none; appearance: none; width: 16px; height: 16px; margin: 0 6px 0 0; flex: none; vertical-align: -3px;
+  border: 1.5px solid var(--muted); border-radius: 4px; background: var(--bg); display: inline-grid; place-content: center; cursor: pointer;
+  transition: background .12s, border-color .12s; }
+.view[data-view="fighting-build"] input[type="checkbox"]::before {
+  content: ''; width: 8px; height: 4px; border-left: 2px solid var(--bg); border-bottom: 2px solid var(--bg);
+  transform: translateY(-1px) rotate(-45deg) scale(0); transition: transform .12s; }
+.view[data-view="fighting-build"] input[type="checkbox"]:checked { background: var(--accent); border-color: var(--accent); }
+.view[data-view="fighting-build"] input[type="checkbox"]:checked::before { transform: translateY(-1px) rotate(-45deg) scale(1); }
+.view[data-view="fighting-build"] input[type="checkbox"]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+/* A price override field holding your own price, not the market's. */
+/* Narrow screens: wide tables become one card per row, each cell labelled
+   with its column (data-label, set by fighting-build.js). */
+@media (max-width: 600px) {
+  .fb-table.fb-stack thead { display: none; }
+  .fb-table.fb-stack, .fb-stack tbody, .fb-stack tfoot, .fb-stack tr { display: block; }
+  .fb-stack tr { border-bottom: 1px solid var(--border); padding: 4px 0; }
+  .fb-stack td, .fb-stack tfoot th { display: flex; justify-content: space-between; align-items: center; gap: 12px;
+    border: 0; padding: 3px 10px; text-align: right; overflow-wrap: anywhere; }
+  .fb-stack td::before { content: attr(data-label); color: var(--muted); font-size: 12px; text-align: left; flex: none; }
+  .fb-stack td:not([data-label])::before, .fb-stack td[data-label=""]::before { content: none; }
+  .fb-stack td > .fb-detail { text-align: right; }
+  /* Employees: name and status head each card, tiles below. */
+  .fb-staff-row { grid-template-columns: 1.3fr 1fr 1fr; gap: 6px; }
+  .fb-staff-who { grid-column: 1 / -1; flex-direction: row; justify-content: space-between; align-items: baseline; gap: 8px; }
+  .fb-staff-status { text-align: right; }
+  .fb-staff-tile { text-align: left; }
+  /* Gear and item cards lead their card, left-aligned so the icons line up. */
+  .fb-stack td:has(> .fb-gear) { justify-content: flex-start; text-align: left; }
+  .fb-stack td:has(> .fb-gear)::before { content: none; }
+  /* Shopping list: each line just the item, quantity and cost; a tap opens
+     its daily use, unit price and price source underneath. */
+  .fb-shop-head, .fb-shop-wide, .fb-shop-row .fb-shop-tags { display: none; }
+  .fb-shop-ctl { flex: 1 1 100%; }
+  .fb-shop-ctl-gear { margin-left: 0; }
+  .fb-shop-key { flex: 0 0 48px; }
+  .fb-shop-ctl .fb-shop-seg { flex: 1; }
+  .fb-shop-seg > button { flex: 1; padding-inline: 0; }
+  .fb-shop-seg-input { padding-inline: 4px 8px; }
+  #fb-shop-days { width: 32px; }
+  .fb-shop-row { grid-template-columns: minmax(0, 1fr) auto auto 14px; padding: 6px 10px; cursor: pointer; }
+  .fb-shop-open { display: block; justify-self: end; padding: 0; border: 0; background: none; color: var(--muted); font-size: 12px; line-height: 1; }
+  .fb-shop-open::before { content: '▸'; display: inline-block; transition: transform .15s; }
+  .fb-shop-opened .fb-shop-open::before { transform: rotate(90deg); }
+  .fb-shop-missing .fb-shop-cost, .fb-shop-stale .fb-shop-cost { color: var(--danger); }
+  .fb-shop-manual .fb-shop-cost { color: var(--warn); }
+  .fb-shop-opened > .fb-shop-row { background: var(--panel); }
+  .fb-shop-opened .fb-shop-more { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; padding: 4px 10px 8px 60px;
+    background: var(--panel); color: var(--muted); font-size: 12px; }
+  .fb-shop-more b { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
+  .fb-shop-group > summary { padding: 8px 10px; }
+  .fb-picker { width: 100vw; max-width: 100vw; margin: auto 0 0; border-radius: 14px 14px 0 0; max-height: 88vh; }
+  .fb-pick-stat { grid-template-columns: 1fr 72px; }
+  .fb-pick-stat input[type="range"] { grid-column: 1 / -1; grid-row: 2; }
+  .fb-pick-stat .fb-detail { display: none; }
+  .fb-compare th, .fb-compare td { padding: 6px 5px; font-size: 12px; }
+  .fb-legend { font-size: 13px; gap: 8px 14px; }
+  .fb-fold > summary { padding: 10px; }
+  .fb-fold-detail { display: none; }
+  .fb-fold-body { padding: 0 8px 10px; }
+  .fb-setup { grid-template-columns: 1fr; }
+  .fb-setup-fields input[type="number"] { width: 96px; }
+  /* The pinned line holds two centred rows: the battle, then one strip that
+     scrolls sideways, active constraints first. Safe centring keeps an
+     overflowing strip's start reachable. */
+  .fb-pinned { justify-content: center; }
+  .fb-pin-strip { display: flex; justify-content: safe center; gap: 6px; flex: 1 1 200px; min-width: 0; overflow-x: auto; scrollbar-width: none;
+    mask-image: linear-gradient(to right, #000 calc(100% - 20px), transparent); }
+  .fb-pin-strip > * { flex: none; }
+  .fb-pin-rest { order: -1; flex-wrap: nowrap; }
+  .fb-pin-rest .fb-pin-go:not(.fb-pin-on) { display: none; }
+  .fb-pinned .fb-pin-word { display: none; }
+}

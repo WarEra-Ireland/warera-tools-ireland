@@ -68,6 +68,21 @@ function ppPerHour(entL, eneL, prodL) {
   return ((ent + ene) * prod) / 100;
 }
 
+/* --- Effective levels (prestige) ---
+ *  The official skills page computes effective level = ordinary level +
+ *  prestige allocation × skillBonusLevels (gameConfig.user.prestige),
+ *  and values past a skill table's last level extrapolate its final step.
+ *  The profile's skills[k].level is the ordinary level alone. */
+function effectiveLevel(ordinaryL, prestigeAllocation, skillBonusLevels = 1) {
+  return ordinaryL + prestigeAllocation * skillBonusLevels;
+}
+function skillValueAtLevel(values, level) {
+  const last = values.length - 1;
+  if (level <= last) return values[level];
+  const step = last > 0 ? values[last] - values[last - 1] : 0;
+  return values[last] + (level - last) * step;
+}
+
 /* ── Optimizer ───────────────────────────────────────────────────
  *  Given a remaining SP budget (after Companies + Management have
  *  already been paid for), find the (entL, eneL, prodL) split that
@@ -182,5 +197,16 @@ function computeAdvice({ level, numCompanies, numWorkers }) {
     leftoverSP: remainingSP - allocation.spentSP,
     allocation,
     noResets, // null if remainingSP is outside the article table's 30-165 coverage
+  };
+}
+// Node (tests, the fighting build core) gets the skill rules; the page keeps
+// using the globals above. computeAdvice stays browser-only because it calls
+// lookupNoResetsTable from no-resets-table.js.
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = {
+    costToReachLevel, maxLevelForCost,
+    entrepreneurshipValue, energyValue, productionValue, companiesCap, managementWorkers,
+    companiesToLevel, workersToLevel, ppPerHour, optimizeAllocation,
+    effectiveLevel, skillValueAtLevel,
   };
 }
