@@ -1,7 +1,7 @@
 /* ═══════════════════════════════════════════════════════════════════
  *  UNIFIED IRISH TOOLKIT  (powers the #home view)
  *
- *  A single-page shell over the four username/data tools. The user loads
+ *  A single-page shell over the Irish tools. The user loads
  *  their name once; switching sub-tabs runs each tool for that name with
  *  no bouncing back to a landing screen. This is now the default Irish
  *  tools view (#home); it began life as the "staging" prototype, hence
@@ -18,24 +18,24 @@
  *    1. Background prefetch. On entry we warm every username-independent
  *       bulk endpoint into the shared trpc cache, so by the time a name
  *       is typed the heavy data is already loaded.
- *    2. Gated display. Nothing is shown until a username is entered.
+ *    2. Personal tools wait for a username; public tools open immediately.
+ *       A loaded name with no tool chosen shows the landing cards beside
+ *       the nav, as an overview.
  *    3. Recent usernames. Kept by RecentPlayers (shared.js) as quick-pick
  *       chips, handy for long names. Saved only on SUCCESSFUL resolution
- *       (see the hash guard), so failed searches never pollute the list.
- *    4. URL sync. The address bar tracks the loaded user + active tool as
- *       #home?u=<name>&tool=<tool>, so the view is deep-linkable and
- *       shareable, and switching users updates it.
- *    5. Nav overflow fade. On mobile the tool pills scroll horizontally;
- *       a right-edge fade signals there are more off-screen, and clears
- *       once scrolled to the end.
+ *       (see the name watcher), so failed searches never pollute the list.
+ *    4. URLs. Each tool keeps its own (#advisor?u=<name>), so links and
+ *       Back work as anywhere else; the overview is #home?u=<name>.
+ *    5. A switcher card above each tool names it and opens every tool in
+ *       a panel, grouped by category.
  * ═══════════════════════════════════════════════════════════════════ */
 const ToolkitShell = (() => {
-  const DEFAULT_TOOL       = 'wealth';   // first tab; used when no name yet
-  const DEFAULT_AFTER_LOAD = 'wealth';   // user typed a name, show their data
-  const TOOLS              = ['advisor', 'clockin', 'buddy-finder', 'products', 'profit', 'wealth', 'mu', 'softcap', 'sp-advisor'];
-  const USERNAME_DRIVEN    = new Set(['buddy-finder', 'advisor', 'clockin', 'products', 'profit', 'wealth', 'softcap', 'sp-advisor']);
+  const TOOLS              = ['advisor', 'clockin', 'training', 'buddy-finder', 'products', 'profit', 'wealth', 'mu', 'softcap', 'sp-advisor', 'roster'];
+  const USERNAME_DRIVEN    = new Set(['buddy-finder', 'advisor', 'clockin', 'training', 'products', 'profit', 'wealth', 'softcap', 'sp-advisor']);
 
   const MODULES = {
+    roster:         () => RosterTool,
+    training:       () => EmployeeTrainingTool,
     mu:             () => MUTool,
     'buddy-finder': () => BuddyFinderTool,
     advisor:        () => AdvisorTool,
@@ -47,33 +47,36 @@ const ToolkitShell = (() => {
     'sp-advisor':   () => SkillPointAdvisorTool,
   };
 
-  // One-line explainer shown in the info box for each tool. Replaces every
-  // tool's own header (hidden in the shell) so the framing is consistent.
+  // Each tool's name, icon and explainer, shown in the tool list, on the
+  // switcher card and on its landing card. Hosted tools have no title or
+  // description of their own.
   const TOOL_INFO = {
-    advisor:        { icon: '🏭', title: 'Migration Advisor', desc: `Find your companies outside Ireland, what their wage tax funds abroad, and what moving home is worth.` },
-    clockin:        { icon: '⏱',  title: 'Manager Check-In',  desc: `Check your company managers, their activity, last login and hourly pay.` },
-    wealth:         { icon: '💰', title: 'Wealth Tracker',    desc: `Track any Irish player's wealth over time — total, or split into companies, items, money, equipment and weapons.` },
+    roster:         { icon: '🛰️', title: 'Battle Intel Ireland', desc: `A live citizen roster for war planning: build, pills, health, hunger and who's online.` },
+    advisor:        { icon: '🏭', title: 'Migration Advisor', desc: `Find your companies outside Ireland and what moving them home is worth.` },
+    clockin:        { icon: '📋', title: 'Manager Check-In',  desc: `Check your company managers, their activity, last login and hourly pay.` },
+    training:       { icon: '🎓', title: 'Employee Training', desc: `Plan your employees: which training card to keep, who to hire or replace, and where each one should work.` },
+    wealth:         { icon: '💰', title: 'Wealth Tracker',    desc: `Track any Irish player's wealth over time.` },
     'buddy-finder': { icon: '🤝', title: 'Buddy Finder',      desc: `See your open buddy slots and which Irish players can fill them.` },
-    products:       { icon: '🎯', title: 'Top products',    desc: `Compare product margins from the latest market trades. Rankings change, and switching affects employee specialisation and trait bonuses.` },
-    profit:         { icon: '📈', title: 'Daily Profit',      desc: `Your projected daily profit — companies, salary, missions and case sales — plus which products pay best per production point.` },
-    mu:             { icon: '🇮🇪', title: 'Irish Military Units', desc: `Military Units owned by Irish citizens, based in Ireland, with a majority-Irish roster.` },
-    softcap:        { icon: '🛡️', title: 'Gear Softcap Advisor', desc: `Armor and dodge round to whole percentages, so gear points above a threshold buy nothing. Find the cheapest chest, pants and boots that hit the same effective percentage.` },
-    'sp-advisor':   { icon: '🧮', title: 'Skill Point Advisor', desc: `Optimize your skill point allocation across different attributes and abilities.` },
+    products:       { icon: '🎯', title: 'Top products',    desc: `Compare product margins from the latest market trades. Treat these figures as a snapshot, not a recommendation to switch your workforce.` },
+    profit:         { icon: '📈', title: 'Daily Profit',      desc: `Your projected daily profit — companies, salary, missions and case sales — plus which products pay best per production point and whether hiring is worth it. Auto-filled from the game.` },
+    mu:             { icon: '🪖', title: 'Irish Military Units', desc: `Military Units owned by Irish citizens, based in Ireland, with a majority-Irish roster.` },
+    softcap:        { icon: '🛡️', title: 'Gear Softcap Advisor', desc: `Find the cheapest chest, pants and boots that give the same armor and dodge.` },
+    'sp-advisor':   { icon: '🧮', title: 'Skill Point Advisor', desc: `Enter your level, companies and workers managed, and get the optimal Entrepreneurship / Energy / Production split for the rest of your skill points.` },
   };
 
   const $mount    = document.getElementById('stg-mount');
-  const $toolInfo = document.getElementById('stg-tool-info');
   const $nav      = document.getElementById('stg-nav');
-  const $navWrap  = document.getElementById('stg-nav-wrap');
+  const $side     = document.getElementById('stg-side');
+  const $body     = $side.parentElement;   // .stg-body
+  const $navToggle  = document.getElementById('stg-nav-toggle');
   const $username = document.getElementById('stg-username');
   const $load     = document.getElementById('stg-load');
-  const $toolsHead = document.getElementById('stg-tools-head');
   const $empty    = document.getElementById('stg-empty');
   const $emptySub = document.getElementById('stg-empty-sub');
   const $preview  = document.getElementById('stg-preview');
   const $recent   = document.getElementById('stg-recent');
 
-  const state = { active: null, username: '', mounted: false, pendingTool: null };
+  const state = { active: null, username: '', mounted: false, pendingTool: null, params: new URLSearchParams() };
 
   /* ── View hosting (reparent existing tool views) ────────── */
   const VIEW = {}; // tool -> { el, placeholder, hosted }
@@ -86,13 +89,9 @@ const ToolkitShell = (() => {
   }
   function hideTargets(tool) {
     const v = VIEW[tool]; if (!v) return [];
-    const t = [];
-    // Every tool's own header is replaced by the shell's unified info box.
-    t.push(v.el.querySelector('.tool-header'));
-    // Shell provides the username field, so also hide the tool's own
-    // lookup bar (input + recent chips). The shared name drives it.
-    t.push(v.el.querySelector('.stg-idbar'));
-    return t.filter(Boolean);
+    // The shell provides the username field, so the tool's own lookup bar
+    // (input + recent chips) is hidden. The shared name drives it.
+    return [v.el.querySelector('.stg-idbar')].filter(Boolean);
   }
   function setHidden(tool, on) {
     hideTargets(tool).forEach(el => el.classList.toggle('stg-hide', on));
@@ -115,63 +114,71 @@ const ToolkitShell = (() => {
   }
   function restoreAll() { TOOLS.forEach(restore); }
 
-  /* ── Nav overflow fade ──────────────────────────────────
-   *  Show a right-edge fade while there are pills off-screen, hide it once
-   *  scrolled to the end (or when nothing overflows). Pure affordance. */
-  function updateNavFade() {
-    if (!$navWrap) return;
-    const atEnd = $nav.scrollLeft + $nav.clientWidth >= $nav.scrollWidth - 2;
-    $navWrap.classList.toggle('at-end', atEnd);
+  // --- Tool switcher ---
+  // The card above the tool opens the list of every tool.
+  function setNavOpen(open) {
+    $side.classList.toggle('open', open);
+    $navToggle.setAttribute('aria-expanded', String(open));
   }
+  // Pinned while scrolling, the card drops its description to stay one line
+  // tall. The space it gives up goes into its bottom margin, so the page
+  // keeps its length; otherwise a short page loses its scroll room and the
+  // card un-pins again.
+  const $sentinel = document.createElement('div');
+  $side.parentElement.before($sentinel);
+  new IntersectionObserver(([e]) => {
+    const pinned = !e.isIntersecting;
+    if (pinned === $side.classList.contains('pinned')) return;
+    $side.style.marginBottom = '';
+    if (!pinned) { $side.classList.remove('pinned'); return; }
+    const before = $side.offsetHeight;
+    const margin = parseFloat(getComputedStyle($side).marginBottom) || 0;
+    $side.classList.add('pinned');
+    $side.style.marginBottom = `${margin + before - $side.offsetHeight}px`;
+  }).observe($sentinel);
 
-  /* ── URL sync ───────────────────────────────────────────
-   *  Author the address bar so the view is shareable/deep-linkable as
-   *  #home?u=<name>&tool=<active>. A #home hash passes through the hash
-   *  guard untouched, so the shared writeHash is safe here. */
-  function writeStagingHash() {
+  /* ── URLs ───────────────────────────────────────────────
+   *  Each tool keeps its own URL (#advisor?u=<name>), which the router hands
+   *  to the shell, so moving between tools goes through the address bar:
+   *  every move is a history entry, and Back returns to the previous tool.
+   *  The overview is #home?u=<name>. */
+  function go(view, params) {
+    const qs = params.toString();
+    const hash = `#${view}${qs ? `?${qs}` : ''}`;
+    if (hash === location.hash) return false;
+    location.hash = hash;
+    return true;
+  }
+  function openTool(tool) {
     const params = new URLSearchParams();
-    if (state.username) params.set('u', state.username);
-    if (state.active)   params.set('tool', state.active);
-    writeHash('home', params);
+    if (state.username && USERNAME_DRIVEN.has(tool)) params.set('u', state.username);
+    go(tool, params);
   }
 
-  /* ── Hash guard ─────────────────────────────────────────
-   *  Hosted tools rewrite the address bar when they run (e.g. advisor →
-   *  #advisor?u=…). We intercept those and fold them back into a single
-   *  #home?u=…&tool=… URL, so the shell owns the address bar.
-   *
-   *  The rewrite is also our success signal for the recent list: a tool
-   *  only rewrites AFTER resolving the username, and the name it writes is
-   *  the canonical (correct-case) one. So this is the right and only
-   *  reliable place to commit a name to the recent list and to sync the
-   *  canonical name into the secondary inputs. Failed searches never reach
-   *  a rewrite, so they never get saved. */
+  /* ── Name watcher ───────────────────────────────────────
+   *  A hosted tool rewrites its own URL (#advisor?u=…) only after it has
+   *  resolved the name, and it writes the canonical (correct-case) one. So
+   *  that rewrite is the one reliable signal to commit the name to the
+   *  recent list and adopt its casing. Failed searches never reach a
+   *  rewrite, so they never get saved. */
   let nativeReplace = null;
-  function installHashGuard() {
+  function watchNames() {
     if (nativeReplace) return;
     nativeReplace = history.replaceState.bind(history);
     history.replaceState = function (s, t, url) {
       if (typeof url === 'string') {
         // Tools write a full path + query + hash, so read the hash off it.
-        const target = new URL(url, location.href);
-        const m = target.hash.match(/^#(mu|buddy-finder|advisor|clockin|products|profit|wealth|softcap|sp-advisor)\b/);
-        if (m) {
-          const q = target.hash.split('?')[1] || '';
-          const u = new URLSearchParams(q).get('u');
-          if (u) {
-            state.username = u;            // adopt the canonical casing
-            RecentPlayers.remember(u);
-          }
-          const params = new URLSearchParams();
-          if (u) params.set('u', u);
-          params.set('tool', m[1]);
-          url = `${target.pathname}${target.search}#home?${params.toString()}`;
+        const [route, query = ''] = new URL(url, location.href).hash.slice(1).split('?');
+        const u = new URLSearchParams(query).get('u');
+        if (u && route === state.active && USERNAME_DRIVEN.has(route)) {
+          state.username = u;
+          RecentPlayers.remember(u);
         }
       }
       return nativeReplace(s, t, url);
     };
   }
-  function removeHashGuard() {
+  function unwatchNames() {
     if (!nativeReplace) return;
     history.replaceState = nativeReplace;
     nativeReplace = null;
@@ -229,7 +236,7 @@ const ToolkitShell = (() => {
     if (prefetchStarted) return;
     prefetchStarted = true;
 
-    // Migration Advisor's heavy block (also the default post-load view).
+    // Migration Advisor's heavy block.
     const countriesP = trpc('country.getAllCountries', {}).catch(() => null);
     trpc('region.getRegionsObject', {}).catch(() => {});
     trpc('gameConfig.getGameConfig', {}).catch(() => {});
@@ -246,21 +253,33 @@ const ToolkitShell = (() => {
     walkPaginated('user.getUsersByCountry', { countryId: IRELAND_COUNTRY_ID });
   }
 
-  /* ── Gate ───────────────────────────────────────────────── */
-  function revealTools() {
-    $nav.classList.remove('hidden');
-    $toolsHead.classList.remove('hidden');
-    $toolInfo.classList.remove('hidden');
-    $mount.classList.remove('hidden');
-    $empty.classList.add('hidden');
-    updateNavFade();
+  // --- Stage ---
+  // What the shell shows: the landing that asks for a name ('gate'), the
+  // landing cards beside the nav once a name is loaded but no tool is
+  // chosen ('overview'), or a tool ('tool').
+  function setStage(stage) {
+    $side.classList.toggle('hidden', stage === 'gate');
+    if (stage === 'gate') setNavOpen(false);
+    $mount.classList.toggle('hidden', stage !== 'tool');
+    $empty.classList.toggle('hidden', stage === 'tool');
+    $body.classList.toggle('overview', stage === 'overview');
   }
-  function gateTools() {
-    $nav.classList.add('hidden');
-    $toolsHead.classList.add('hidden');
-    $toolInfo.classList.add('hidden');
-    $mount.classList.add('hidden');
-    $empty.classList.remove('hidden');
+  // Marks the tool in the list and shows it on the switcher card, in its
+  // category's colour.
+  function markActive(tool) {
+    $nav.querySelectorAll('.stg-tab').forEach(b => {
+      const on = b.dataset.stgTab === tool;
+      b.classList.toggle('active', on);
+      if (on) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current');
+    });
+    const info = TOOL_INFO[tool];
+    const cat = CATEGORIES.find(c => c.tools.includes(tool));
+    $side.dataset.cat = cat ? cat.key : '';
+    const card = (sel, text) => { $navToggle.querySelector(sel).textContent = text; };
+    card('.stg-sw-icon', info ? info.icon : '');
+    card('.stg-sw-cat', cat ? cat.name : '');
+    card('.stg-sw-title', info ? info.title : '');
+    card('.stg-sw-desc', info ? info.desc : '');
   }
 
   /* Full reset back to the landing state: clear the loaded username, hand
@@ -271,9 +290,10 @@ const ToolkitShell = (() => {
     state.active = null;
     state.pendingTool = null;
     state.username = '';
+    state.params = new URLSearchParams();
     $username.value = '';
-    $nav.querySelectorAll('.stg-tab').forEach(b => b.classList.remove('active'));
-    gateTools();
+    markActive(null);
+    setStage('gate');
     // No hash rewrite here: the brand's href="#home" fires the navigation,
     // and the router re-activates the shell. Because state.username is now
     // cleared, that re-activation lands on the gated landing. (A replaceState
@@ -283,27 +303,55 @@ const ToolkitShell = (() => {
   /* ── Driving the active tool ─────────────────────────────
    *  Tools' activate() is idempotent: it re-runs only when the passed ?u=
    *  differs from their own input, so repeated calls are safe no-ops. */
+  // Tools that call the employee model on the main thread wait until it is
+  // ready, as the router's MODEL_VIEWS do: the .wasm loads after the page.
+  // Only the latest activation runs, so a quick switch away and back
+  // doesn't activate twice.
+  const MODEL_TOOLS = new Set(['training', 'products']);
+  let activation = 0;
   function driveActive() {
-    const mod = MODULES[state.active] && MODULES[state.active]();
-    if (!mod || isHeld(state.active) || typeof mod.activate !== 'function') return;
-    const params = new URLSearchParams();
-    if (USERNAME_DRIVEN.has(state.active) && state.username) params.set('u', state.username);
-    try { mod.activate(params); }
-    catch (e) { console.error(`[home] activate ${state.active} failed`, e); }
+    const tool = state.active;
+    const mod = MODULES[tool] && MODULES[tool]();
+    if (!mod || isHeld(tool) || typeof mod.activate !== 'function') return;
+    const params = new URLSearchParams(state.params);
+    if (USERNAME_DRIVEN.has(tool) && state.username) params.set('u', state.username);
+    const activate = () => {
+      try { mod.activate(params); }
+      catch (e) { console.error(`[home] activate ${tool} failed`, e); }
+    };
+    const token = ++activation;
+    if (!MODEL_TOOLS.has(tool)) return activate();
+    EmployeeModel.ready.then(() => { if (token === activation) activate(); },
+      () => { if (token === activation) modelFailed(tool); });
   }
+  function modelFailed(tool) {
+    const el = VIEW[tool] && VIEW[tool].el;
+    if (!el || el.querySelector('.model-error')) return;
+    const note = document.createElement('p');
+    note.className = 'status error model-error';
+    note.setAttribute('role', 'alert');
+    note.textContent = "Couldn't load the employee model. Reload the page to try again.";
+    el.prepend(note);
+  }
+
+  // Tool categories, in order, for the tool list and the landing cards.
+  // `key` picks the category's colour in styles.css.
+  const CATEGORIES = [
+    { key: 'production', icon: '🏭', name: 'Production', tools: ['advisor', 'clockin', 'training'] },
+    { key: 'profits',    icon: '💰', name: 'Profits',    tools: ['products', 'buddy-finder', 'wealth'] },
+    { key: 'combat',     icon: '⚔️', name: 'Combat',     tools: ['mu', 'softcap', 'roster'] },
+  ];
+  $nav.innerHTML = CATEGORIES.map(c => `<div class="stg-nav-group" data-cat="${c.key}">
+    <div class="stg-nav-cat">${c.icon} ${c.name}</div>
+    ${c.tools.map(t => {
+      const i = TOOL_INFO[t];
+      return `<button class="stg-tab" type="button" data-stg-tab="${t}"><span class="stg-tab-icon" aria-hidden="true">${i.icon}</span><span class="stg-tab-name">${escapeHtml(i.title)}</span></button>`;
+    }).join('')}
+  </div>`).join('');
 
   // Preview of every tool on the empty/landing state, so newcomers see
   // what's inside before typing a name. Clicking one pre-selects it.
   // Landing cards, grouped into sections (same style as the Community tab).
-  const PREVIEW_CATS = [
-    { title: '🏭 Production', tools: ['advisor', 'clockin'], links: [
-      { href: '#training', icon: '🎓', title: 'Employee Training', desc: `Which training card to keep, ranked by what it earns over the employee's working life. Plus a calculator for close calls.` },
-    ] },
-    { title: '💰 Profits',    tools: ['products', 'buddy-finder', 'wealth'] },
-    { title: '⚔️ Combat',   tools: ['mu', 'softcap'], links: [
-      { href: '#roster', icon: '🛰️', title: 'Battle Intel Ireland', desc: `Live Irish citizen roster: build, pill status, health, hunger, MU and last-online time. Useful for war planning.` },
-    ] },
-  ];
   function renderPreview() {
     if (!$preview || $preview.dataset.done) return;
     const card = t => {
@@ -317,41 +365,39 @@ const ToolkitShell = (() => {
         </div>
       </button>`;
     };
-    // Plain links (not shell tools) navigate directly rather than pre-selecting a tab.
-    const linkCard = l => `<a class="tool-card" href="${l.href}">
-      <div class="tool-card-icon">${l.icon}</div>
-      <div class="tool-card-body">
-        <h3>${escapeHtml(l.title)}</h3>
-        <p>${escapeHtml(l.desc)}</p>
-        <span class="tool-link">Open ${escapeHtml(l.title)} →</span>
-      </div>
-    </a>`;
-    $preview.innerHTML = PREVIEW_CATS.map(c =>
-      `<h3 class="community-cat">${c.title}</h3><div class="tool-cards">${c.tools.map(card).join('')}${(c.links || []).map(linkCard).join('')}</div>`
+    $preview.innerHTML = CATEGORIES.map(c =>
+      `<h3 class="community-cat">${c.icon} ${c.name}</h3><div class="tool-cards">${c.tools.map(card).join('')}</div>`
     ).join('');
     markPausedLinks($preview);
     $preview.dataset.done = '1';
   }
 
-  function renderToolInfo(tool) {
-    const info = TOOL_INFO[tool];
-    $toolInfo.innerHTML = info
-      ? `<span class="stg-ti-icon">${info.icon}</span><div class="stg-ti-body"><h3>${info.title}</h3><p>${info.desc}</p></div>`
-      : '';
-  }
-
   function selectTool(tool, { run = true } = {}) {
-    if (!TOOLS.includes(tool)) tool = DEFAULT_TOOL;
-    if (state.active === tool) { if (run) driveActive(); writeStagingHash(); return; }
+    if (!TOOLS.includes(tool)) return showOverview();
+    setNavOpen(false);
+    setStage('tool');
+    state.pendingTool = null;
+    if (state.active === tool) { if (run) driveActive(); return; }
     if (state.active) restore(state.active);
     state.active = tool;
     host(tool);
-    $nav.querySelectorAll('.stg-tab').forEach(b =>
-      b.classList.toggle('active', b.dataset.stgTab === tool));
+    markActive(tool);
     $mount.dataset.active = tool;
-    renderToolInfo(tool);
     if (run) driveActive();
-    writeStagingHash();
+  }
+
+  function showOverview() {
+    if (state.active) restore(state.active);
+    state.active = null;
+    state.pendingTool = null;
+    state.params = new URLSearchParams();
+    delete $mount.dataset.active;
+    markActive(null);
+    setStage('overview');
+    // Opened as #home with a remembered name: show the name in the URL.
+    const params = new URLSearchParams();
+    if (state.username) params.set('u', state.username);
+    writeHash('home', params);
   }
 
   function loadUsername() {
@@ -360,31 +406,43 @@ const ToolkitShell = (() => {
     state.username = u;
     // Not saved to the recent list here — the name isn't verified yet.
     // Saving on Load is what let typos land in the list. The recent list
-    // is committed only when a tool successfully resolves (hash guard).
-    revealTools();
-    if (!state.active) selectTool(state.pendingTool || DEFAULT_AFTER_LOAD);
-    else driveActive();              // re-run current tool with the new name
+    // is committed only when a tool successfully resolves (name watcher).
+    const tool = state.pendingTool || (USERNAME_DRIVEN.has(state.active) ? state.active : null);
     state.pendingTool = null;
-    writeStagingHash();
+    if (tool) {
+      // The open tool keeps its other settings (tab, sort) for the new name.
+      const params = tool === state.active ? hashParams() : new URLSearchParams();
+      params.set('u', u);
+      if (!go(tool, params)) driveActive();   // same URL: run it again
+    } else if (!state.active) go('home', new URLSearchParams({ u }));
   }
 
   /* ── Wire-up ────────────────────────────────────────────── */
   $nav.addEventListener('click', e => {
     const btn = e.target.closest('.stg-tab');
-    // Plain links (e.g. Battle Intel Ireland) have no data-stg-tab — they're
-    // not shell tools, so let the browser navigate instead of routing them
-    // through selectTool (which would fall back to DEFAULT_TOOL).
-    if (btn && btn.dataset.stgTab) selectTool(btn.dataset.stgTab);
+    if (!btn) return;
+    const tool = btn.dataset.stgTab;
+    setNavOpen(false);
+    if (USERNAME_DRIVEN.has(tool) && !state.username) {
+      state.pendingTool = tool;
+      $username.focus();
+      return;
+    }
+    if (tool !== state.active) openTool(tool);
   });
-  $nav.addEventListener('scroll', updateNavFade, { passive: true });
-  window.addEventListener('resize', updateNavFade);
+  $navToggle.addEventListener('click', () => setNavOpen(!$side.classList.contains('open')));
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') setNavOpen(false); });
+  document.addEventListener('click', e => { if (!$side.contains(e.target)) setNavOpen(false); });
   $load.addEventListener('click', loadUsername);
   $username.addEventListener('keydown', e => { if (e.key === 'Enter') loadUsername(); });
   RecentPlayers.mount($recent, u => { $username.value = u; loadUsername(); });
-  // Landing preview: clicking a tool pre-selects it, then prompts for a name.
+  // Landing cards open their tool; one that needs a name, with none loaded
+  // yet, is remembered and the name field focused.
   $preview.addEventListener('click', e => {
     const card = e.target.closest('[data-prev]');
-    if (card) { state.pendingTool = card.dataset.prev; $username.focus(); }
+    if (!card) return;
+    if (state.username || !USERNAME_DRIVEN.has(card.dataset.prev)) openTool(card.dataset.prev);
+    else { state.pendingTool = card.dataset.prev; $username.focus(); }
   });
 
   // Clicking the brand/title is a clean "start over": reset to the landing
@@ -398,12 +456,12 @@ const ToolkitShell = (() => {
   // can't clear a cache another view has since claimed (see setTrpcCache).
   const CACHE_OWNER = 'toolkit';
 
-  // Leaving home: turn off the shared cache (clears it), hand the borrowed
-  // views back, and reset so the next entry re-warms cleanly.
+  // Leaving the Irish tools: turn off the shared cache (clears it), hand the
+  // borrowed views back, and reset so the next entry re-warms cleanly.
   window.addEventListener('hashchange', () => {
     const view = location.hash.replace(/^#/, '').split('?')[0] || 'home';
-    if (view !== 'home' && state.mounted) {
-      removeHashGuard();
+    if (view !== 'home' && !TOOLS.includes(view) && state.mounted) {
+      unwatchNames();
       setTrpcCache(false, CACHE_OWNER);
       restoreAll();
       state.mounted = false;
@@ -413,29 +471,34 @@ const ToolkitShell = (() => {
   });
 
   return {
+    supports: tool => TOOLS.includes(tool),
     /**
-     * Router entry. Supports #home?tool=advisor&u=toie for deep links.
+     * Router entry, for #home and for each hosted tool's own route
+     * (#advisor?u=toie), which the router passes on as tool=advisor.
      * @param {URLSearchParams} [params]
      */
     activate(params) {
       state.mounted = true;
-      installHashGuard();
+      watchNames();
       setTrpcCache(true, CACHE_OWNER);
       prefetch();
       renderPreview();
 
       const tool = (params && TOOLS.includes(params.get('tool'))) ? params.get('tool') : null;
-      const u = (params && params.get('u')) || state.username || '';
+      const u = (params && params.get('u')) || state.username || RecentPlayers.active() || '';
 
-      if (u) {
+      state.params = new URLSearchParams(params);
+      state.params.delete('u');
+      state.params.delete('tool');
+
+      if (u || (tool && !USERNAME_DRIVEN.has(tool))) {
         // Deep-link / returning name: don't pre-save it. If it resolves,
         // the tool's hash rewrite commits it; if not, it stays out.
         $username.value = u;
         state.username = u;
-        revealTools();
-        selectTool(tool || state.active || DEFAULT_AFTER_LOAD);
+        if (tool) selectTool(tool); else showOverview();
       } else {
-        gateTools();
+        setStage('gate');
         state.pendingTool = tool;
       }
     },

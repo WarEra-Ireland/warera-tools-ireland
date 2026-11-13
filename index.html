@@ -38,7 +38,7 @@
 })();
 </script>
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 3 2'%3E%3Crect width='1' height='2' fill='%23009A49'/%3E%3Crect x='1' width='1' height='2' fill='white'/%3E%3Crect x='2' width='1' height='2' fill='%23FF7900'/%3E%3C/svg%3E" />
-<link rel="stylesheet" href="styles.css?v=20261112b" />
+<link rel="stylesheet" href="styles.css?v=20261113e" />
 <link rel="stylesheet" href="community.css?v=20261103" />
 </head>
 <body>
@@ -83,32 +83,30 @@
         <div class="stg-recent hidden" id="stg-recent"></div>
       </div>
 
-      <div class="stg-sticky">
-        <div class="stg-tools-head hidden" id="stg-tools-head">Tools</div>
-        <div class="stg-nav-wrap" id="stg-nav-wrap">
-          <nav class="stg-nav hidden" id="stg-nav" role="tablist" aria-label="Tools">
-            <button class="stg-tab active" data-stg-tab="advisor" role="tab">🏭 <span>Migration</span></button>
-            <button class="stg-tab" data-stg-tab="clockin" role="tab">⏱ <span>Clock-In</span></button>
-            <button class="stg-tab" data-stg-tab="buddy-finder" role="tab">🤝 <span>Buddy Finder</span></button>
-            <button class="stg-tab" data-stg-tab="products" role="tab">🎯 <span>Top products</span></button>
-            <a class="stg-tab" href="#training" role="tab">🎓 <span>Employee Training</span></a>
-            <button class="stg-tab" data-stg-tab="wealth" role="tab">💰 <span>Wealth tracker</span></button>
-            <button class="stg-tab" data-stg-tab="mu" role="tab">🔫 <span>Military Units</span></button>
-            <button class="stg-tab" data-stg-tab="softcap" role="tab">🛡️ <span>Gear Softcap</span></button>
-            <a class="stg-tab" href="#roster" role="tab">🛰️ <span>Battle Intel Ireland</span></a>
-          </nav>
+      <!-- Above the active tool, a card names it and opens every tool in a
+           panel; the landing cards stand in for it until a tool is chosen. -->
+      <div class="stg-body">
+        <aside class="stg-side hidden" id="stg-side">
+          <button class="stg-switch" id="stg-nav-toggle" type="button" aria-expanded="false" aria-controls="stg-nav">
+            <span class="stg-sw-icon" aria-hidden="true"></span>
+            <span class="stg-sw-path"><span class="stg-sw-cat"></span><span class="stg-sw-sep" aria-hidden="true">/</span><span class="stg-sw-title"></span></span>
+            <span class="stg-sw-desc"></span>
+            <span class="stg-sw-all"><span class="stg-sw-dots" aria-hidden="true"></span><span class="stg-sw-all-label">All tools</span></span>
+          </button>
+          <nav class="stg-nav" id="stg-nav" aria-label="Tools"><!-- Filled by js/toolkit.js from TOOL_INFO. --></nav>
+        </aside>
+
+        <div class="stg-main">
+          <div class="stg-empty home" id="stg-empty">
+            <div class="community-note">
+              Enter your War Era username above and hit <strong>Load</strong> for personal tools. Irish Military Units and Battle Intel Ireland open without a username.
+            </div>
+            <div class="stg-preview" id="stg-preview"></div>
+          </div>
+
+          <div class="stg-mount hidden" id="stg-mount"></div>
         </div>
       </div>
-
-      <div class="stg-empty home" id="stg-empty">
-        <div class="community-note">
-          Enter your War Era username above and hit <strong>Load</strong> to open any of these tools.
-        </div>
-        <div class="stg-preview" id="stg-preview"></div>
-      </div>
-
-      <div class="stg-tool-info hidden" id="stg-tool-info"></div>
-      <div class="stg-mount hidden" id="stg-mount"></div>
     </div>
   </section>
 
@@ -393,10 +391,6 @@
   <!-- ─── Irish Military Units view ─────────────────────────────── -->
   <section class="view" data-view="mu">
     <div class="tool-header">
-      <div class="title-block">
-        <h2><span>🇮🇪</span> Irish Military Units</h2>
-        <p>Owned by Irish citizens, in Ireland, with a majority of Irish citizens.</p>
-      </div>
       <div class="controls">
         <div class="seg" id="mu-filter">
           <button class="seg-btn active" data-mu-filter="all">All</button>
@@ -451,11 +445,6 @@
 <!-- ROSTER (#roster) — multi-country citizen roster -->
 <section class="view" data-view="roster">
   <div class="tool-header">
-    <div class="title-block">
-      <h1 class="rs-brand">Battle Intel Ireland</h1>
-      <h2 id="roster-title">🇮🇪 Irish Roster</h2>
-      <p>Active citizens with build, pill status, health, hunger, MU and last-online time. Useful for war planning.</p>
-    </div>
     <div class="controls">
       <input type="text" id="roster-country-search" placeholder="Search country…" autocomplete="off" spellcheck="false" />
       <div id="roster-country-dropdown" class="rs-country-dropdown hidden"></div>
@@ -468,13 +457,6 @@
 
   <!-- ─── Buddy Finder view ─────────────────────────────────────── -->
   <section class="view" data-view="buddy-finder">
-    <div class="tool-header">
-      <div class="title-block">
-        <h2><span>🤝</span> Buddy Finder</h2>
-        <p>See your open buddy slots and which Irish players can fill them.</p>
-      </div>
-    </div>
-
     <div class="stg-idbar">
       <div class="stg-idbar-row">
         <input type="text" id="bf-match-username" aria-label="Your War Era username" placeholder="Your War Era username" autocomplete="off" spellcheck="false" />
@@ -521,13 +503,6 @@
 
   <!-- ─── Migration Advisor view ────────────────────────────────── -->
   <section class="view" data-view="advisor">
-    <div class="tool-header">
-      <div class="title-block">
-        <h2><span>🏭</span> Company Migration Advisor</h2>
-        <p>Find companies outside Ireland and see what bringing them home is worth.</p>
-      </div>
-    </div>
-
     <div class="stg-idbar">
       <div class="stg-idbar-row">
         <input id="adv-username" type="text" placeholder="Your War Era username" autocomplete="off" spellcheck="false" />
@@ -583,13 +558,6 @@
 
   <!-- ─── Top products view ──────────────────────────────────── -->
   <section class="view" data-view="products">
-    <div class="tool-header">
-      <div class="title-block">
-        <h2><span>🎯</span> Top products</h2>
-        <p>Compare product margins at current market prices. Rankings change over time, and switching products affects employee specialisation and trait bonuses. Treat these figures as a snapshot, not a recommendation to switch your workforce.</p>
-      </div>
-    </div>
-
     <div class="stg-idbar">
       <div class="stg-idbar-row">
         <input id="pp-username" type="text" placeholder="Your War Era username" autocomplete="off" spellcheck="false" />
@@ -647,11 +615,6 @@
        which card to keep, who to replace, hiring and assignments.
        The tab and employee live in the hash; see js/employee-training.js. -->
   <section class="view" data-view="training">
-    <div class="tool-header">
-      <div class="title-block">
-        <h2><span>🎓</span> Employee Training</h2>
-      </div>
-    </div>
     <div class="wip-banner" role="note">
       🧪 <strong>Work in progress.</strong> This tool is experimental and still being built. Expect rough edges, and check close calls against the game before you act on them.
     </div>
@@ -744,13 +707,6 @@
        the chest, pants and boots slots buy nothing once they land above
        the bottom of a rounding band. This tool finds that bottom. -->
   <section class="view" data-view="softcap">
-    <div class="tool-header">
-      <div class="title-block">
-        <h2><span>🛡️</span> Gear Softcap Advisor</h2>
-        <p>Stop overpaying for armor and dodge. Find the cheapest gear that gives the same effective percentage.</p>
-      </div>
-    </div>
-
     <div class="stg-idbar">
       <div class="stg-idbar-row">
         <input id="sc-username" type="text" placeholder="Your War Era username" autocomplete="off" spellcheck="false" />
@@ -928,13 +884,6 @@
 
     <!-- ─── SP advisor view ────────────────────────── -->
 <section class="view" data-view="sp-advisor">
-  <div class="tool-header">
-    <div class="title-block">
-      <h2>🧮 Skill Point Advisor</h2>
-      <p>Enter your level, companies, and workers managed — get the optimal Entrepreneurship / Energy / Production split for the rest.</p>
-    </div>
-  </div>
-
   <div class="spa-card spa-stats-card section-help-card">
     <span id="spa-help"></span>
     <div class="spa-stats-inputs">
@@ -1002,15 +951,8 @@
   </div>
 </section>
 
-  <!-- ─── Manager Check-In Monitor view ────────────────────────── -->
+  <!-- ─── Manager Check-In view ────────────────────────── -->
   <section class="view" data-view="clockin">
-    <div class="tool-header">
-      <div class="title-block">
-        <h2><span>⏱</span> Manager Check-In Monitor</h2>
-        <p>Check your company managers, their activity, last login and hourly pay.</p>
-      </div>
-    </div>
-
     <div class="stg-idbar">
       <div class="stg-idbar-row">
         <input id="clockin-username" type="text" placeholder="Your War Era username" autocomplete="off" spellcheck="false" />
@@ -1094,15 +1036,8 @@
     </details>
   </section>
 
-  <!-- ─── Wealth Monitor view (powered by WealthMonitorTool) ────────── -->
+  <!-- ─── Wealth Tracker view (powered by WealthMonitorTool) ────────── -->
   <section class="view" data-view="wealth">
-    <div class="tool-header">
-      <div class="title-block">
-        <h2><span>💰</span> Wealth Monitor</h2>
-        <p>Track any Irish player's wealth over time — total, or broken down by source.</p>
-      </div>
-    </div>
-
     <!-- Look up a player — same input bar + recent chips as the rest of the tools -->
     <div class="stg-idbar">
       <div class="stg-idbar-row">
@@ -1193,13 +1128,6 @@
 
   <!-- ─── Daily Profit view (powers DailyProfitTool) ───────────────── -->
   <section class="view" data-view="profit">
-    <div class="tool-header">
-      <div class="title-block">
-        <h2><span>📈</span> Daily Profit</h2>
-        <p>Which products are worth making, whether hiring is worth it, and your projected daily profit — auto-filled from the game.</p>
-      </div>
-    </div>
-
     <details class="howto dp-howto">
       <summary>How to use</summary>
       <div class="howto-body">
@@ -1594,14 +1522,14 @@
 <script src="js/employee-training.js?v=20261112i"></script>
 <script src="js/daily-profit.js?v=20261108"></script>
 <script src="js/daily-profit-dev.js?v=20261108"></script>
-<script src="js/dashboard.js?v=20261108b"></script>
+<script src="js/dashboard.js?v=20261113a"></script>
 <script src="js/donation-draw.js?v=20261108"></script>
 <script src="js/irish-tax.js?v=20261108"></script>
-<script src="js/irish-tax-dev.js?v=20261103"></script>
-<script src="js/irish-factory-tax.js?v=20261103"></script>
+<script src="js/irish-tax-dev.js?v=20261113"></script>
+<script src="js/irish-factory-tax.js?v=20261113"></script>
 <script src="js/buddy.js?v=20261108"></script>
 <script src="js/battle-orders.js?v=20261108"></script>
-<script src="js/roster.js?v=20261108"></script>
+<script src="js/roster.js?v=20261113"></script>
 <script src="js/no-resets-table.js?v=20260906c"></script>
 <script src="js/sp-advisor-core.js?v=20261112"></script>
 <script src="js/fighting-core.js?v=20261112"></script>
@@ -1614,7 +1542,7 @@
 <script src="js/fighting-build.js?v=20261112"></script>
 <script src="js/sp-advisor.js?v=20261103"></script>
 <script src="js/softcap.js?v=20261108"></script>
-<script src="js/toolkit.js?v=20261105a"></script>
-<script src="js/router.js?v=20261112"></script>
+<script src="js/toolkit.js?v=20261113h"></script>
+<script src="js/router.js?v=20261113b"></script>
 </body>
 </html>

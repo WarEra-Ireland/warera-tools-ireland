@@ -638,7 +638,7 @@ const IrishTaxDevTool = (() => {
     return `<button class="tax-back" data-back="${countryId}">← back to options</button>`;
   }
 
-  /* ── Mini trend chart (styled like the Wealth Monitor's chart) ──── */
+  /* ── Mini trend chart (styled like the Wealth Tracker's chart) ──── */
   function niceNum(range, round) {
     if (range <= 0 || !isFinite(range)) return 1;
     const exp = Math.floor(Math.log10(range));

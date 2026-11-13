@@ -15,7 +15,7 @@
  *                    progress, what's waiting (hands, replacements,
  *                    mismatches) and the top three energy actions
  *                    (EmployeeTrainingTool.summary)
- *    ⏱ Managers    — how many managers are inactive, a status bar, and the
+ *    📋 Managers    — how many managers are inactive, a status bar, and the
  *                    inactive and unknown ones listed (active ones folded)
  *    📈 Daily Profit— simplified projected income broken into rows
  *                    (companies + salary only — missions, case sales and
@@ -23,7 +23,7 @@
  *                    tool at #profit, which has controls for them)
  *    💰 Wealth      — current total, 7-day delta, gradient area chart
  *    🤝 Buddy       — buddies, open slots and players free to manage
- *    🔫 Military Unit— Irish-MU status; join CTA if not in one
+ *    🪖 Military Unit— Irish-MU status; join CTA if not in one
  *
  *  This page is deliberately NOT linked from the home view — reached only
  *  via #dashboard (or #dashboard?u=<name>).
@@ -101,11 +101,11 @@ const DashboardTool = (() => {
     { key: 'migration', icon: '🏭', title: 'Migration',     href: '#advisor' },
     { key: 'products',  icon: '🎯', title: 'Top products', href: '#products' },
     { key: 'training',  icon: '🎓', title: 'Employee Training', href: '#training' },
-    { key: 'clockin',   icon: '⏱',  title: 'Managers',      href: '#clockin' },
+    { key: 'clockin',   icon: '📋', title: 'Managers',      href: '#clockin' },
     { key: 'profit',    icon: '📈', title: 'Daily Profit',  href: '#profit'  },
     { key: 'wealth',    icon: '💰', title: 'Wealth Trend',  href: '#wealth'  },
     { key: 'buddy',     icon: '🤝', title: 'Buddy Finder',  href: '#buddy-finder' },
-    { key: 'mu',        icon: '🔫', title: 'Military Unit', href: '#mu'      },
+    { key: 'mu',        icon: '🪖', title: 'Military Unit', href: '#mu'      },
   ];
 
   /* ── Card layout (localStorage) ──

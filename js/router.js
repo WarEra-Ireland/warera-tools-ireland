@@ -7,8 +7,8 @@
  *    #mu?filter=open      MU tool with the "Has slots" filter applied
  *    #advisor             Migration Advisor (empty)
  *    #advisor?u=toie      Migration Advisor auto-running for "toie"
- *    #clockin             Employee Clock-In Monitor (empty)
- *    #clockin?u=toie      Clock-In Monitor auto-running for "toie"
+ *    #clockin             Manager Check-In (empty)
+ *    #clockin?u=toie      Manager Check-In auto-running for "toie"
  *    #training            Employee Training card guide (no username)
  *
  *  Params live inside the hash (after a literal '?') so the whole route
@@ -107,7 +107,14 @@
     return reload;
   }
 
-  function setView(name, { updateHash = true, params = new URLSearchParams() } = {}) {
+  function setView(name, { params = new URLSearchParams() } = {}) {
+    // The Irish tools each keep their own route but show inside the #home
+    // shell, which is told which one to open.
+    if (ToolkitShell.supports(name)) {
+      params = new URLSearchParams(params);
+      params.set('tool', name);
+      name = 'home';
+    }
     if (!VALID.has(name)) name = DEFAULT_VIEW;
     views.forEach(v => v.classList.toggle('active', v.dataset.view === name));
 
@@ -121,8 +128,6 @@
       $tabs.querySelectorAll('.tab').forEach(t =>
         t.classList.toggle('active', t.dataset.tab === name));
     }
-
-    if (updateHash) writeHash(name, params);
 
     const tool = tools[name];
     if (tool && !isHeld(name) && typeof tool.activate === 'function') {
@@ -169,17 +174,30 @@
     writeHash(r.view, r.params);
   }
 
+  // #home?tool=<tool> was each Irish tool's URL before they had their own;
+  // old links move to the tool's own route.
+  function upgradeLegacy(r) {
+    const tool = r.view === 'home' ? r.params.get('tool') : null;
+    if (!tool || !ToolkitShell.supports(tool)) return;
+    r.view = tool;
+    r.params.delete('tool');
+    const qs = r.params.toString();
+    nativeReplaceState(null, '', `${location.pathname}${location.search}#${tool}${qs ? `?${qs}` : ''}`);
+  }
+
   window.addEventListener('hashchange', () => {
     if (hoistProxy({ reload: true })) return;
     const r = parseRoute();
+    upgradeLegacy(r);
     withActivePlayer(r);
-    setView(r.view, { updateHash: false, params: r.params });
+    setView(r.view, { params: r.params });
   });
 
   hoistProxy({ reload: false });
   pauseViews();
 
   const initial = parseRoute();
+  upgradeLegacy(initial);
   withActivePlayer(initial);
-  setView(initial.view, { updateHash: false, params: initial.params });
+  setView(initial.view, { params: initial.params });
 })();

@@ -632,11 +632,7 @@ details.alts-wrap summary:hover { color: var(--text); }
   .back-link { padding: 6px 12px; font-size: 12px; }
 
   /* Reclaim vertical space in the toolkit chrome on small screens. */
-  .stg-sticky { margin-bottom: 12px; }
   .stg-idbar { padding: 8px 0 10px; }
-  .stg-tools-head { margin: 0 0 6px; }
-  .stg-tool-info { padding: 11px 13px; margin-bottom: 12px; }
-  .stg-tool-info .stg-ti-icon { font-size: 19px; }
 
   .tool-header {
     margin-bottom: 16px;
@@ -1509,21 +1505,6 @@ input[type="password"]:focus { border-color: var(--focus); }
   font-size: 12px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase;
 }
 
-/* Only the tools pin to the top — the username bar scrolls away with the
- *  page (it sits outside this block). Its containing block is the tall .stg,
- *  so it stays stuck through the whole results list. */
-.stg-sticky {
-  position: sticky; top: 0; z-index: 20;
-  background: var(--bg);
-  margin-bottom: 18px;
-  padding-top: 10px;
-  border-bottom: 1px solid var(--border);
-}
-/* Landing state: tools are gated, so this wrapper is empty — drop its chrome
- *  so no stray divider/strip shows under the username bar. */
-.stg-sticky:not(:has(.stg-nav:not(.hidden))) {
-  border-bottom: none; background: none; padding-top: 0; margin-bottom: 0;
-}
 /* Divider under the username bar (was previously the sticky block's border). */
 .stg-idbar { padding: 10px 0 12px; border-bottom: 1px solid var(--border); }
 .stg-idbar-row { display: flex; gap: 8px; }
@@ -1532,26 +1513,106 @@ input[type="password"]:focus { border-color: var(--focus); }
 .stg-idbar-hint { color: var(--muted); font-size: 12px; margin-top: 8px; line-height: 1.5; }
 .stg-idbar-hint strong { color: var(--text); }
 
-.stg-nav {
-  display: flex; gap: 6px; overflow-x: auto;
-  padding: 4px 0 12px;
-  -webkit-overflow-scrolling: touch;
-  scrollbar-width: none;
+/* Tool switcher: a card above the active tool names it (category / tool)
+ *  and says what it does. Clicking it opens every tool in a panel, one
+ *  column per category (a dropdown list on phones). While scrolling it pins
+ *  to one line. Each category has a colour, which the card and its column
+ *  wear. */
+.stg-side, .stg-nav-group { --stg-cat: var(--accent); }
+[data-cat="production"] { --stg-cat: #4ade80; }
+[data-cat="profits"]    { --stg-cat: #fbbf24; }
+[data-cat="combat"]     { --stg-cat: #fb923c; }
+html[data-theme="light"] [data-cat="production"] { --stg-cat: #166534; }
+html[data-theme="light"] [data-cat="profits"]    { --stg-cat: #92400e; }
+html[data-theme="light"] [data-cat="combat"]     { --stg-cat: #c2410c; }
+
+.stg-side {
+  position: sticky; top: 0; z-index: 20;
+  background: var(--bg); padding: 10px 0 12px; margin-bottom: 16px;
+  border-bottom: 1px solid var(--border);
 }
-.stg-nav::-webkit-scrollbar { display: none; }
+.stg-switch {
+  display: grid; grid-template-columns: auto 1fr auto;
+  grid-template-areas: "icon path all" "icon desc all";
+  align-items: center; column-gap: 18px; row-gap: 6px;
+  width: 100%; text-align: left;
+  padding: 12px 4px 14px 22px; margin: 0;
+  background: none; border: 0; border-radius: 0; box-shadow: inset 4px 0 0 var(--stg-cat);
+  color: var(--text); font: inherit;
+}
+/* :not(:disabled) matches the global button:hover rule's specificity. */
+.stg-switch:hover:not(:disabled) { background: color-mix(in srgb, var(--stg-cat) 6%, transparent); }
+.stg-sw-icon {
+  grid-area: icon; align-self: start;
+  display: grid; place-items: center; width: 60px; height: 60px; border-radius: 16px;
+  font-size: 32px; line-height: 1;
+  background: color-mix(in srgb, var(--stg-cat) 15%, transparent);
+}
+.stg-sw-path { grid-area: path; font-size: 29px; line-height: 1.1; letter-spacing: -0.02em; text-wrap: balance; }
+.stg-sw-cat { color: var(--stg-cat); font-weight: 450; }
+.stg-sw-sep { color: var(--border-strong); font-weight: 300; margin: 0 .3em; }
+.stg-sw-cat:empty + .stg-sw-sep { display: none; }
+.stg-sw-title { font-weight: 760; }
+.stg-sw-desc { grid-area: desc; font-size: 14px; line-height: 1.5; color: var(--muted); max-width: 72ch; }
+.stg-sw-all {
+  grid-area: all; display: inline-flex; align-items: center; gap: 9px;
+  padding: 10px 16px; border-radius: 999px; border: 1px solid var(--border-strong);
+  background: var(--panel); font-size: 13px; font-weight: 650; white-space: nowrap;
+  transition: background-color .15s, color .15s, border-color .15s;
+}
+.stg-switch:hover .stg-sw-all { border-color: var(--stg-cat); color: var(--stg-cat); }
+.stg-side.open .stg-sw-all { background: var(--stg-cat); border-color: var(--stg-cat); color: var(--bg); }
+.stg-sw-dots {
+  width: 12px; height: 12px;
+  background: radial-gradient(circle, currentColor 1.3px, transparent 1.6px) 0 0 / 4px 4px;
+}
+
+/* Pinned while scrolling: one line, path and button only. */
+.stg-side.pinned .stg-switch { grid-template-areas: "icon path all"; row-gap: 0; column-gap: 12px; padding: 4px 4px 4px 16px; }
+.stg-side.pinned .stg-sw-icon { width: 32px; height: 32px; border-radius: 9px; font-size: 18px; align-self: center; }
+.stg-side.pinned .stg-sw-path { font-size: 17px; letter-spacing: -0.01em; }
+.stg-side.pinned .stg-sw-desc { display: none; }
+.stg-side.pinned .stg-sw-all { padding: 7px 13px; }
+
+/* The tool list: category headings in their colour, the current tool
+ *  tinted with it. */
+.stg-nav { display: none; }
+.stg-nav-group { display: flex; flex-direction: column; gap: 2px; }
+.stg-nav-cat { font-size: 15px; font-weight: 700; color: var(--stg-cat); margin: 0 0 6px; padding: 0 10px; }
 .stg-tab {
-  flex: 0 0 auto;
-  display: inline-flex; align-items: center; gap: 7px;
-  padding: 8px 14px; border-radius: 999px;
-  background: var(--panel); border: 1px solid var(--border);
-  color: var(--muted); font-size: 13px; font-weight: 500;
-  cursor: pointer; white-space: nowrap; text-decoration: none;
-  transition: background 0.15s, color 0.15s, border-color 0.15s;
+  display: flex; align-items: center; gap: 9px;
+  width: 100%; text-align: left;
+  padding: 5px 10px; border-radius: 9px;
+  background: none; border: 1px solid transparent;
+  color: var(--text); font: inherit; font-size: 13.5px; font-weight: 600; line-height: 1.4;
+  cursor: pointer; text-decoration: none;
+  transition: background 0.15s, color 0.15s;
 }
-.stg-tab:hover { background: var(--panel-2); color: var(--text); }
-.stg-tab.active {
-  background: var(--accent-dim); border-color: var(--accent); color: var(--accent);
-  font-weight: 600;
+.stg-tab:hover:not(:disabled) { background: var(--panel-2); border-color: transparent; }
+.stg-tab.active,
+.stg-tab.active:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--stg-cat) 15%, transparent); border-color: transparent;
+  color: var(--stg-cat); box-shadow: inset 3px 0 0 var(--stg-cat);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .stg-side.open .stg-nav { animation: stg-drop .16s ease-out; }
+}
+@keyframes stg-drop { from { opacity: 0; transform: translateY(-6px); } }
+
+/* Wide screens: the list is a panel, a column per category, each heading
+ *  underlined in its colour. */
+@media (min-width: 901px) {
+  .stg-body:has(> .stg-side:not(.hidden)) { margin-top: 16px; }
+  .stg-nav {
+    position: absolute; left: 0; right: 0; top: calc(100% - 1px); z-index: 30;
+    grid-template-columns: repeat(3, 1fr); gap: 0 28px;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 0 0 16px 16px;
+    padding: 20px 24px 24px; box-shadow: 0 28px 56px rgba(0, 0, 0, .5);
+  }
+  html[data-theme="light"] .stg-nav { box-shadow: 0 20px 40px rgba(15, 23, 42, .14); }
+  .stg-side.open .stg-nav { display: grid; }
+  .stg-nav-cat { padding-bottom: 8px; margin-bottom: 8px; border-bottom: 3px solid var(--stg-cat); }
+  .stg-tab { padding: 7px 10px; }
 }
 
 /* Hosted tool views render inside the mount (override .view{display:none}). */
@@ -1561,24 +1622,14 @@ input[type="password"]:focus { border-color: var(--focus); }
 
 @media (max-width: 720px) {
   .stg-head h2 { font-size: 18px; }
-  .stg-tab span { font-size: 12.5px; }
+  .stg-tab-name { font-size: 12.5px; }
 }
 
 /* Gated regions, hidden until a username is entered */
-.stg-nav.hidden, .stg-mount.hidden, .stg-empty.hidden, .stg-recent.hidden, .stg-tools-head.hidden, .stg-tool-info.hidden { display: none; }
-
-/* Section label above the tool pills */
-.stg-tools-head { font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); font-weight: 600; margin: 2px 0 8px; }
-
-/* Per-tool explainer box (shown for the active tool, replaces its own header) */
-.stg-tool-info {
-  display: flex; align-items: flex-start; gap: 12px;
-  background: var(--panel); border: 1px solid var(--border);
-  border-radius: 10px; padding: 14px 16px; margin: 0 0 16px;
-}
-.stg-tool-info .stg-ti-icon { font-size: 22px; line-height: 1.15; flex: none; }
-.stg-tool-info .stg-ti-body h3 { margin: 0 0 3px; font-size: 15px; font-weight: 650; color: var(--text); }
-.stg-tool-info .stg-ti-body p { margin: 0; font-size: 13px; color: var(--muted); line-height: 1.5; }
+.stg-side.hidden, .stg-mount.hidden, .stg-empty.hidden, .stg-recent.hidden { display: none; }
+/* Overview (a name loaded, no tool chosen): the landing cards are the menu,
+   so the switcher and the note asking for a name go. */
+.stg-body.overview .stg-side, .stg-body.overview .community-note { display: none; }
 
 /* Empty / waiting state */
 .stg-empty { padding: 0 0 40px; }
@@ -1618,41 +1669,28 @@ input[type="password"]:focus { border-color: var(--focus); }
 .stg-recent-clear { border-color: transparent; }
 .stg-recent-clear:hover, .stg-recent-clear[data-armed] { color: var(--danger); border-color: var(--danger); }
 
-/* Wrapper lets us paint an edge fade over the scrolling pills. */
-.stg-nav-wrap { position: relative; }
-.stg-nav-wrap::after {
-  content: '';
-  position: absolute; top: 0; right: 0; bottom: 12px;
-  width: 36px; pointer-events: none;
-  background: linear-gradient(to right, transparent, var(--bg));
-  opacity: 1; transition: opacity 0.2s;
-}
-.stg-nav-wrap.at-end::after { opacity: 0; }
-
-.stg-nav {
-  display: flex; gap: 6px; overflow-x: auto;
-  padding: 4px 0 12px;
-  -webkit-overflow-scrolling: touch;
-  scrollbar-width: none;
-  scroll-snap-type: x proximity;
-}
-.stg-nav::-webkit-scrollbar { display: none; }
-.stg-tab { scroll-snap-align: start; }
-
-/* Mobile: show every tool at once as a 2-col grid instead of a horizontal
-   scroll, so nothing's hidden off-screen and there's no back-and-forth.
-   Placed after both .stg-nav rules so it wins on small screens. */
-@media (max-width: 680px) {
+/* Phones: the category sits above the tool, the button shrinks to its icon,
+ *  and the list drops down over the page. */
+@media (max-width: 900px) {
+  .stg-side { padding: 8px 0; margin-bottom: 12px; }
+  .stg-switch { grid-template-areas: "icon path all" "desc desc desc"; column-gap: 14px; row-gap: 10px; padding: 6px 0 8px 16px; }
+  .stg-sw-icon { width: 46px; height: 46px; border-radius: 13px; font-size: 25px; align-self: center; }
+  .stg-sw-path { display: flex; flex-direction: column; gap: 1px; font-size: 21px; }
+  .stg-sw-cat { font-size: 13px; font-weight: 600; letter-spacing: 0; }
+  .stg-sw-sep { display: none; }
+  .stg-sw-desc { font-size: 13px; }
+  .stg-sw-all-label { display: none; }
+  .stg-sw-all { width: 42px; height: 42px; padding: 0; justify-content: center; }
+  .stg-side.pinned .stg-sw-path { flex-direction: row; align-items: baseline; gap: 8px; font-size: 16px; }
+  .stg-side.pinned .stg-sw-all { width: 34px; height: 34px; padding: 0; }
   .stg-nav {
-    display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px;
-    overflow-x: visible; scroll-snap-type: none;
-    padding: 2px 0 10px;
+    position: absolute; left: 0; right: 0; top: calc(100% - 4px);
+    max-height: 70vh; overflow-y: auto;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+    padding: 8px; box-shadow: 0 12px 28px rgba(0, 0, 0, 0.35);
   }
-  .stg-tab {
-    flex: unset; justify-content: center; gap: 5px;
-    padding: 8px 6px; font-size: 12px; scroll-snap-align: none;
-  }
-  .stg-nav-wrap::after { display: none; }   /* no horizontal overflow to fade now */
+  .stg-side.open .stg-nav { display: flex; flex-direction: column; gap: 2px; }
+  .stg-nav-cat { margin-top: 10px; }
 }
 
 /* Community tab category headings */
@@ -2401,14 +2439,6 @@ table.rs-table {
   overflow: hidden; flex: none;
 }
 .rs-mu-avatar:not(span) { object-fit: cover; } /* only applies to the <img> case */
-
-/* Roster — "Battle Intel Ireland" brand banner above the dynamic
-   per-country <h2>. Smaller and accent-coloured so it reads as a
-   fixed label, not competing with the real heading below it. */
-.rs-brand {
-  margin: 0 0 2px; font-size: 12px; font-weight: 600;
-  letter-spacing: .04em; text-transform: uppercase; color: var(--accent);
-}
 
 /* Country picker — typeahead replacing the old username input. */
 .rs-controls .controls,

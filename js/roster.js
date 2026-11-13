@@ -332,15 +332,11 @@ const RosterTool = (() => {
   /* ── DOM ──────────────────────────────────────────────────────────
    * #roster-content and #roster-status are the existing required hooks.
    * #roster-country-search / #roster-country-dropdown are the new
-   * country picker (replaces the old dead #roster-username/#roster-load).
-   * #roster-title is the per-country <h2> ("🇮🇪 Irish Roster" etc.) that
-   * this file now updates dynamically — it sits BELOW the static
-   * "Battle Intel Ireland" <h1> banner, which this file never touches. */
+   * country picker (replaces the old dead #roster-username/#roster-load). */
   const $status   = document.getElementById('roster-status');
   const $content  = document.getElementById('roster-content');
   const $search   = document.getElementById('roster-country-search');
   const $dropdown = document.getElementById('roster-country-dropdown');
-  const $title    = document.getElementById('roster-title');
 
   /* ── State ────────────────────────────────────────────────────────── */
   let countryKey = DEFAULT_COUNTRY;
@@ -356,15 +352,9 @@ const RosterTool = (() => {
    *  Typeahead over the 180-country list. Search matches the official
    *  display name (case-insensitive substring) — typing "bra" matches
    *  "Brazil". Selecting a result updates the URL (same #roster?country=
-   *  pattern the old single-country version already used), updates the
-   *  page title, and reloads the roster for that country.
+   *  pattern the old single-country version already used) and reloads
+   *  the roster for that country.
    * ═══════════════════════════════════════════════════════════════════ */
-  function updateTitle(key) {
-    if (!$title) return;
-    const c = COUNTRIES[key] || COUNTRIES[DEFAULT_COUNTRY];
-    $title.textContent = `${flagEmoji(c.code)} ${c.label} Roster`;
-  }
-
   function searchCountries(query) {
     const q = query.trim().toLowerCase();
     if (!q) return [];
@@ -395,7 +385,6 @@ const RosterTool = (() => {
     }
     countryKey = key;
     try { writeHash('roster', new URLSearchParams({ country: countryKey })); } catch {}
-    updateTitle(countryKey);
     if ($search) $search.value = '';
     if ($dropdown) { $dropdown.classList.add('hidden'); $dropdown.innerHTML = ''; }
     run();
@@ -1031,7 +1020,6 @@ const RosterTool = (() => {
   async function run() {
     if (running) return;
     const country = COUNTRIES[countryKey] || COUNTRIES[DEFAULT_COUNTRY];
-    updateTitle(countryKey);
 
     running = true;
     setStatus('');
