@@ -9,8 +9,9 @@
  *            the .wasm tag is read from this script's own src.
  *    worker  importScripts('wasm/employee_model.js?v=T', 'employee-model.js?v=T'),
  *            with the tag passed in the worker URL as model=T.
- *    Node    the harness requires the --target nodejs build (instantiated
- *            on require) as the global wasm_bindgen, then this file.
+ *    Node    wasm/node.cjs runs the glue, instantiates the .wasm with
+ *            initSync, sets the glue as the global wasm_bindgen, then
+ *            requires this file.
  *
  *  Nothing may call the module before EmployeeModel.ready resolves. The
  *  router waits for it before activating the tools that use the model, and

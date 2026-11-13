@@ -1,6 +1,6 @@
 # Employee model crate
 
-The employee model (training card values, projection, careers, planner, product switching) as one Rust crate built to WebAssembly: the only implementation. It replaced the JS model and is now the reference: the differential tests (`tests/wasm-diff/`) hold it to its own recorded outputs, where a change beyond tolerance needs a signed-off entry in `tests/wasm-diff/DIVERGENCES.md`.
+The employee model (training card values, projection, careers, planner, product switching) as one Rust crate built to WebAssembly: the only implementation. It replaced the JS model.
 
 The JS files that keep the old API names (`EmployeeCore`, `EmployeePlanner`, `EmployeeCareer`) are the module's JS API, and they stay: besides display text (trait names, notes, check messages, plan descriptions) they free the module's handles (`EmployeeCore.subject`, the planner's snapshots and sessions), run long work in steps so the page keeps progress and cancel (`EmployeeCareer.run`, `recommend`'s rounds, the keep session's `prepare`), and shape inputs (card pricing's subject over its options, the career's company, the regional bonus) and results (the employee after an outcome, the output-only plan). The UI and the tests call them. They hold no rules. Tables and calls that need no shaping are the module's own: `EmployeeModel.CFG`, `NUMERIC_CARDS`, `CHURN`, `TOOL_TYPES`, `SPECIALIZATION`, `CHANGE_ITEM_COST`, `SPIKE_RATIO`, `MAX_REROLLS` and `EmployeeModel.api.*` (`careerMerge`, `careerCompare`, …), which the UI uses directly. A change to a rule goes in here, never in those files.
 
@@ -8,7 +8,7 @@ The JS files that keep the old API names (`EmployeeCore`, `EmployeePlanner`, `Em
 
 - **Rust:** stable, pinned in `rust-toolchain.toml` to `1.99.1`. rustup installs it, with the `wasm32-unknown-unknown` target, rustfmt and clippy, on the first build. `build.sh` maps the crates.io source paths out of the binary (`--remap-path-prefix`), so a build is byte-identical whichever directory and home it runs in.
 - **wasm-bindgen-cli:** must match the `wasm-bindgen` version in `Cargo.lock` (`=0.2.130`, pinned in `Cargo.toml`); `build.sh` stops if it doesn't. Install it with `cargo install --locked wasm-bindgen-cli --version 0.2.130`.
-- **wasm-opt** (binaryen), pinned in `build.sh` to version 133: `build.sh` runs `wasm-opt -O3` on the `.wasm` and stops if the version differs, because the committed `.wasm` is its output. Install the release tarball (`binaryen-version_133-x86_64-linux.tar.gz` from https://github.com/WebAssembly/binaryen/releases) and put its `bin/wasm-opt` on PATH; it is statically linked and needs no root.
+- **wasm-opt** (binaryen), pinned in `build.sh` to version 133: `build.sh` runs `wasm-opt -O3` on the `.wasm` and stops if the version differs, because another version gives other bytes than the build CI deploys. Install the release tarball (`binaryen-version_133-x86_64-linux.tar.gz` from https://github.com/WebAssembly/binaryen/releases) and put its `bin/wasm-opt` on PATH; it is statically linked and needs no root.
 
 ## Build
 
@@ -17,21 +17,25 @@ wasm/build.sh
 ```
 
 This writes:
-- `js/wasm/employee_model.js` + `employee_model_bg.wasm` (`--target no-modules`), loaded by `js/employee-model.js` on the page and in the planner worker. These are committed: the site is static, with no build step on deploy. The `WASM build check` workflow (`.github/workflows/wasm-build.yml`) rebuilds them on each push to main that touches `wasm/` or `js/wasm/`, and fails if they differ from the committed files.
-- `js/wasm-node/` (`--target nodejs`), for the differential tests only. It is git-ignored. The `.wasm` is the same bytes as the committed one.
+- `js/wasm/employee_model.js` + `employee_model_bg.wasm` (`--target no-modules`), loaded by `js/employee-model.js` on the page and in the planner worker. They aren't in git (`.gitignore`): the `Site` workflow (`.github/workflows/site.yml`) builds them on every push to main and every pull request (cached on the sources and pins), runs `cargo test --lib`, and on main deploys that build with the site, so a change that fails to build or test never goes live. Without Rust, `wasm/fetch.sh` gets CI's build (below).
 
-After a rebuild that changes `js/wasm/`, bump the shared `?v=` tag of `js/wasm/employee_model.js` and `js/employee-model.js` in `index.html`, and the planner worker's tag (`data-worker`). The loader passes it on to the `.wasm`, and the page passes it to workers as `model=`, beside the tags of the binding files (`traits=`, `core=`, `planner=`, `switch=`, `career=`).
+Node loads the same build through `wasm/node.cjs`: `require('./wasm/node.cjs')(js)` runs `js`'s glue as a function body, starts its `.wasm` with `initSync`, sets the global `wasm_bindgen` and returns a fresh `EmployeeModel` from `js`'s `employee-model.js` (default: this checkout's `js/`), so one process can load two checkouts. CI's smoke check (`.github/scripts/smoke-model.cjs`) starts the model this way. It isn't shipped.
 
-The build output is committed and reproducible: the same sources give the same bytes (remapped paths, pinned toolchain, wasm-bindgen and wasm-opt). Check a rebuild with `git diff --stat js/wasm` (no change means nothing to bump). Comments can change it too: an export's doc comment is the glue's JSDoc, and a file whose lines move changes the line numbers of its panic locations in the `.wasm`. Sizes after wasm-opt -O3: glue 77 KB (13 KB gzip), `.wasm` 933 KB (378 KB gzip).
+Cache tags: the deploy stamps every `?v=` in `index.html` from the files' contents (`.github/scripts/stamp-tags.cjs`, run by `.github/scripts/assemble-site.sh`). `js/wasm/employee_model.js` and `js/employee-model.js` share one tag, a hash over the glue, the `.wasm` and the loader. The loader passes it on to the `.wasm`, and the page passes it to the planner workers as `model=`, beside the tags of the binding files (`traits=`, `core=`, `planner=`, `career=`). Nobody bumps a tag by hand, and the source's tags stay as they are, so a local preview needs the browser cache off (devtools' "Disable cache") to pick up a rebuild.
 
-Checks after a change (`tests/wasm-diff/README.md` has the details):
-- `node --test tests/wasm-diff.test.cjs tests/wasm-snapshot.test.cjs tests/wasm-card-session.test.cjs`: the differential tests against the model's own recordings, the snapshot decode, and what a card session keeps; with `WASM_DIFF_STRICT=1` for a change that should change nothing. A change beyond tolerance: `node tests/wasm-diff/report.cjs` for the numbers, an entry in `tests/wasm-diff/DIVERGENCES.md`, then `node tests/wasm-diff/record.cjs --entry "<title>"` and the user's sign-off;
-- `cargo test --lib` in `wasm/`;
-- the main checkout's other `tests/*.test.cjs` against this checkout's `js/`: a directory with copies of the main checkout's `tests/` (less `wasm-diff.test.cjs`, `wasm-snapshot.test.cjs` and `wasm-card-session.test.cjs`) and `scripts/`; `index.html` and `js` linked to this checkout's; `artifacts`, `research` and `.scratch/wasm-model` linked from the main checkout; and `NODE_OPTIONS=--require <setup>` where the setup file sets the global `wasm_bindgen` to `js/wasm-node/employee_model.js` and requires `js/employee-model.js` (in Node the module is ready as soon as it is required).
+The build is reproducible: the same sources give the same bytes, here and in CI (remapped paths, pinned toolchain, wasm-bindgen and wasm-opt). Comments can change it too: an export's doc comment is the glue's JSDoc, and a file whose lines move changes the line numbers of its panic locations in the `.wasm`. Sizes after wasm-opt -O3: glue 77 KB (13 KB gzip), `.wasm` 933 KB (378 KB gzip).
 
 `CFG.traitProductionPaid` is a runtime switch of the module (`setTraitProductionPaid`, set through `EmployeeModel.CFG.traitProductionPaid = true`), off as the game has it; turning it on clears the fresh-set tables that depend on it.
 
 Unit tests for the pure Rust parts run on the host: `cargo test --lib` (from `wasm/`).
+
+## Without Rust
+
+```sh
+wasm/fetch.sh
+```
+
+downloads the build CI made on main into `js/wasm/`: the `Site` workflow's `employee-model-wasm` artifact, which every run on main uploads and GitHub keeps for 90 days. It needs the GitHub CLI, logged in (`gh auth login`): artifact downloads need a login even from a public repository. The artifact lists the sources it was built from, each file with its blob id (the same list keys CI's build cache), and `fetch.sh` installs nothing if a file here differs, uncommitted changes included: build with `build.sh` then, or bring `wasm/` level with main. It only takes builds from runs on main of the repository itself, never a pull request's.
 
 ## Rules for code in here
 

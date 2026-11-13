@@ -25,6 +25,9 @@ concurrency:
 jobs:
   log:
     runs-on: ubuntu-latest
+    outputs:
+      # The commit it pushed, empty if there was no new data.
+      pushed: ${{ steps.commit.outputs.pushed }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -38,6 +41,7 @@ jobs:
         run: python tax_log.py
 
       - name: Commit data
+        id: commit
         run: |
           git config user.name "tax-log-bot"
           git config user.email "tax-log-bot@users.noreply.github.com"
@@ -48,6 +52,20 @@ jobs:
             git commit -m "tax-log: $(date -u +%FT%TZ)"
             git pull --rebase origin main
             git push
+            echo "pushed=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
           fi
+
+  # A push with GITHUB_TOKEN starts no workflow, so the new data goes live
+  # through this call to the site workflow, which builds the pushed commit.
+  deploy:
+    needs: log
+    if: needs.log.outputs.pushed != ''
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    uses: ./.github/workflows/site.yml
+    with:
+      ref: ${{ needs.log.outputs.pushed }}
 
 # registered on fork 2026-09-01

@@ -1,0 +1,195 @@
+name: Site
+
+# Builds the site and, on main, deploys it to GitHub Pages.
+#
+# build: wasm/build.sh builds the employee model (wasm/, Rust) into js/wasm/,
+# which the site loads and which isn't in git: this build is the one that
+# ships. Then cargo test runs the crate's unit tests, so a change that fails
+# them never deploys. The build is cached on the model's sources and pins,
+# so a run that changes none of them restores it and skips the Rust steps.
+# Either way the model is started in Node from js/wasm/ (through
+# wasm/node.cjs), and .github/scripts/assemble-site.sh copies what ships
+# into _site/, at the paths the files have here, and stamps every ?v= cache
+# tag in index.html and the fighting workers' ?w= from the files' contents,
+# for the Pages artifact. Nobody bumps a tag by hand: the source's tags stay
+# as they are, so a local preview needs the browser cache off. On main,
+# js/wasm/ also goes up on its own with the list of its sources (the
+# employee-model-wasm artifact, kept 90 days), for wasm/fetch.sh: a checkout
+# gets the model without Rust.
+#
+# deploy: main only (a push, a dispatch, or a call from another workflow),
+# never a pull request. It needs Pages set to deploy from GitHub Actions.
+# The data bots (wealth-log.yml, taxlog.yml) push with GITHUB_TOKEN, and such
+# a push starts no workflow, so they call this one after pushing, with the
+# commit they pushed as `ref`. Every commit on main thus gets a run that can
+# deploy it. Deploys wait for each other in a queue, and a run deploys only
+# while its commit is main's tip: an older build that finishes last never
+# replaces a newer site, and the newer commit's own run deploys that one.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      ref:
+        description: The commit to build, when it isn't the commit the caller's run started on (a data bot passes the commit it pushed).
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.checkout.outputs.commit }}
+    steps:
+      # An empty ref checks out the commit the run started on.
+      - id: checkout
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
+
+      # Every file the model's build reads, with its blob id, as at the
+      # checked-out commit. The list's hash keys the build's cache, so a
+      # restored build is one of exactly these sources, and on main the list
+      # goes up with the build for wasm/fetch.sh to check a checkout against.
+      - name: List the employee model's sources
+        id: sources
+        run: |
+          list=$RUNNER_TEMP/model-sources.txt
+          git ls-tree -r HEAD -- wasm/src wasm/Cargo.toml wasm/Cargo.lock wasm/rust-toolchain.toml wasm/rustfmt.toml wasm/build.sh > "$list"
+          echo "hash=$(sha256sum < "$list" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore the employee model build
+        id: model
+        uses: actions/cache@v6
+        with:
+          path: js/wasm
+          key: employee-model-${{ runner.os }}-${{ steps.sources.outputs.hash }}
+
+      # The versions build.sh insists on: wasm-bindgen from Cargo.lock,
+      # wasm-opt from build.sh itself.
+      - name: Read pinned tool versions
+        id: pins
+        if: steps.model.outputs.cache-hit != 'true'
+        run: |
+          bindgen=$(awk '$0 == "name = \"wasm-bindgen\"" { getline; gsub(/[^0-9.]/, "", $3); print $3 }' wasm/Cargo.lock)
+          wasm_opt=$(sed -n 's/^wasm_opt_want=//p' wasm/build.sh)
+          echo "bindgen=$bindgen" >> "$GITHUB_OUTPUT"
+          echo "wasm_opt=$wasm_opt" >> "$GITHUB_OUTPUT"
+
+      - name: Install the Rust toolchain from rust-toolchain.toml
+        if: steps.model.outputs.cache-hit != 'true'
+        working-directory: wasm
+        run: rustup toolchain install
+
+      - name: Cache the crates and wasm/target
+        if: steps.model.outputs.cache-hit != 'true'
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: "wasm -> target"
+
+      - name: Cache wasm-bindgen-cli
+        id: bindgen-cache
+        if: steps.model.outputs.cache-hit != 'true'
+        uses: actions/cache@v6
+        with:
+          path: ~/.wasm-bindgen
+          key: wasm-bindgen-cli-${{ steps.pins.outputs.bindgen }}-${{ runner.os }}
+
+      - name: Install wasm-bindgen-cli
+        if: steps.model.outputs.cache-hit != 'true' && steps.bindgen-cache.outputs.cache-hit != 'true'
+        working-directory: wasm
+        env:
+          BINDGEN: ${{ steps.pins.outputs.bindgen }}
+        run: cargo install --locked wasm-bindgen-cli --version "$BINDGEN" --root "$HOME/.wasm-bindgen"
+
+      - name: Install wasm-opt
+        if: steps.model.outputs.cache-hit != 'true'
+        env:
+          WASM_OPT: ${{ steps.pins.outputs.wasm_opt }}
+        run: |
+          curl -fsSL "https://github.com/WebAssembly/binaryen/releases/download/version_$WASM_OPT/binaryen-version_$WASM_OPT-x86_64-linux.tar.gz" | tar -xz -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/binaryen-version_$WASM_OPT/bin" >> "$GITHUB_PATH"
+          echo "$HOME/.wasm-bindgen/bin" >> "$GITHUB_PATH"
+
+      - name: Build the employee model
+        if: steps.model.outputs.cache-hit != 'true'
+        run: wasm/build.sh
+
+      - name: Test the employee model
+        if: steps.model.outputs.cache-hit != 'true'
+        working-directory: wasm
+        run: cargo test --lib --locked
+
+      - name: Start the model in Node
+        run: node .github/scripts/smoke-model.cjs
+
+      - name: Assemble the site
+        run: .github/scripts/assemble-site.sh
+
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: _site
+
+      # On main the model also goes up on its own, for wasm/fetch.sh, with
+      # sources.txt: the commit and the list of its sources. Every run on
+      # main uploads one, the data bots' included, so the newest is never
+      # near the end of its 90 days.
+      - name: Collect the employee model for wasm/fetch.sh
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        run: |
+          out=$RUNNER_TEMP/employee-model-wasm
+          mkdir -p "$out"
+          cp js/wasm/employee_model.js js/wasm/employee_model_bg.wasm "$out"/
+          { echo "# commit $(git rev-parse HEAD)"; cat "$RUNNER_TEMP/model-sources.txt"; } > "$out/sources.txt"
+
+      - name: Upload the employee model for wasm/fetch.sh
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v7
+        with:
+          name: employee-model-wasm
+          path: ${{ runner.temp }}/employee-model-wasm
+          retention-days: 90
+          if-no-files-found: error
+
+  deploy:
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    # One deploy at a time, the rest wait in order. queue: max keeps every
+    # waiting deploy: by default a new arrival replaces the waiting one, and
+    # if the tip's were replaced by an older commit's, which then skips,
+    # nothing would deploy the tip.
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+      queue: max
+    steps:
+      - name: Check that main is still at the built commit
+        id: tip
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BUILT: ${{ needs.build.outputs.sha }}
+        run: |
+          tip=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha)
+          if [ "$tip" = "$BUILT" ]; then
+            echo "current=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::Not deploying $BUILT: main is at $tip now, and that commit's run deploys it."
+          fi
+
+      - id: deploy
+        if: steps.tip.outputs.current == 'true'
+        uses: actions/deploy-pages@v5

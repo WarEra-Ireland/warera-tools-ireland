@@ -2,7 +2,7 @@
 
 An Irish player's toolkit for [War Era](https://app.warera.io/). Live at [we.hawtre.net](https://we.hawtre.net).
 
-This is a static site: plain HTML, CSS, and vanilla JavaScript with no build step, no framework, and no bundler. You edit files, refresh the page, done. Everything runs in the browser. The only backend is a thin Cloudflare Worker that proxies the game's API and holds a couple of secrets.
+This is a static site: plain HTML, CSS, and vanilla JavaScript with no build step, no framework, and no bundler. You edit files, refresh the page, done. The one exception is the employee model, a Rust crate built to WebAssembly (`wasm/`), which CI builds for the deploy. Everything runs in the browser. The only backend is a thin Cloudflare Worker that proxies the game's API and holds a couple of secrets.
 
 > **Game version note.** War Era v0.27 (2026-10-25) replaced the player job market with NPC employees and removed Entrepreneurship, specialisation, deposits and party ethics. Several tools below were built on the old mechanics and are now broken or obsolete.
 
@@ -15,7 +15,9 @@ python3 -m http.server 8000
 # then open http://localhost:8000
 ```
 
-Any static server works (`npx serve`, VS Code Live Server, etc.). There is nothing to install and nothing to compile.
+Any static server works (`npx serve`, VS Code Live Server, etc.). Only the pages that use the employee model (Training, Top products and the Fighting Build Optimiser) need one more step first, because the model's build (`js/wasm/`) isn't in git: `wasm/fetch.sh` downloads the one CI built on `main` (needs the GitHub CLI, logged in), or `wasm/build.sh` builds it from `wasm/` (needs Rust; see [`wasm/README.md`](wasm/README.md)).
+
+Turn the browser cache off while you preview (devtools' "Disable cache"). The `?v=` tags in `index.html` are only stamped from the files' contents when the site deploys, so locally they never change and the browser keeps serving its cached copy of a changed file.
 
 On `localhost` the site calls a local Worker at `http://localhost:8787` (see [`worker/README.md`](worker/README.md)):
 
@@ -55,7 +57,7 @@ js/
   product-picker.js Top products (best product per company, v0.27)
   employee-core.js  Training card value model, no DOM (also runs in Node)
   employee-model.js Loads the employee model (WASM) on the page and in the planner worker
-  wasm/           Built employee model: no-modules glue + .wasm (from wasm/build.sh, committed)
+  wasm/           Built employee model: no-modules glue + .wasm (wasm/build.sh or wasm/fetch.sh; not in git)
   employee-training.js Employee Training (#training)
   sp-advisor-core.js Skill Point Advisor rules (cost curve, skill formulas)
   fighting-core.js     Fighting build core: pure evaluateStrategy (damage, costs, ledger, pill phases)
@@ -342,7 +344,7 @@ The process is build-standalone, then merge, and design must survive the merge.
 2. Add a card for it on the home view so people can find it.
 3. Fold its CSS into `styles.css`, renaming classes to a unique prefix and swapping any hardcoded colours for the theme variables.
 4. Add `js/yourtool.js` following the IIFE-plus-`activate` pattern. Use `trpc`, `makeSteps`, `makeStatus`, `escapeHtml`, and `enforceIrishOnly` from `shared.js` rather than reinventing them.
-5. Register it in `router.js` (add the name to `VALID` and map it in `tools`), and add its `<script>` tag in `index.html` before `router.js`.
+5. Register it in `router.js` (add the name to `VALID` and map it in `tools`), and add its `<script>` tag in `index.html` before `router.js`, with a `?v=` tag like the others (any value: the deploy stamps it from the file's contents).
 
 **3. Preserve the look.** A merged tool should be indistinguishable in style from the existing ones. Same loading panel, same status line, same card and disclosure patterns, same spacing. If it looks like a different site, the merge isn't finished.
 

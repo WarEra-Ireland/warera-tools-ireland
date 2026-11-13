@@ -32,7 +32,8 @@ const FightingBuildTool = (() => {
   const INITIAL_MS = 15000;
   const LONGER_MS = 120000;
   const SLICE_MS = 80;          // work between yields to the page, without a worker
-  // The workers load their scripts with this query: bump it when any change.
+  // The workers load their scripts with this query. The deploy stamps it from
+  // the worker's and its imports' contents; a local preview needs the cache off.
   const WORKER_URL = 'js/fighting-search-worker.js?w=20261112';
   const MERGE_URL = 'js/fighting-merge-worker.js?w=20261112';
   const SEED = 1;                // the first worker's; each next one's is one more

@@ -32,7 +32,9 @@ __pycache__/
 # Local planning tickets — kept on disk, never committed.
 tickets/
 
-# Node build of the employee model crate, for the tests only
-# (tests/model.cjs, written by wasm/build.sh). Never deployed.
-js/wasm-node/
+# The site as CI assembles it (.github/scripts/assemble-site.sh).
+_site/
 
+# The employee model's build (wasm/build.sh, or wasm/fetch.sh without Rust).
+# The Site workflow builds it for the deploy.
+js/wasm/
