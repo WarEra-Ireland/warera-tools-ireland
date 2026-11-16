@@ -3940,8 +3940,9 @@ body.fb-noscroll { overflow: hidden; }
 @keyframes fb-spin { to { transform: rotate(360deg); } }
 .fb-compare + .fb-compare { margin-top: 12px; }
 .fb-compare td.fb-better { color: var(--accent); font-weight: 600; }
-.fb-compare tr.fb-diff td:first-child { box-shadow: inset 3px 0 0 var(--warn); }
-.fb-compare tr.fb-compare-phase th { background: var(--panel-2); }
+/* A row that differs between A and B: an amber bar down its left edge
+   (phones mark the whole row, in the 600px block). */
+@media (min-width: 601px) { .fb-compare tr.fb-diff td:first-child { box-shadow: inset 3px 0 0 var(--warn); } }
 .fb-small { padding: 2px 8px; font-size: 12px; }
 .fb-file { cursor: pointer; border: 1px solid var(--border); border-radius: 8px; padding: 6px 12px; color: var(--text); background: var(--panel); }
 .fb-file input { display: none; }
@@ -3984,7 +3985,7 @@ body.fb-noscroll { overflow: hidden; }
 
 /* Gear as slot tiles: as in the game, the item's picture on a background in
    its rarity colour (armour pictures are the same for every tier). Colours follow the game's convention;
-   the rarity is also written beside the tile. */
+   the tooltip and alt text name the rarity, and it's written beside the tile only where the colour can't carry it. */
 .fb-slot { --rar: var(--muted); position: relative; display: inline-grid; place-items: center; width: 40px; height: 40px; flex: none;
   border-radius: 7px; border: 1px solid color-mix(in srgb, var(--rar) 70%, #000);
   background: radial-gradient(circle at 50% 35%, color-mix(in srgb, var(--rar) 85%, #fff), var(--rar) 45%, color-mix(in srgb, var(--rar) 55%, #000));
@@ -4203,7 +4204,21 @@ html[data-theme="light"] .view[data-view="fighting-build"] { --sk-orange: #c2410
   .fb-pick-stat { grid-template-columns: 1fr 72px; }
   .fb-pick-stat input[type="range"] { grid-column: 1 / -1; grid-row: 2; }
   .fb-pick-stat .fb-detail { display: none; }
-  .fb-compare th, .fb-compare td { padding: 6px 5px; font-size: 12px; }
+  /* Compare: each row's label heads it, with A, B and B − A side by side
+     below; gear rows have no B − A, so A and B share the width. */
+  .fb-compare, .fb-compare :is(thead, tbody) { display: block; }
+  .fb-compare tr { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 2px 10px; padding: 6px 10px;
+    border-bottom: 1px solid var(--border); }
+  .fb-compare tbody tr:last-child { border-bottom: 0; }
+  .fb-compare-gear tr { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .fb-compare-gear .fb-compare-delta { display: none; }
+  .fb-compare tr > :first-child { grid-column: 1 / -1; }
+  .fb-compare th, .fb-compare td { padding: 0; border: 0; font-size: 12px; background: none; }
+  .fb-compare :is(thead tr, tr.fb-compare-phase) { background: var(--panel-2); }
+  /* A figure too wide for its column breaks rather than running into the next. */
+  .fb-compare td.num { white-space: normal; overflow-wrap: anywhere; }
+  .fb-compare td.num:not(.fb-compare-delta) { text-align: left; }
+  .fb-compare tr.fb-diff { box-shadow: inset 3px 0 0 var(--warn); }
   .fb-legend { font-size: 13px; gap: 8px 14px; }
   .fb-fold > summary { padding: 10px; }
   .fb-fold-detail { display: none; }

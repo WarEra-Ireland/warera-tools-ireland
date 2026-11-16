@@ -104,7 +104,7 @@ const FightingBuildTool = (() => {
   const itemName = (code) => ProfitCore.META[code]?.name || code;
   // Gear as the game draws it: the item's own picture on a slot tile
   // tinted by rarity. Armour pictures are per slot, not per tier, so the
-  // tint and the rarity named beside it carry the tier.
+  // tint carries the tier; the tile's tooltip and alt text name it.
   const STAT_SHORT = { attack: 'Attack', precision: 'Precision', criticalChance: 'Crit chance', criticalDamages: 'Crit damage',
                        armor: 'Armor', dodge: 'Dodge', lootChance: 'Loot' };
   const RARITIES = ['common', 'uncommon', 'rare', 'epic', 'legendary', 'mythic'];
@@ -115,21 +115,29 @@ const FightingBuildTool = (() => {
   const emptySlotImage = (slot) => `images/${slot === 'weapon' ? 'gun' : slot}.png`;
   const statLine = (stats) => Object.entries(stats).map(([k, v]) => `+${v} ${STAT_SHORT[k] || SKILL_LABEL[k] || k}`).join(', ');
   const rarityOf = (e) => RARITIES.includes(e.rarity) ? e.rarity : null;
-  const gearTile = (e) => {
+  // The item named with its rarity, as its tooltip and screen readers give it.
+  const gearLabel = (e) => {
     const rarity = rarityOf(e);
-    return `<span class="fb-slot ${rarity ? `fb-rar-${rarity}` : ''}"
-      title="${escapeHtml(`${rarity ? cap(rarity) + ' ' : ''}${gearName(e).toLowerCase()}: ${statLine(e.stats)}`)}">
-      <img src="${gearImage(e)}" alt="${escapeHtml(gearName(e))}" loading="lazy"></span>`;
+    return rarity ? `${cap(rarity)} ${gearName(e).toLowerCase()}` : `${gearName(e)} of unknown rarity`;
   };
-  // A tile with its name, rarity and stats beside it.
-  const gearCard = (e) => {
-    const rarity = rarityOf(e);
-    return `<span class="fb-gear ${rarity ? `fb-rar-${rarity}` : ''}">${gearTile(e)}
-      <span class="fb-gear-text"><span class="fb-gear-name">${escapeHtml(gearName(e))}
-        <span class="fb-gear-rarity">${rarity ? cap(rarity) : 'Unknown rarity'}</span></span>
-        <span class="fb-gear-stats">${Object.entries(e.stats).map(([k, v]) =>
-          `<span><b>+${v}</b> ${escapeHtml(STAT_SHORT[k] || SKILL_LABEL[k] || k)}</span>`).join('')}</span></span></span>`;
+  const slotTile = (e, alt) => {
+    const rarity = rarityOf(e), stats = statLine(e.stats);
+    return `<span class="fb-slot ${rarity ? `fb-rar-${rarity}` : ''}" title="${escapeHtml(stats ? `${gearLabel(e)}: ${stats}` : gearLabel(e))}">
+      <img src="${gearImage(e)}" alt="${escapeHtml(alt)}" loading="lazy"></span>`;
   };
+  const gearTile = (e) => slotTile(e, gearLabel(e));
+  const statSpans = (stats) => `<span class="fb-gear-stats">${Object.entries(stats).map(([k, v]) =>
+    `<span><b>+${v}</b> ${escapeHtml(STAT_SHORT[k] || SKILL_LABEL[k] || k)}</span>`).join('')}</span>`;
+  // A tile with the item's name beside it and `lines` under the name. The
+  // rarity is written out only where the tile's colour can't carry it: when
+  // it's unknown, or with `rarityShown` where it tells otherwise alike items
+  // apart. Unwritten, the tile's alt text names it.
+  const gearBeside = (e, lines, { rarityShown = false } = {}) => {
+    const rarity = rarityOf(e), written = rarityShown || !rarity;
+    return `${slotTile(e, written ? '' : cap(rarity))}<span class="fb-gear-text"><span class="fb-gear-name">${escapeHtml(gearName(e))}${
+      written ? ` <span class="fb-gear-rarity">${rarity ? cap(rarity) : 'Unknown rarity'}</span>` : ''}</span>${lines}</span>`;
+  };
+  const gearCard = (e) => `<span class="fb-gear ${rarityOf(e) ? `fb-rar-${rarityOf(e)}` : ''}">${gearBeside(e, statSpans(e.stats))}</span>`;
 
   // Consumables and loot drawn like gear: the game's picture on its rarity colour.
   const itemTile = (code) => {
@@ -1938,15 +1946,12 @@ const FightingBuildTool = (() => {
     const item = e && optionsFor(slot).find(i => i.code === e.code);
     const sold = item ? item.rolls.some(r => FightingCore.sameStats(r.stats, e.stats)) : false;
     const price = !item ? '' : sold ? coins(rollPrice(item, e)) : e.price != null ? `${coins(e.price)} <span class="fb-tag fb-tag-own">your price</span>` : '<span class="fb-tag fb-tag-warn" title="No recent sales of this roll: enter what you\'d pay, or the build can\'t be valued">no price</span>';
-    const tile = e ? gearTile({ ...e, slot, rarity: item?.rarity })
-      : `<span class="fb-slot fb-slot-empty"><img src="${emptySlotImage(slot)}" alt="" loading="lazy"></span>`;
+    const gear = e && { ...e, slot, rarity: item?.rarity };
+    const body = gear ? gearBeside(gear, `${statSpans(e.stats)}${price ? `<span class="fb-detail">${price}</span>` : ''}`)
+      : `<span class="fb-slot fb-slot-empty"><img src="${emptySlotImage(slot)}" alt="" loading="lazy"></span>
+        <span class="fb-gear-text"><span class="fb-gear-name">${SLOT_LABEL[slot]}</span><span class="fb-gear-stats">Empty: tap to choose</span></span>`;
     return `<button type="button" class="fb-pick-slot" data-fb-m="open" data-fb-phase="${phase}" data-fb-slot="${slot}"
-        data-fb-slot-row="${phase}:${slot}" aria-label="${SLOT_LABEL[slot]}: ${e ? escapeHtml(gearName({ slot, code: e.code })) : 'empty'}. Change">
-      ${tile}<span class="fb-gear-text"><span class="fb-gear-name">${e ? escapeHtml(gearName({ slot, code: e.code })) : SLOT_LABEL[slot]}
-        ${e ? `<span class="fb-gear-rarity">${item?.rarity ? cap(item.rarity) : ''}</span>` : ''}</span>
-        <span class="fb-gear-stats">${e ? Object.entries(e.stats).map(([k, v]) => `<span><b>+${v}</b> ${escapeHtml(STAT_SHORT[k] || SKILL_LABEL[k] || k)}</span>`).join('')
-          : 'Empty: tap to choose'}</span>
-        ${price ? `<span class="fb-detail">${price}</span>` : ''}</span></button>`;
+        data-fb-slot-row="${phase}:${slot}" aria-label="${SLOT_LABEL[slot]}: ${gear ? escapeHtml(gearLabel(gear)) : 'empty'}. Change">${body}</button>`;
   }
   function tileChoices(kind, phase, list, current, none) {
     return `<div class="fb-pick-row" role="radiogroup" aria-label="${kind}">${[{ code: '' }, ...list].map(i => `
@@ -2187,11 +2192,8 @@ const FightingBuildTool = (() => {
       const items = optionsFor(slot).map(i => {
         const cheapest = i.rolls.find(r => r.price != null)?.price;
         return `<button type="button" class="fb-pick-card ${cur === i.code ? 'fb-picked' : ''}" data-fb-m="pick-item" data-fb-code="${i.code}">
-          ${gearTile({ slot, code: i.code, rarity: i.rarity, stats: {} })}
-          <span class="fb-gear-text"><span class="fb-gear-name">${escapeHtml(gearName({ slot, code: i.code }))}
-            <span class="fb-gear-rarity">${i.rarity ? cap(i.rarity) : ''}</span></span>
-            <span class="fb-detail">${rangeLine(i)}</span>
-            <span class="fb-detail">${cheapest == null ? 'no recent sales' : `from ${coins(cheapest)}`}</span></span></button>`;
+          ${gearBeside({ slot, code: i.code, rarity: i.rarity, stats: {} }, `<span class="fb-detail">${rangeLine(i)}</span>
+            <span class="fb-detail">${cheapest == null ? 'no recent sales' : `from ${coins(cheapest)}`}</span>`, { rarityShown: true })}</button>`;
       }).join('');
       dialog.innerHTML = `${head(`Choose ${SLOT_LABEL[slot].toLowerCase()}`)}
         <div class="fb-pick-cards">${items}
@@ -2228,7 +2230,7 @@ const FightingBuildTool = (() => {
     const e = pickedGear(), item = pickedItem();
     el.innerHTML = item.rolls.length ? item.rolls.map((r, i) => `
       <button type="button" class="fb-pick-roll ${FightingCore.sameStats(r.stats, e.stats) ? 'fb-picked' : ''}" data-fb-m="pick-roll" data-fb-index="${i}">
-        <span class="fb-gear-stats">${Object.entries(r.stats).map(([k, v]) => `<span><b>+${v}</b> ${escapeHtml(STAT_SHORT[k] || SKILL_LABEL[k] || k)}</span>`).join('')}</span>
+        ${statSpans(r.stats)}
         <span class="fb-pick-roll-price">${r.price == null ? 'no price' : coins(r.price)}</span></button>`).join('')
       : '<p class="fb-note">None in the market data.</p>';
   }
@@ -2393,29 +2395,29 @@ const FightingBuildTool = (() => {
       d == null ? '' : Math.abs(d) < 0.005 ? '<div>Both net the same a day.</div>'
         : `<div>B nets <b>${coins(Math.abs(d))} a day ${d > 0 ? 'more' : 'less'}</b> than A${
           m == null ? '' : `; over ${month} days, gear bought up front included, ${m >= 0 ? `${coins(m, 0)} more` : `${coins(-m, 0)} less`}`}.</div>`}</div>`;
-    const head = (first) => `<thead><tr><th>${first}</th><th>A: ${nameA}</th><th>B: ${nameB}</th><th class="num">B − A</th></tr></thead>`;
+    const head = (first) => `<thead><tr><th>${first}</th><th>A: ${nameA}</th><th>B: ${nameB}</th><th class="num fb-compare-delta">B − A</th></tr></thead>`;
     const figures = c.figures.map(f => { const [label, show, diff, note] = FIG[f.key]; return `<tr class="${f.key === 'dailyBalance' ? 'fb-total' : ''}"><td>${label}${
       note ? `<div class="fb-detail">${note}</div>` : ''}</td>
       <td class="num ${f.better === 'a' ? 'fb-better' : ''}">${show(f.a)}</td><td class="num ${f.better === 'b' ? 'fb-better' : ''}">${show(f.b)}</td>
-      <td class="num">${diff(f.delta)}</td></tr>`; }).join('');
+      <td class="num fb-compare-delta">${diff(f.delta)}</td></tr>`; }).join('');
     const lvl = (s) => `${s.level}${s.prestige ? ` <span class="fb-detail">(${s.ordinary} + prestige)</span>` : ''}`;
     const skills = c.skills.map(k => `<tr class="${k.same ? '' : 'fb-diff'}"><td>${SKILL_LABEL[k.name] || k.name}</td>
-      <td>${lvl(k.a)}</td><td>${lvl(k.b)}</td><td class="num">${k.same ? '' : `${k.b.level - k.a.level > 0 ? '+' : ''}${k.b.level - k.a.level}`}</td></tr>`).join('');
+      <td>${lvl(k.a)}</td><td>${lvl(k.b)}</td><td class="num fb-compare-delta">${k.same ? '' : `${k.b.level - k.a.level > 0 ? '+' : ''}${k.b.level - k.a.level}`}</td></tr>`).join('');
     const PHASE = { unpilled: 'Loadout', buff: 'Buff phase', debuff: 'Debuff companion' };
     const cell = (e) => e ? gearCard(e) : '<span class="fb-detail">none</span>';
     const item = (code) => code ? itemCard(code) : '<span class="fb-detail">none</span>';
     const phases = c.phases.map(p => `<tr class="fb-compare-phase"><th colspan="4">${PHASE[p.phase]}${
       p.missing ? ` <span class="fb-detail">· ${p.missing.toUpperCase()} takes no pill</span>` : ''}</th></tr>
-      ${p.gear.map(g => `<tr class="${g.same ? '' : 'fb-diff'}"><td>${SLOT_LABEL[g.slot]}</td><td>${cell(g.a)}</td><td>${cell(g.b)}</td><td></td></tr>`).join('')}
-      <tr class="${p.food.same ? '' : 'fb-diff'}"><td>Food</td><td>${item(p.food.a)}</td><td>${item(p.food.b)}</td><td></td></tr>
-      <tr class="${p.ammo.same ? '' : 'fb-diff'}"><td>Ammunition</td><td>${item(p.ammo.a)}</td><td>${item(p.ammo.b)}</td><td></td></tr>`).join('');
+      ${p.gear.map(g => `<tr class="${g.same ? '' : 'fb-diff'}"><td>${SLOT_LABEL[g.slot]}</td><td>${cell(g.a)}</td><td>${cell(g.b)}</td><td class="fb-compare-delta"></td></tr>`).join('')}
+      <tr class="${p.food.same ? '' : 'fb-diff'}"><td>Food</td><td>${item(p.food.a)}</td><td>${item(p.food.b)}</td><td class="fb-compare-delta"></td></tr>
+      <tr class="${p.ammo.same ? '' : 'fb-diff'}"><td>Ammunition</td><td>${item(p.ammo.a)}</td><td>${item(p.ammo.b)}</td><td class="fb-compare-delta"></td></tr>`).join('');
     const issues = [[a, 'A'], [b, 'B']].filter(([x]) => x.result.issues.length)
       .map(([x, side]) => `<div class="status error">${side}: ${x.result.issues.map(escapeHtml).join(' ')}</div>`).join('');
     return `${issues}${headline}
       <table class="fb-table fb-compare">${head('Figure')}<tbody>${figures}</tbody></table>
       <table class="fb-table fb-compare">${head('Skill (level)')}<tbody>${skills}</tbody></table>
-      <table class="fb-table fb-compare">${head('Gear and consumables')}<tbody>
-        <tr class="${c.pill.same ? '' : 'fb-diff'}"><td>Pill</td><td>${item(c.pill.a)}</td><td>${item(c.pill.b)}</td><td></td></tr>
+      <table class="fb-table fb-compare fb-compare-gear">${head('Gear and consumables')}<tbody>
+        <tr class="${c.pill.same ? '' : 'fb-diff'}"><td>Pill</td><td>${item(c.pill.a)}</td><td>${item(c.pill.b)}</td><td class="fb-compare-delta"></td></tr>
         ${phases}</tbody></table>`;
   }
 
