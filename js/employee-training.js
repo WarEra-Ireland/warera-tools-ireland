@@ -2024,9 +2024,18 @@ const EmployeeTrainingTool = (() => {
     nats.push({ n: '\0new', label: 'a nationality new to the company' });
     for (const x of nats) x.v = at({ nationality: x.n });
     const best = nats.reduce((a, x) => x.v.value > a.v.value ? x : a), worst = nats.reduce((a, x) => x.v.value < a.v.value ? x : a);
-    // Everyone foreign scores alike: say "a foreigner" rather than one country.
-    const foreign = best.n !== local && local && nats.filter(x => x.n !== local).every(x => best.v.value - x.v.value < PREF_MIN);
-    out.push(pref(foreign ? 'a foreigner' : best.label, worst.label, best.v, worst.v));
+    // When a nationality new to the company does about as well as the best,
+    // any nationality but the ones that do worse will do: name those rather
+    // than the one country that happens to score highest. Only the local
+    // does worse: say "a foreigner"; only nationalities new to the company
+    // do well: say so.
+    const fresh = nats[nats.length - 1], avoid = nats.filter(x => best.v.value - x.v.value >= PREF_MIN);
+    const names = avoid.map(x => countryName(x.n));
+    const want = best.v.value - fresh.v.value >= PREF_MIN ? best.label
+      : avoid.length === 1 && avoid[0].n === local ? 'a foreigner'
+      : avoid.length === nats.length - 1 ? fresh.label
+      : `anyone not from ${names.length > 1 ? `${names.slice(0, -1).join(', ')} or ${names.at(-1)}` : names[0]}`;
+    out.push(pref(want, worst.label, best.v, worst.v));
     const hi = at({ production: 4 }), lo = at({ production: 1 });
     out.push(pref('high Production', 'low Production', hi, lo), pref('low Production', 'high Production', lo, hi));
     return out.filter(Boolean).sort((a, b) => b.value - a.value);
