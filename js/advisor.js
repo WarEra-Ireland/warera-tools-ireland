@@ -9,8 +9,9 @@
  *                   (the controller is the region's original owner). That
  *                   reading is inferred, not confirmed by the game.
  *    income tax   — charged on employee wages and paid to the country that
- *                   controls the region. Each 1% costs employees 1 happiness,
- *                   and each happiness point is ±1% employee output.
+ *                   controls the region. It costs employees tax² ÷ 60
+ *                   happiness (the game's taxPenaltyDivisor), and each
+ *                   happiness point is ±1% employee output.
  *
  *  Both act on employee output only, not on automated engines or self-work.
  *  company.getProductionBonus is NOT a source for either: it still returns
@@ -167,8 +168,10 @@ const AdvisorTool = (() => {
   const isCore = region => !!region && region.country === region.initialCountry;
 
   // Employee output from location alone, as a percentage: the core bonus
-  // minus one point per point of income tax (via happiness).
-  const locationPct = side => (side.core ? CORE_BONUS_PCT : 0) - (side.tax ?? 0);
+  // minus the happiness income tax takes, tax² ÷ 60 to the hundredth (the
+  // game's taxPenaltyDivisor), a point of output per point.
+  const taxHappinessLoss = tax => Math.round(tax * tax / 60 * 100) / 100;
+  const locationPct = side => (side.core ? CORE_BONUS_PCT : 0) - taxHappinessLoss(side.tax ?? 0);
 
   /**
    * Where Irish companies should go: the Irish core regions, best
@@ -305,7 +308,7 @@ const AdvisorTool = (() => {
           <span><span class="stat-label">Core region</span> <span class="stat-value ${side.core ? 'pos' : 'tax-high'}">${side.core ? `Yes, +${CORE_BONUS_PCT}%` : 'No'}</span></span>
           <span><span class="stat-label">Income tax</span> <span class="stat-value ${taxClass}">${side.tax == null ? '?' : `${fmt(side.tax)}%`}</span></span>
         </div>
-        <div class="net" title="Core bonus minus income tax (each 1% of tax costs employees 1 happiness, worth 1% output).">
+        <div class="net" title="Core bonus minus what income tax costs: employees lose the tax squared ÷ 60 in happiness, and each point is worth 1% output.">
           <span class="stat-label">Employee output from location</span>
           <span class="net-val">${signed(locationPct(side))}</span>
         </div>

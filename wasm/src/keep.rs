@@ -50,11 +50,6 @@ fn js_round(x: f64) -> f64 {
     let floor = x.floor();
     if x - floor >= 0.5 { floor + 1.0 } else { floor }
 }
-/// `Math.max(...list)` of a non-empty list: NaN if any is NaN.
-fn js_max(list: &[f64]) -> f64 {
-    list.iter()
-        .fold(f64::NEG_INFINITY, |a, &v| if a.is_nan() || v.is_nan() { f64::NAN } else { a.max(v) })
-}
 /// The mean of a non-empty list, summed in order.
 fn mean(list: &[f64]) -> f64 {
     list.iter().fold(0.0, |a, v| a + v) / list.len() as f64
@@ -101,10 +96,8 @@ struct Member {
     potential_max: Option<f64>,
     /// Potential left before a waiting hand is drawn.
     potential_left: f64,
-    /// The lasting happiness losses a newcomer would share, and the income
-    /// tax's.
+    /// The lasting happiness losses a newcomer would share.
     shared_loss: f64,
-    tax_loss: f64,
     has_tool: bool,
     /// Holds Recruiter (a hidden one too): a candidate slot more.
     recruiter: bool,
@@ -133,6 +126,8 @@ struct Place {
     full: bool,
     /// The region's income tax (NaN when unknown).
     tax: f64,
+    /// The happiness its income tax takes.
+    tax_loss: f64,
     /// Management, manager and core-region bonus, %, as an employee gets it.
     bonus: f64,
     manager_pct: f64,
@@ -232,6 +227,7 @@ impl Data {
                     small_storage: r.storage.unwrap_or(0.0) <= 2.0,
                     full: r.full,
                     tax: r.tax,
+                    tax_loss: r.tax_loss,
                     bonus: r.bonus,
                     manager_pct: c.manager_pct,
                 }
@@ -340,7 +336,6 @@ impl Data {
                     potential_max: e.potential_max,
                     potential_left,
                     shared_loss: e.shared_loss,
-                    tax_loss: e.tax_loss,
                     has_tool: e.has_tool,
                     recruiter: e.held.iter().any(|h| h.code.is(Trait::Recruiter)),
                 }
@@ -488,7 +483,7 @@ impl Data {
             place: Some(place),
             item_type: c.item_type.clone(),
             product: c.product.clone(),
-            income_tax: m.tax_loss,
+            income_tax: or(c.tax, 0.0),
             tenure_days: x.tenure_days,
             employed_days: x.employed_days,
             has_tool: m.has_tool,
@@ -539,7 +534,7 @@ impl Data {
     }
 
     /// `joinSetup`: company `c` with `employees` seen by newcomer `n`. An
-    /// empty company gets the region's income tax and full storage's -10,
+    /// empty company gets its income tax's happiness loss and full storage's -10,
     /// and its bonus is the owner's management with the manager's and the
     /// core region's.
     fn join(&self, c: &Place, employees: &[usize], n: &Newcomer) -> Join {
@@ -551,10 +546,8 @@ impl Data {
         let outputs: Vec<f64> = staff.iter().filter_map(|o| o.output).collect();
         // A newcomer shares the company's lasting losses, not a coworker's temporary ones.
         let mut losses: Vec<f64> = employees.iter().map(|&i| self.members[i].shared_loss).collect();
-        let mut tax: Vec<f64> = employees.iter().map(|&i| self.members[i].tax_loss).collect();
-        if employees.is_empty() && c.tax.is_finite() {
-            tax.push(c.tax);
-            losses.push(c.tax + if c.full { 10.0 } else { 0.0 });
+        if employees.is_empty() && c.tax_loss.is_finite() {
+            losses.push(c.tax_loss + if c.full { 10.0 } else { 0.0 });
         }
         let (place, home_core) = location(c, n.nationality);
         let better_paid = match n.wage {
@@ -578,7 +571,7 @@ impl Data {
             place: Some(place),
             item_type: c.item_type.clone(),
             product: c.product.clone(),
-            income_tax: if tax.is_empty() { 0.0 } else { or(js_max(&tax), 0.0) },
+            income_tax: or(c.tax, 0.0),
             small_storage: c.small_storage,
             storage_full: c.full,
             nationality: text_of(n.nationality),

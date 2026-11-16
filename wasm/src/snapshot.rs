@@ -13,8 +13,8 @@
 //!   Management bonus, toolbox value and training quota; a company's engine
 //!   output, engine bonus, bonus and manager's bonus; a switch's cost; a
 //!   tool's bonus; an employee's trait Production, Luck, Climber raise and
-//!   the happiness a newcomer shares or income tax takes; days saved on a
-//!   good; a rarity's training value) is 0;
+//!   the happiness a newcomer shares; days saved on a good; a rarity's
+//!   training value) is 0;
 //! - one that may be unknown is `None`: the PP value, the hours, days to
 //!   retirement, trainings left, potential, the game's reported figures and
 //!   wage expectation, the happiness lost over the working life, storage,
@@ -26,11 +26,14 @@
 //!   tenure and employed days; a tool's hours) are NaN, which `validate`
 //!   reports from the facts kept beside them (`valid_numbers`,
 //!   `EmployeeCheck`). No export plans with one: they check first
-//!   (`check::numbers_known`, `planned_period`).
+//!   (`check::numbers_known`, `planned_period`);
+//! - a company's tax happiness loss is the rule's for its tax
+//!   (`cfg::tax_happiness_loss`).
 //!
 //! Lists, flags and objects the hand-built test snapshots leave out read as
 //! empty, false or absent.
 
+use crate::cfg;
 use crate::check::{
     COMPANY_BONUS, COMPANY_CAPACITY, COMPANY_MARGIN, COMPANY_TAX, EmployeeCheck, TraitCheck,
 };
@@ -114,11 +117,9 @@ pub struct Employee {
     /// The wage expectation the game reports (the API's `wageExpectation`).
     pub negotiation_expectation: Option<f64>,
     /// Happiness points they lose, averaged over the working life
-    /// (`lifeLoss`, rounded); the lasting losses a newcomer shares; and the
-    /// income tax's.
+    /// (`lifeLoss`, rounded), and the lasting losses a newcomer shares.
     pub life_loss: Option<f64>,
     pub shared_loss: f64,
-    pub tax_loss: f64,
     /// A drawn hand waits for its card.
     pub pending_training: bool,
     /// Their equipped tool has capacity left.
@@ -236,6 +237,8 @@ struct CompanyInput {
     /// Management, manager and core-region bonus, %; null when it didn't load.
     bonus: Option<f64>,
     tax: Option<f64>,
+    /// The happiness its income tax takes, as its employees report it.
+    tax_loss: Option<f64>,
     country: Option<String>,
     core_country: Option<String>,
     storage: Option<f64>,
@@ -296,7 +299,6 @@ struct EmployeeInput {
     negotiation_expectation: Option<f64>,
     life_loss: Option<f64>,
     shared_loss: Option<f64>,
-    tax_loss: Option<f64>,
     #[serde(default)]
     pending_training: Truthy,
     #[serde(default)]
@@ -500,6 +502,7 @@ impl From<CompanyInput> for Company {
             engine_bonus: zero(c.engine_bonus),
             bonus: zero(c.bonus),
             tax: required(c.tax),
+            tax_loss: known(c.tax_loss).unwrap_or_else(|| cfg::tax_happiness_loss(required(c.tax))),
             country: intern_optional(c.country.as_deref()),
             core_country: intern_optional(c.core_country.as_deref()),
             storage: known(c.storage),
@@ -627,7 +630,6 @@ impl From<EmployeeInput> for Employee {
             negotiation_expectation: known(e.negotiation_expectation),
             life_loss: known(e.life_loss),
             shared_loss: zero(e.shared_loss),
-            tax_loss: zero(e.tax_loss),
             pending_training: e.pending_training.0,
             has_tool: e.has_tool.0,
         }

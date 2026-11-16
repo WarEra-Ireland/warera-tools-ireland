@@ -72,6 +72,9 @@ pub struct Config {
     /// Per owner Management level.
     pub management_shift: Shift,
     pub luck_shift: Shift,
+    /// Income tax takes tax² ÷ this happiness, to the hundredth
+    /// (`tax_happiness_loss`). Before v0.28.3 it took the tax itself.
+    pub tax_penalty_divisor: f64,
 }
 
 /// `CFG.traitProductionPaid` as set now (`setTraitProductionPaid`): a
@@ -107,4 +110,25 @@ pub const CFG: Config = Config {
     },
     management_shift: Shift { uncommon: 1.0, rare: 0.6, epic: 0.3, legendary: 0.1 },
     luck_shift: Shift { uncommon: 0.5, rare: 0.3, epic: 0.15, legendary: 0.05 },
+    tax_penalty_divisor: 60.0,
 };
+
+/// The happiness an income tax of `tax` % takes from an employee:
+/// tax² ÷ `taxPenaltyDivisor`, to the hundredth, as the game rounds it.
+pub fn tax_happiness_loss(tax: f64) -> f64 {
+    (tax * tax / CFG.tax_penalty_divisor * 100.0).round() / 100.0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::tax_happiness_loss;
+
+    #[test]
+    fn tax_happiness_loss_rounds_like_the_game() {
+        // The game reported -4.82 happiness at 17% income tax.
+        assert_eq!(tax_happiness_loss(17.0), 4.82);
+        assert_eq!(tax_happiness_loss(1.0), 0.02);
+        assert_eq!(tax_happiness_loss(30.0), 15.0);
+        assert_eq!(tax_happiness_loss(0.0), 0.0);
+    }
+}

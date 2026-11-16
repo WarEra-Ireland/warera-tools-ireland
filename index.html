@@ -546,7 +546,7 @@
         <ul>
           <li>Since War Era v0.27 there are only two location effects: a <strong>+5% core region bonus</strong> and the <strong>income tax</strong> of the country that controls the region. Specialisation, deposits and party ethics no longer exist.</li>
           <li><strong>Core region:</strong> a region still held by its original country. Ulster, Connacht, Leinster and Munster are Irish core regions. Northern Ireland is Irish-controlled but isn't core, so it misses the bonus.</li>
-          <li><strong>Income tax</strong> is charged on your employees' wages and paid to the country that controls the region. A company abroad funds that country, not Ireland. Each 1% of tax costs employees 1 happiness, which is worth 1% of their output.</li>
+          <li><strong>Income tax</strong> is charged on your employees' wages and paid to the country that controls the region. A company abroad funds that country, not Ireland. It costs employees happiness: the tax rate squared, divided by 60 (17% costs 4.82), and each happiness point is worth 1% of their output.</li>
           <li><strong>Employee output from location</strong> is the core bonus minus the income tax rate. Both only affect employee output, not automated engines or your own work.</li>
           <li><strong>Tax sent abroad</strong> is the company's wages over the last 7 days (<code>work.getStatsByCompany</code>) times the income tax rate. It's an estimate.</li>
           <li><strong>Moving</strong> costs 5 concrete. Companies that still have the one-off v0.27 free move show a "Free move" badge.</li>
@@ -1506,17 +1506,17 @@
 <script src="js/mu.js?v=20261030"></script>
 <script src="js/manager-core.js?v=20261108"></script>
 <script src="js/buddy-finder.js?v=20261108"></script>
-<script src="js/advisor.js?v=20261108"></script>
+<script src="js/advisor.js?v=20261116"></script>
 <script src="js/clockin.js?v=20261108"></script>
 <script src="js/wealth.js?v=20261108"></script>
 <script src="js/product-picker.js?v=20261108d"></script>
-<script src="js/wasm/employee_model.js?v=20261113"></script>
-<script src="js/employee-model.js?v=20261113"></script>
+<script src="js/wasm/employee_model.js?v=20261116"></script>
+<script src="js/employee-model.js?v=20261116"></script>
 <script src="js/employee-traits.js?v=20261107"></script>
 <script src="js/employee-core.js?v=20261112"></script>
 <script src="js/employee-planner.js?v=20261112d"></script>
 <script src="js/employee-career.js?v=20261108"></script>
-<script src="js/employee-assignments.js?v=20261112b"></script>
+<script src="js/employee-assignments.js?v=20261116"></script>
 <script src="js/employee-products.js?v=20261108"></script>
 <script src="js/employee-trait-icons.js?v=20261103a"></script>
 <script src="js/employee-training.js?v=20261112i"></script>

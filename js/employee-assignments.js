@@ -167,13 +167,17 @@ const EmployeeAssignments = (() => {
       // A disabled company produces nothing: its employees can only move out.
       const disabled = !!c.disabledAt || active.some(e => e.companyDisabled);
       const bonus = known ? known.filter(x => ['management', 'manager', 'coreRegion'].includes(x.source)).reduce((n, x) => n + x.percent, 0) : disabled ? 0 : null;
+      // The happiness income tax takes, as an active employee reports it; the
+      // model's rule for the tax otherwise.
+      const taxed = active.flatMap(e => e.happinessBreakdown?.contributions || []).find(x => x.reason === 'incomeTax');
+      const taxLoss = taxed ? -taxed.delta : Number.isFinite(entry.incomeTax) ? EM.api.taxHappinessLoss(entry.incomeTax) : null;
       const reasons = missing(entry, active);
       if (active.length && !known && !disabled) reasons.push('its production bonus did not load');
       if (reasons.length) excluded.set(c._id, reasons);
       return { id: c._id, name: c.name || c.itemCode, product: c.itemCode, type: market.types?.[c.itemCode], margin: p?.perPP, disabled,
         engineDailyProd: market.engineLevels?.[c.activeUpgradeLevels?.automatedEngine]?.stats?.dailyProd || 0,
         engineBonus: entry.engineBonus || 0,
-        bonus, tax: entry.incomeTax, country: region?.country, coreCountry: region?.initialCountry,
+        bonus, tax: entry.incomeTax, taxLoss, country: region?.country, coreCountry: region?.initialCountry,
         storage: c.activeUpgradeLevels?.storage ?? 0, full: !!c.isFull, capacity: c.activeUpgradeLevels?.breakRoom ?? 1,
         // The manager's bonus, which a company without employees gets.
         managerPct: entry.managerPct ?? 0 };
@@ -211,10 +215,9 @@ const EmployeeAssignments = (() => {
         observed: { luck: e.breakdown?.luck?.total, trainingsPerDay: e.trainingsPerDay, production: e.breakdown?.production?.total, responsibility: e.breakdown?.responsibility?.total,
           happiness: e.happinessBreakdown?.value, bonus: e.productionBonus?.total, output: e.estimate?.production }, equipped,
         // For the keep step and recruiting: happiness lost over the working
-        // life (rounded), the lasting losses a newcomer would share, the
-        // income tax's, a hand waiting for its card, a tool with capacity left.
+        // life (rounded), the lasting losses a newcomer would share, a hand
+        // waiting for its card, a tool with capacity left.
         lifeLoss: Math.round(lifeLoss(e, { now })), sharedLoss: lifeLoss(e, { lasting: true, shared: true, now }),
-        taxLoss: -((e.happinessBreakdown?.contributions || []).find(c => c.reason === 'incomeTax')?.delta || 0),
         pendingTraining: !!e.pendingTraining, hasTool: !!e.toolItem && e.toolItem.state > 0 };
     }));
     for (const c of companies) if (excluded.has(c.id)) c.excluded = `Not planned: ${excluded.get(c.id).join('; ')}.`;
@@ -238,7 +241,7 @@ const EmployeeAssignments = (() => {
       } finally { subject.free(); }
     }
     for (const c of companies) if ((settings.recruiting || []).includes(c.id) && !c.excluded) {
-      const groups = [{ bonus: c.bonus / 100, happinessLoss: c.tax,
+      const groups = [{ bonus: c.bonus / 100, happinessLoss: c.taxLoss,
         ctx: { sellRatio: c.margin / market.ppValue, management: team.management || 0, futureTraining: false,
           situation: { itemType: c.type, product: c.product, incomeTax: c.tax } } }];
       const first = EC.freshSetValue(groups, { slots: 3, rate: 'slot' });

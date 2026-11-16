@@ -260,6 +260,8 @@ pub struct CompanyRecord {
     pub engine_bonus: f64,
     pub bonus: f64,
     pub tax: f64,
+    /// The happiness its income tax takes.
+    pub tax_loss: f64,
     pub country: u32,
     pub core_country: u32,
     /// Storage capacity, when known.
@@ -1048,7 +1050,7 @@ impl Workspace {
                     feel(h);
                 }
             }
-            feel(-co.tax);
+            feel(-co.tax_loss);
             if co.full && flags & STOCKPILER == 0 {
                 feel(-10.0);
             }

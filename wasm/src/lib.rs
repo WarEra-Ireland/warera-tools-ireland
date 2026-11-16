@@ -113,6 +113,12 @@ pub fn set_trait_production_paid(on: bool) {
     cfg::set_trait_production_paid(on);
 }
 
+/// `cfg::tax_happiness_loss`: the happiness an income tax of `tax` % takes.
+#[wasm_bindgen(js_name = taxHappinessLoss)]
+pub fn tax_happiness_loss(tax: f64) -> f64 {
+    cfg::tax_happiness_loss(tax)
+}
+
 /// `[{ code, polarity, weight, gender?, partner?, arg?, priced }]`, in trait id order.
 #[wasm_bindgen(js_name = traitRules)]
 pub fn trait_rules() -> Result<Js<&'static [traits::Rule]>, JsValue> {

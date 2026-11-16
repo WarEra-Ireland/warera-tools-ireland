@@ -198,9 +198,9 @@ Capacity is `dormitories * 5`. MUs with no dormitory data have unknown capacity 
 
 Rebuilt for v0.27. For each of a user's companies, says whether it sits in an Irish core region, and if not, what moving home is worth.
 
-v0.27 left only two location effects: a +5% employee output bonus in a core region, and the controlling country's income tax, which is charged on employee wages and costs employees 1 happiness (worth 1% output) per percent. "Core" is read as `region.country === region.initialCountry`. The game doesn't document that rule, so treat it as inferred. Each company is **home** (Irish core region), **not core** (Irish-controlled but not core, i.e. Northern Ireland) or **abroad**.
+v0.27 left only two location effects: a +5% employee output bonus in a core region, and the controlling country's income tax, which is charged on employee wages and costs employees tax² ÷ 60 happiness, to the hundredth (4.82 at 17%; the game's `taxPenaltyDivisor`, since v0.28.3, before which it was 1 per percent). Each happiness point is worth 1% output. "Core" is read as `region.country === region.initialCountry`. The game doesn't document that rule, so treat it as inferred. Each company is **home** (Irish core region), **not core** (Irish-controlled but not core, i.e. Northern Ireland) or **abroad**.
 
-Abroad cards compare "employee output from location" (core bonus minus tax rate) here and in Ireland, and say so plainly when staying abroad is better. They estimate the wage tax sent abroad as the last 7 days of `work.getStatsByCompany` `wage` × the country's `taxes.income`. A move costs 5 concrete, or nothing while `company.freeMoves ≥ 1` (a one-off v0.27 grant). Don't use `company.getProductionBonus`: it still returns only the dead deposit bonus.
+Abroad cards compare "employee output from location" (core bonus minus the tax's happiness cost) here and in Ireland, and say so plainly when staying abroad is better. They estimate the wage tax sent abroad as the last 7 days of `work.getStatsByCompany` `wage` × the country's `taxes.income`. A move costs 5 concrete, or nothing while `company.freeMoves ≥ 1` (a one-off v0.27 grant). Don't use `company.getProductionBonus`: it still returns only the dead deposit bonus.
 
 `AdvisorTool.loadPlacements(userId)` is also what the dashboard's Migration card calls.
 
