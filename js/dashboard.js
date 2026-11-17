@@ -332,7 +332,7 @@ const DashboardTool = (() => {
     ['equipments', 'Gear',      '#a78bfa'],
     ['weapons',    'Weapons',   '#f87171'],
   ];
-  const wealthState = { snaps: [], metric: 'total', ...loadWealthView() };
+  const wealthState = { snaps: [], metric: 'total', ...loadWealthView('week') };
 
   async function fillWealth(full) {
     try {
@@ -343,7 +343,7 @@ const DashboardTool = (() => {
       // Live "now" point carries every component so every metric tab matches.
       snaps = snaps.concat([{ t: new Date().toISOString(), live: true, companies: w.companies, items: w.items, money: w.money, equipments: w.equipments, weapons: w.weapons, total: w.total }]);
       snaps.sort((a, b) => new Date(a.t) - new Date(b.t));
-      wealthState.snaps = snaps; wealthState.metric = 'total'; Object.assign(wealthState, loadWealthView());
+      wealthState.snaps = snaps; wealthState.metric = 'total'; Object.assign(wealthState, loadWealthView('week'));
 
       setNote('wealth', `${snaps.length} record${snaps.length === 1 ? '' : 's'}`);
 

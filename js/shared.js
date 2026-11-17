@@ -1473,10 +1473,10 @@ function wealthBucketFor(range, bucket) {
 // card and the Wealth page.
 const WEALTH_VIEW_KEY = 'warera:wealth-chart-view';
 
-function loadWealthView() {
+function loadWealthView(defaultRange = 'day') {
   let saved = null;
   try { saved = JSON.parse(localStorage.getItem(WEALTH_VIEW_KEY) || 'null'); } catch { /* storage off */ }
-  const range = WEALTH_RANGES.some(r => r.key === saved?.range) ? saved.range : 'day';
+  const range = WEALTH_RANGES.some(r => r.key === saved?.range) ? saved.range : defaultRange;
   return { range, bucket: wealthBucketFor(range, saved?.bucket) };
 }
 
