@@ -4207,7 +4207,7 @@ html[data-theme="light"] .view[data-view="fighting-build"] { --sk-orange: #c2410
   /* Compare: each row's label heads it, with A, B and B − A side by side
      below; gear rows have no B − A, so A and B share the width. */
   .fb-compare, .fb-compare :is(thead, tbody) { display: block; }
-  .fb-compare tr { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 2px 10px; padding: 6px 10px;
+  .fb-compare tr { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 5px 10px; padding: 6px 10px;
     border-bottom: 1px solid var(--border); }
   .fb-compare tbody tr:last-child { border-bottom: 0; }
   .fb-compare-gear tr { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -4235,4 +4235,6 @@ html[data-theme="light"] .view[data-view="fighting-build"] { --sk-orange: #c2410
   .fb-pin-rest { order: -1; flex-wrap: nowrap; }
   .fb-pin-rest .fb-pin-go:not(.fb-pin-on) { display: none; }
   .fb-pinned .fb-pin-word { display: none; }
+  /* The battle chip wraps, balanced, rather than run off a small phone's screen. */
+  .fb-pinned .fb-pin-go[data-fb-go="battle"] { white-space: normal; text-wrap: balance; text-align: center; max-width: 100%; }
 }

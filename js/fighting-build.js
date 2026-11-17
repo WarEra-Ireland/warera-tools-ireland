@@ -402,8 +402,11 @@ const FightingBuildTool = (() => {
       unpilled: [`<span>no</span> ${PILL_ICON}`, 'Unpilled builds only'],
       pilled: [`${PILL_ICON}<span>only</span>`, 'Pilled builds only'],
     }[s.pillMode];
+    // On a small phone the battle chip wraps: only after a dot, never inside a figure.
+    const battle = [`<span>Battle</span>&nbsp;rank&nbsp;${fmt(s.rankDamagePct ?? market.profile.rankDamagePct, 1)}%`,
+      `bonus&nbsp;${fmt(s.battleBonus * 100, 0)}%`, `bounty&nbsp;${coins(s.bountyPer1000, 3)}/1k`, `MU&nbsp;${s.muHelpHealthPerDay}`].join('&nbsp;· ');
     document.getElementById('fb-pinned').innerHTML = `
-      ${goChip(`<span>Battle</span> rank ${fmt(s.rankDamagePct ?? market.profile.rankDamagePct, 1)}% · bonus ${fmt(s.battleBonus * 100, 0)}% · bounty ${coins(s.bountyPer1000, 3)}/1k · MU ${s.muHelpHealthPerDay}`, 'battle')}
+      ${goChip(battle, 'battle')}
       <div class="fb-pin-strip">
         ${goChip(`<span>Save ≥</span> ${coins(s.savingsTarget, 0)} <span>· lose ≤</span> ${coins(s.lossAllowance, 0)}`, 'money')}
         ${goChip(pills, 'money', { focus: 'fb-pill-mode', title: pillsTitle })}
