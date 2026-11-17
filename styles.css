@@ -3609,6 +3609,7 @@ html[data-theme="light"] #site-footer { --footer-former-1: #8995a5; --footer-for
 .footer-contributor-dot { width: 7px; height: 7px; border-radius: 2px; }
 .footer-contributor a, .footer-org a { color: var(--text); text-decoration: none; font-weight: 550; }
 .footer-contributor a:hover, .footer-org a:hover { text-decoration: underline; }
+.footer-ext-icon { width: 0.9em; height: 0.9em; margin-left: 0.3em; vertical-align: -0.1em; }
 .footer-contributor-count { font-variant-numeric: tabular-nums; white-space: nowrap; }
 .footer-contributor-former { border-top: 1px solid var(--border); padding-top: 10px; }
 .footer-contributor-role { font-size: 12px; margin-top: 2px; }
