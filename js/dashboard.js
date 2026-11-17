@@ -527,12 +527,11 @@ const DashboardTool = (() => {
 
   /* ── Card: Military Unit ─────────────────────────────────────────── */
   async function fillMU(full) {
-    const findCta = `<a class="dash-cta" href="#mu?u=${encodeURIComponent(full.username)}">Find an Irish MU →</a>`;
     try {
       if (!full.mu) {
         setHref('mu', `#mu?u=${encodeURIComponent(full.username)}`);
         setBody('mu', `${pill('Not in a unit', 'loss')}
-          <div class="dash-sub">Join an Irish military unit to fight together and earn rewards.</div>${findCta}`);
+          <div class="dash-sub">Join an Irish military unit to fight together and earn rewards.</div>`);
         return;
       }
       const mu = await db_trpc('mu.getById', { muId: full.mu }).catch(() => null);
@@ -545,7 +544,7 @@ const DashboardTool = (() => {
           <div class="dash-sub">Member of ${link}.</div>${chips}`);
       } else {
         setBody('mu', `${pill('Not Irish-based', 'warn')}
-          <div class="dash-sub">You're in ${link}, which isn't Irish-based. Consider an Irish unit.</div>${chips}${findCta}`);
+          <div class="dash-sub">You're in ${link}, which isn't Irish-based. Consider an Irish unit.</div>${chips}`);
       }
     } catch (e) { setError('mu', `Couldn't load unit: ${e.message}`); }
   }
@@ -570,7 +569,7 @@ const DashboardTool = (() => {
       const free = roster.filter(p => p.id !== full._id && ManagerCore.canManage(p)).sort(ManagerCore.rankRoster);
       const row = (p, i) => `<div class="dash-row">
           <div class="dash-row-main">
-            <div class="dash-row-title"><span class="dash-rank">${i + 1}</span><a href="${GAME_BASE}/user/${escapeHtml(p.user._id)}" target="_blank" rel="noopener"><strong>${escapeHtml(p.user.username)}</strong> ↗</a></div>
+            <div class="dash-row-title"><span class="dash-rank">${i + 1}</span><a href="${GAME_BASE}/user/${escapeHtml(p.user._id)}" target="_blank" rel="noopener"><strong>${escapeHtml(p.user.username)}</strong></a></div>
             <span class="dash-top-v">${ManagerCore.points(p.user)}<small> points</small></span>
           </div>
           <div class="dash-sub small">${p.openSlots} of ${p.companies} manager job${p.companies === 1 ? '' : 's'} available</div>
@@ -578,7 +577,7 @@ const DashboardTool = (() => {
       const list = free.length
         ? `<div class="dash-top"><div class="dash-top-h">Free to manage<span>${free.length} player${free.length === 1 ? '' : 's'}, most jobs available first</span></div><div class="dash-rows">${free.slice(0, 3).map(row).join('')}</div></div>`
         : '<div class="dash-sub">No Irish players are free to manage right now.</div>';
-      setBody('buddy', `${status}${list}<a class="dash-cta" href="#buddy-finder?u=${u}">See the Irish roster →</a>`);
+      setBody('buddy', `${status}${list}`);
     } catch (e) { setError('buddy', `Couldn't load the buddy pool: ${e.message}`); }
   }
 
@@ -729,8 +728,7 @@ const DashboardTool = (() => {
         <div class="dash-top">
           <div class="dash-top-h">Most profitable products <span>all your output, market wages</span></div>
           <div class="dash-rows">${topProducts.map((t, i) => topRow(t, i)).join('')}</div>
-        </div>` : ''}
-        <a class="dash-cta" href="#profit?u=${encodeURIComponent(full.username)}">Compare every product →</a>`);
+        </div>` : ''}`);
     } catch (e) {
       setError('profit', `Couldn't load economy: ${e.message}`);
     }
@@ -779,8 +777,7 @@ const DashboardTool = (() => {
         ${ranked.length > 1 ? `<div class="dash-top">
           <div class="dash-top-h">Top products <span>margin per PP</span></div>
           <div class="dash-rows">${ranked.slice(1, 3).map((r, i) => topRow(r, i + 1)).join('')}</div>
-        </div>` : ''}
-        <a class="dash-cta" href="#products?u=${encodeURIComponent(full.username)}">Compare every product →</a>`);
+        </div>` : ''}`);
     } catch (e) { setError('products', `Couldn't load products: ${e.message}`); }
   }
 
@@ -808,8 +805,7 @@ const DashboardTool = (() => {
     const u = encodeURIComponent(s.username);
     const link = (q = '') => `#training?u=${u}${q}`;
     const plural = (n, word, many = `${word}s`) => `${n} ${n === 1 ? word : many}`;
-    const cta = `<a class="dash-cta" href="${link()}">Plan today's training →</a>`;
-    if (!s.employees) { setNote('training', ''); setBody('training', lead('No employees', 'Hire into one of your companies to start training.') + cta); return; }
+    if (!s.employees) { setNote('training', ''); setBody('training', lead('No employees', 'Hire into one of your companies to start training.')); return; }
     setNote('training', plural(s.employees, 'employee'));
 
     const energy = s.energy == null ? '' : `${s.energy}${s.energyMax ? ` / ${s.energyMax}` : ''} energy`;
@@ -854,8 +850,7 @@ const DashboardTool = (() => {
       <div class="dash-top">
         <div class="dash-top-h">Best uses of energy <span>ranked by career profit${s.pricing ? ' · valuing moves…' : ''}</span></div>
         ${rows ? `<div class="dash-rows">${rows}</div>` : '<div class="dash-sub">Nothing to train, hire or replace right now.</div>'}
-      </div>
-      ${cta}`);
+      </div>`);
   }
 
   async function fillMigration(full) {
@@ -891,8 +886,7 @@ const DashboardTool = (() => {
       setBody('migration', `
         <div class="dash-warn">${pill('⚠ Bring it home', 'warn')}
           <span>${who} outside Irish core regions${foreignTax > 0 ? `, and about <strong>₿${fmtK(foreignTax)}</strong> of wage tax went abroad this week` : ''}.</span></div>
-        <div class="dash-rows">${away.map(row).join('')}</div>
-        <a class="dash-cta" href="#advisor?u=${encodeURIComponent(full.username)}">Plan the move →</a>`);
+        <div class="dash-rows">${away.map(row).join('')}</div>`);
     } catch (e) { setError('migration', `Couldn't load companies: ${e.message}`); }
   }
 

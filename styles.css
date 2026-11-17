@@ -2204,8 +2204,6 @@ a.dash-pill:hover, a.dash-pill:focus-visible { filter: brightness(1.25); }
 .dash-hire { margin-top: 5px; }
 
 /* CTA buttons (join buddy / join MU). */
-.dash-cta { display: inline-block; margin-top: 12px; font-size: 12.5px; font-weight: 600; color: var(--accent); text-decoration: none; padding: 7px 13px; border-radius: 999px; border: 1px solid rgba(74,222,128,.4); }
-.dash-cta:hover { background: var(--accent-dim); }
 
 /* "Show more" disclosure. */
 .dash-more { margin-top: 6px; }
