@@ -1644,7 +1644,7 @@ const EmployeeTrainingTool = (() => {
       }
       else groups.energy.push({ icon: '➕', go: { tab: 'hire', company: r.entry.company._id },
         what: `Hire into ${where(r.entry)}`, sub: `${r.entry.employees.length} of ${r.cap} Break Room slots used · best of ${r.slots} candidates`,
-        value: `≈ ${signedPP(r.value)} PP`, unit: 'avg pick; current-company hire estimate' });
+        value: `≈ ${signedPP(r.value)} PP`, unit: 'avg pick; current\u2011company hire estimate' });
       if (actions != null && i === actions - 1 && i < shown.length - 1) groups.energy.push({ cut: `Your ${energy} energy covers the ${plural(actions, 'action')} above` });
     });
     if (!selfShown) selfStep(false);

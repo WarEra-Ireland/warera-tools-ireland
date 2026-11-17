@@ -3004,6 +3004,8 @@ html[data-theme="light"] {
 .tr-act-profit + small { margin-top: 12px; }
 .tr-act-value { text-align: right; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .tr-act-value small { font-weight: 400; font-size: 12px; }
+/* The unit wraps, so a long one doesn't squeeze the action's text. */
+.tr-act-value > small { max-width: 10em; margin-left: auto; white-space: normal; }
 .tr-act-static { cursor: default; }
 .tr-acts .tr-act-static:hover { background: none; }
 .tr-act.done { color: var(--muted); }
