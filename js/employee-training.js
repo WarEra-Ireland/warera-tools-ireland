@@ -1541,16 +1541,20 @@ const EmployeeTrainingTool = (() => {
   // other out, so only the better-ranked of the two stays.
   // When the planner would move someone marked Replace, the move comes
   // first (moved): it's free, and their verdict changes with the company.
+  // A hire that loses money (losing) isn't an action: a coworker's trait
+  // can cost more than the newcomer earns (Talks to Machines, Loner).
   function energyActions() {
     const flagged = keepRows().filter(r => ['fire', 'replace'].includes(keepVerdict(r)));
     const moved = new Set(flagged.filter(r => plannedMove(r.emp._id)).map(r => r.emp._id));
     const replace = flagged.filter(r => !moved.has(r.emp._id) && !pendingHand(r.emp))
       .map(r => ({ kind: 'replace', value: r.gain + r.alt, emp: r.emp, entry: r.entry, keep: r, ready: true }));
     const seen = new Set();
-    const ready = [...feedRows().filter(r => r.ready && !(r.kind === 'train' && pendingHand(r.emp))), ...replace]
+    const feed = feedRows();
+    const losing = feed.filter(r => r.kind === 'hire' && r.value <= 0);
+    const ready = [...feed.filter(r => r.ready && !(r.kind === 'train' && pendingHand(r.emp)) && !losing.includes(r)), ...replace]
       .sort((a, b) => b.value - a.value)
       .filter(r => r.kind === 'hire' || (!seen.has(r.emp._id) && seen.add(r.emp._id)));
-    return { moved, ready };
+    return { moved, ready, losing };
   }
 
   // Who gets the Train tag: the trainings among the actions the energy on
@@ -1585,7 +1589,7 @@ const EmployeeTrainingTool = (() => {
     }
     const energy = energyNow();
     const actions = energy == null ? null : Math.floor(energy / 10);
-    const { moved, ready } = energyActions();
+    const { moved, ready, losing } = energyActions();
     for (const r of keepRows().filter(r => moved.has(r.emp._id))) {
       const m = plannedMove(r.emp._id);
       const to = team.companies.find(x => x.company._id === m.to);
@@ -1654,6 +1658,13 @@ const EmployeeTrainingTool = (() => {
     else if (plan?.gain > 1e-7) groups.check.push({ icon: '🧭', go: { tab: 'assignments' },
       what: `Rearrange: ${plan.gain >= 0 ? '+' : '−'}${Math.abs(plan.gain).toFixed(2)} ${plan.horizon === 'career' ? 'over their careers' : `over ${plural(plan.days, 'day')}`}`,
       sub: `${plural(plan.changes, 'move or tool change', 'moves or tool changes')}${plan.cancelled ? ', search cut short' : ''} · in game money after wages` });
+    // A free slot a hire would lose money in: say why, so it stays empty.
+    for (const r of losing) {
+      const harm = r.fresh.coworkers < 0 ? typicalHireHarm(r.entry) : [];
+      groups.check.push({ icon: '🚫', go: { tab: 'hire', company: r.entry.company._id },
+        what: `Don't hire into ${where(r.entry)}`,
+        sub: `A new hire there loses ≈ ${signedPP(r.value)} PP${harm.length ? `: they would hold back ${escapeHtml(harm.join(', '))}` : ''} · ${r.entry.employees.length} of ${r.cap} Break Room slots used` });
+    }
     // Employees of a disabled company don't work, age or train there.
     const room = team.companies.some(x => !x.company.disabledAt && !x.rosterMissing && x.employees.filter(emp => !emp.leftAt).length < headcountCap(x.company));
     // Who the planner's swaps leave idle here in their place.
@@ -1702,7 +1713,7 @@ const EmployeeTrainingTool = (() => {
           ${a.value ? `<span class="tr-act-value">${a.value}<small>${a.unit}</small></span>` : ''}${a.go ? '</button>' : '</div>'}</li>`;
     const body = Object.entries(groups).filter(([k, list]) => k !== 'done' && list.length).map(([k, list]) =>
       `<li class="tr-act-group">${heads[k]}</li>${list.map(a => item(a, false)).join('')}`).join('');
-    return `<div class="tr-section-heading"><h3 class="tr-pane-title" id="tr-acts-h">Next actions</h3>${help('How the list is ordered', `<p><strong>Do now</strong> lists training hands waiting for a choice, and moves the planner makes for employees marked Replace: moving is free and changes their verdict, so it comes before replacing them.</p><p><strong>Spend energy</strong> ranks actions by the production points each 10 energy earns before retirement. Training uses the average value of the best card in the next hand. Hiring uses the best candidate in a fresh set. Replacing uses that candidate's value, minus the value of keeping the employee and the cost of firing.</p><p>Replacement appears when a fresh hire wins at least two times in three, or the employee costs more than they earn. If training and replacing the same employee both qualify, only the better action appears.</p><p>Self-work is a step of its own, placed after the actions that earn more per 10 energy than your own work, and naming the companies making your best-margin product. When the bar would fill before training renews at 00:00 UTC, it says how many times to work to keep it from overflowing: it counts the actions above it first, and leaves a full bar at the reset for the next day's trainings. Otherwise, when actions below it earn less than self-work, a Save step takes its place: the energy left is worth more at the reset, and self-work can wait until the bar would overflow.</p><p><strong>Check</strong> lists assignment suggestions and employees making the wrong product type.</p>`)}</div>
+    return `<div class="tr-section-heading"><h3 class="tr-pane-title" id="tr-acts-h">Next actions</h3>${help('How the list is ordered', `<p><strong>Do now</strong> lists training hands waiting for a choice, and moves the planner makes for employees marked Replace: moving is free and changes their verdict, so it comes before replacing them.</p><p><strong>Spend energy</strong> ranks actions by the production points each 10 energy earns before retirement. Training uses the average value of the best card in the next hand. Hiring uses the best candidate in a fresh set. Replacing uses that candidate's value, minus the value of keeping the employee and the cost of firing.</p><p>Replacement appears when a fresh hire wins at least two times in three, or the employee costs more than they earn. If training and replacing the same employee both qualify, only the better action appears.</p><p>Self-work is a step of its own, placed after the actions that earn more per 10 energy than your own work, and naming the companies making your best-margin product. When the bar would fill before training renews at 00:00 UTC, it says how many times to work to keep it from overflowing: it counts the actions above it first, and leaves a full bar at the reset for the next day's trainings. Otherwise, when actions below it earn less than self-work, a Save step takes its place: the energy left is worth more at the reset, and self-work can wait until the bar would overflow.</p><p>A hire that would lose money isn't listed, even with a free slot: <strong>Check</strong> says not to hire there, and why when it's a coworker's trait (Talks to Machines only works for an employee alone in the company).</p><p><strong>Check</strong> lists assignment suggestions, companies not to hire into and employees making the wrong product type.</p>`)}</div>
       ${actionsStatus()}
       <ol class="tr-acts" id="tr-next-actions">${body || '<li class="tr-act-group">Nothing to do right now</li>'}</ol>
       ${groups.done.length ? `<details class="tr-more tr-done"${$team.querySelector('.tr-done')?.open ? ' open' : ''}><summary>Trained today (${groups.done.length}) <em>Ready at 00:00 UTC, in ${escapeHtml(formatDuration(untilReset()))}</em></summary><ol class="tr-acts">${groups.done.map(a => item(a, true)).join('')}</ol></details>` : ''}
@@ -1998,6 +2009,16 @@ const EmployeeTrainingTool = (() => {
   function newcomerImpact(entry, newcomer, without = null) {
     const { value, notes } = keepSession().impact(entry.company._id, newcomer, without?._id);
     return { value, notes: notes.map(n => `${n.name}'s ${traitName(n.trait)}`) };
+  }
+
+  // The coworker traits a typical newcomer (a local man, average
+  // Production) holds back here, as text; none when they help on balance.
+  function typicalHireHarm(entry) {
+    if (!market?.ppValue) return [];
+    const production = 2.5;
+    const { value, notes } = newcomerImpact(entry, { gender: 'male', nationality: entry.region?.country, production,
+      wage: production / EmployeeModel.CFG.outputDivisor * market.ppValue });
+    return value < 0 ? notes : [];
   }
 
   // What a newcomer's gender, nationality and Production do to this
