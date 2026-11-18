@@ -124,6 +124,20 @@ const ToolkitShell = (() => {
   // tall. The space it gives up goes into its bottom margin, so the page
   // keeps its length; otherwise a short page loses its scroll room and the
   // card un-pins again.
+  // The pinned height is measured on a hidden copy, so the page is never laid
+  // out with the card shrunk but its margin not yet grown: the browser's
+  // scroll anchoring would see the page below move up, scroll up after it,
+  // and un-pin the card, over and over on a slow scroll.
+  function pinnedHeight() {
+    const copy = $side.cloneNode(true);
+    for (const el of [copy, ...copy.querySelectorAll('[id]')]) el.removeAttribute('id');
+    copy.classList.add('pinned');
+    copy.style.cssText = `position:absolute; visibility:hidden; width:${$side.offsetWidth}px`;
+    $side.after(copy);
+    const height = copy.offsetHeight;
+    copy.remove();
+    return height;
+  }
   const $sentinel = document.createElement('div');
   $side.parentElement.before($sentinel);
   new IntersectionObserver(([e]) => {
@@ -133,8 +147,9 @@ const ToolkitShell = (() => {
     if (!pinned) { $side.classList.remove('pinned'); return; }
     const before = $side.offsetHeight;
     const margin = parseFloat(getComputedStyle($side).marginBottom) || 0;
+    const after = pinnedHeight();
     $side.classList.add('pinned');
-    $side.style.marginBottom = `${margin + before - $side.offsetHeight}px`;
+    $side.style.marginBottom = `${margin + before - after}px`;
   }).observe($sentinel);
 
   /* ── URLs ───────────────────────────────────────────────
