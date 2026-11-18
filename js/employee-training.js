@@ -1543,10 +1543,14 @@ const EmployeeTrainingTool = (() => {
   // first (moved): it's free, and their verdict changes with the company.
   // A hire that loses money (losing) isn't an action: a coworker's trait
   // can cost more than the newcomer earns (Talks to Machines, Loner).
+  // Nor is replacing someone marked Fire when their replacement would lose
+  // money too: firing them (fire) costs no energy, and the slot stays empty.
   function energyActions() {
     const flagged = keepRows().filter(r => ['fire', 'replace'].includes(keepVerdict(r)));
     const moved = new Set(flagged.filter(r => plannedMove(r.emp._id)).map(r => r.emp._id));
-    const replace = flagged.filter(r => !moved.has(r.emp._id) && !pendingHand(r.emp))
+    const acting = flagged.filter(r => !moved.has(r.emp._id) && !pendingHand(r.emp));
+    const fire = acting.filter(fireOnly);
+    const replace = acting.filter(r => !fireOnly(r))
       .map(r => ({ kind: 'replace', value: r.gain + r.alt, emp: r.emp, entry: r.entry, keep: r, ready: true }));
     const seen = new Set();
     const feed = feedRows();
@@ -1554,7 +1558,7 @@ const EmployeeTrainingTool = (() => {
     const ready = [...feed.filter(r => r.ready && !(r.kind === 'train' && pendingHand(r.emp)) && !losing.includes(r)), ...replace]
       .sort((a, b) => b.value - a.value)
       .filter(r => r.kind === 'hire' || (!seen.has(r.emp._id) && seen.add(r.emp._id)));
-    return { moved, ready, losing };
+    return { moved, ready, losing, fire };
   }
 
   // Who gets the Train tag: the trainings among the actions the energy on
@@ -1589,13 +1593,19 @@ const EmployeeTrainingTool = (() => {
     }
     const energy = energyNow();
     const actions = energy == null ? null : Math.floor(energy / 10);
-    const { moved, ready, losing } = energyActions();
+    const { moved, ready, losing, fire } = energyActions();
     for (const r of keepRows().filter(r => moved.has(r.emp._id))) {
       const m = plannedMove(r.emp._id);
       const to = team.companies.find(x => x.company._id === m.to);
       groups.now.push({ icon: '🧭', go: { tab: 'assignments', emp: r.emp._id },
-        what: `Move ${escapeHtml(r.emp.name)}${to ? ` to ${companyLabelHtml(to.company)}` : ''} instead of replacing`,
+        what: `Move ${escapeHtml(r.emp.name)}${to ? ` to ${companyLabelHtml(to.company)}` : ''} instead of ${fireOnly(r) ? 'firing' : 'replacing'}`,
         sub: `${keepVerdict(r) === 'fire' ? capitalised(fireWhy(r)) : `A new hire beats keeping them ${odds(r.chance)} of the time`} where they are · moving is free · ${where(r.entry)}` });
+    }
+    for (const r of fire) {
+      const harm = typicalHireHarm(r.entry, r.emp);
+      groups.now.push({ icon: '✂️', go: { tab: 'keep', emp: r.emp._id },
+        what: `Fire ${escapeHtml(r.emp.name)}`,
+        sub: `${escapeHtml(capitalised(fireWhy(r)))} · gains ≈ ${signedPP(-r.stay)} PP · leave the slot empty: a new hire there loses ≈ ${signedPP(r.alt - r.fresh.best)} PP${harm.length ? `, holding back ${escapeHtml(harm.join(', '))} too` : ''}${r.from ? ` · <span class="tr-warn">can be fired from ${utcTime(r.from)}</span>` : ''} · ${where(r.entry)}` });
     }
     const preview = ready.slice(0, Math.min(8, Math.max(3, actions ?? 3)));
     preview.push(...ready.filter(r => r.kind === 'hire' && !preview.includes(r)));
@@ -1663,7 +1673,7 @@ const EmployeeTrainingTool = (() => {
       const harm = r.fresh.coworkers < 0 ? typicalHireHarm(r.entry) : [];
       groups.check.push({ icon: '🚫', go: { tab: 'hire', company: r.entry.company._id },
         what: `Don't hire into ${where(r.entry)}`,
-        sub: `A new hire there loses ≈ ${signedPP(r.value)} PP${harm.length ? `: they would hold back ${escapeHtml(harm.join(', '))}` : ''} · ${r.entry.employees.length} of ${r.cap} Break Room slots used` });
+        sub: `A new hire there loses ≈ ${signedPP(-r.value)} PP${harm.length ? `: they would hold back ${escapeHtml(harm.join(', '))}` : ''} · ${r.entry.employees.length} of ${r.cap} Break Room slots used` });
     }
     // Employees of a disabled company don't work, age or train there.
     const room = team.companies.some(x => !x.company.disabledAt && !x.rosterMissing && x.employees.filter(emp => !emp.leftAt).length < headcountCap(x.company));
@@ -1713,7 +1723,7 @@ const EmployeeTrainingTool = (() => {
           ${a.value ? `<span class="tr-act-value">${a.value}<small>${a.unit}</small></span>` : ''}${a.go ? '</button>' : '</div>'}</li>`;
     const body = Object.entries(groups).filter(([k, list]) => k !== 'done' && list.length).map(([k, list]) =>
       `<li class="tr-act-group">${heads[k]}</li>${list.map(a => item(a, false)).join('')}`).join('');
-    return `<div class="tr-section-heading"><h3 class="tr-pane-title" id="tr-acts-h">Next actions</h3>${help('How the list is ordered', `<p><strong>Do now</strong> lists training hands waiting for a choice, and moves the planner makes for employees marked Replace: moving is free and changes their verdict, so it comes before replacing them.</p><p><strong>Spend energy</strong> ranks actions by the production points each 10 energy earns before retirement. Training uses the average value of the best card in the next hand. Hiring uses the best candidate in a fresh set. Replacing uses that candidate's value, minus the value of keeping the employee and the cost of firing.</p><p>Replacement appears when a fresh hire wins at least two times in three, or the employee costs more than they earn. If training and replacing the same employee both qualify, only the better action appears.</p><p>Self-work is a step of its own, placed after the actions that earn more per 10 energy than your own work, and naming the companies making your best-margin product. When the bar would fill before training renews at 00:00 UTC, it says how many times to work to keep it from overflowing: it counts the actions above it first, and leaves a full bar at the reset for the next day's trainings. Otherwise, when actions below it earn less than self-work, a Save step takes its place: the energy left is worth more at the reset, and self-work can wait until the bar would overflow.</p><p>A hire that would lose money isn't listed, even with a free slot: <strong>Check</strong> says not to hire there, and why when it's a coworker's trait (Talks to Machines only works for an employee alone in the company).</p><p><strong>Check</strong> lists assignment suggestions, companies not to hire into and employees making the wrong product type.</p>`)}</div>
+    return `<div class="tr-section-heading"><h3 class="tr-pane-title" id="tr-acts-h">Next actions</h3>${help('How the list is ordered', `<p><strong>Do now</strong> lists training hands waiting for a choice, moves the planner makes for employees marked Fire or Replace (moving is free and changes their verdict, so it comes before firing or replacing them), and employees to fire whose replacement would lose money too, such as a coworker of someone with Talks to Machines.</p><p><strong>Spend energy</strong> ranks actions by the production points each 10 energy earns before retirement. Training uses the average value of the best card in the next hand. Hiring uses the best candidate in a fresh set. Replacing uses that candidate's value, minus the value of keeping the employee and the cost of firing.</p><p>Replacement appears when a fresh hire wins at least two times in three, or the employee costs more than they earn. If training and replacing the same employee both qualify, only the better action appears.</p><p>Self-work is a step of its own, placed after the actions that earn more per 10 energy than your own work, and naming the companies making your best-margin product. When the bar would fill before training renews at 00:00 UTC, it says how many times to work to keep it from overflowing: it counts the actions above it first, and leaves a full bar at the reset for the next day's trainings. Otherwise, when actions below it earn less than self-work, a Save step takes its place: the energy left is worth more at the reset, and self-work can wait until the bar would overflow.</p><p>A hire that would lose money isn't listed, even with a free slot: <strong>Check</strong> says not to hire there, and why when it's a coworker's trait (Talks to Machines only works for an employee alone in the company).</p><p><strong>Check</strong> lists assignment suggestions, companies not to hire into and employees making the wrong product type.</p>`)}</div>
       ${actionsStatus()}
       <ol class="tr-acts" id="tr-next-actions">${body || '<li class="tr-act-group">Nothing to do right now</li>'}</ol>
       ${groups.done.length ? `<details class="tr-more tr-done"${$team.querySelector('.tr-done')?.open ? ' open' : ''}><summary>Trained today (${groups.done.length}) <em>Ready at 00:00 UTC, in ${escapeHtml(formatDuration(untilReset()))}</em></summary><ol class="tr-acts">${groups.done.map(a => item(a, true)).join('')}</ol></details>` : ''}
@@ -2012,12 +2022,13 @@ const EmployeeTrainingTool = (() => {
   }
 
   // The coworker traits a typical newcomer (a local man, average
-  // Production) holds back here, as text; none when they help on balance.
-  function typicalHireHarm(entry) {
+  // Production) holds back here (with everyone but `without`), as text;
+  // none when they help on balance.
+  function typicalHireHarm(entry, without = null) {
     if (!market?.ppValue) return [];
     const production = 2.5;
     const { value, notes } = newcomerImpact(entry, { gender: 'male', nationality: entry.region?.country, production,
-      wage: production / EmployeeModel.CFG.outputDivisor * market.ppValue });
+      wage: production / EmployeeModel.CFG.outputDivisor * market.ppValue }, without);
     return value < 0 ? notes : [];
   }
 
@@ -2371,6 +2382,9 @@ const EmployeeTrainingTool = (() => {
   // Why someone is marked Fire: what their presence holds back when their
   // own work pays, else what they cost (not escaped).
   const fireWhy = r => r.harm?.length && r.keep.value >= 0 ? `holds back ${harmText(r)}` : 'costs more than they earn';
+  // Marked Fire, and a new hire in their place would lose money too (after
+  // the hire's 10 energy): fire them and leave the slot empty.
+  const fireOnly = r => keepVerdict(r) === 'fire' && r.fresh.best - r.alt <= 0;
   const odds = p => `${Math.round(p * 100)}%`;
   // The planner's move for an employee, once it has finished searching.
   const plannedMove = id => plan && !plan.running ? (plan.moves || []).find(m => m.employee === id) || null : null;
@@ -2411,7 +2425,11 @@ const EmployeeTrainingTool = (() => {
       ...r.keep.coverage.map(note => escapeHtml(note)),
       ...(r.keep.unpriced.length ? [`${escapeHtml(r.keep.unpriced.map(traitName).join(', '))} not priced.`] : []),
     ];
-    const steps = v === 'keep' ? '' : `<ol class="tr-keep-steps">
+    const harmAfter = fireOnly(r) ? typicalHireHarm(entry, emp) : [];
+    const steps = v === 'keep' ? '' : fireOnly(r) ? `<ol class="tr-keep-steps">
+        <li>Fire ${name} in the game${r.from ? ` <span class="tr-warn">(from ${utcTime(r.from)}: hired under 12 hours ago)</span>` : ''}.</li>
+        <li>Leave the slot empty: a new hire there would lose about ${signedPP(-net)} PP${harmAfter.length ? `, holding back ${escapeHtml(harmAfter.join(', '))} too` : ''}.</li>
+      </ol>` : `<ol class="tr-keep-steps">
         <li>${v === 'later' ? `Keep ${name} until ${when}, then fire them` : `Fire ${name}`} in the game${r.from ? ` <span class="tr-warn">(from ${utcTime(r.from)}: hired under 12 hours ago)</span>` : ''}. A full company can't hire, so the slot has to be free first.</li>
         <li><button type="button" class="tr-link" data-reload>Reload</button>. ${companyLinkHtml(entry.company)} then shows a free slot.</li>
         <li>Open its recruiting slots and type the candidates into <button type="button" class="tr-link" data-go-tab="hire" data-go-company="${entry.company._id}">Hire</button>.</li>
@@ -2423,10 +2441,10 @@ const EmployeeTrainingTool = (() => {
       : m ? `<p class="tr-keep-move"><strong>Move them first.</strong> The planner would move ${name}${to ? ` to ${companyLinkHtml(to.company)}` : ''}. Moving is free and changes this verdict, so check again after the move. ${compare}See the move</button></p>`
       : plan ? `<p class="tr-calc-sub">The planner found no better company for ${name}.</p>`
       : `<p class="tr-calc-sub">${compare}Compare assignments</button> to see whether moving ${name} beats replacing them.</p>`;
-    const prefs = v === 'keep' ? '' : prefsHtml(hirePrefs(entry, emp), 'When you hire their replacement, look for');
+    const prefs = v === 'keep' || fireOnly(r) ? '' : prefsHtml(hirePrefs(entry, emp), 'When you hire their replacement, look for');
     const top = act[0];
     const team_ = act.length
-      ? `${plural(act.length, 'employee')} marked Fire or Replace.${top && top !== r ? ` Most worth replacing: <button type="button" class="tr-link" data-go-tab="keep" data-go-emp="${top.emp._id}">${escapeHtml(top.emp.name)}</button> (${keepVerdict(top) === 'fire' ? escapeHtml(fireWhy(top)) : `a new set beats them ${odds(top.chance)} of the time`}).` : ''}`
+      ? `${plural(act.length, 'employee')} marked Fire or Replace.${top && top !== r ? ` Most worth ${fireOnly(top) ? 'firing' : 'replacing'}: <button type="button" class="tr-link" data-go-tab="keep" data-go-emp="${top.emp._id}">${escapeHtml(top.emp.name)}</button> (${keepVerdict(top) === 'fire' ? escapeHtml(fireWhy(top)) : `a new set beats them ${odds(top.chance)} of the time`}).` : ''}`
       : `Nobody needs replacing. The closest is ${rows[0] === r ? 'this employee' : `<button type="button" class="tr-link" data-go-tab="keep" data-go-emp="${rows[0].emp._id}">${escapeHtml(rows[0].emp.name)}</button>`}: a new set beats them ${odds(rows[0].chance)} of the time.`;
     $fire.innerHTML = `
       ${help('How this is worked out', `<p><strong>Keeping</strong> counts what the employee will still earn you before retirement: their work after wages, their traits, their trainings left, and what their traits do for coworkers.</p><p><strong>Replacing</strong> counts the best candidate you'd likely pick from a new set, less the 10 energy a hire costs. Firing costs nothing else.</p><p>Both sides allow for how long each person holds the slot. Someone who retires sooner frees it sooner for the next hire, so a long career is only worth what it earns above that.</p><p><strong>Replace</strong>: a new set beats them at least 2 times in 3. <strong>Close</strong>: at least 1 time in 3. <strong>Fire</strong>: they cost more than they earn. <strong>Fire later</strong>: they earn more than they cost until a set day, often when a coworker retires, and less after it, so firing them that day beats both firing them now and keeping them.</p>`)}
@@ -3386,8 +3404,10 @@ const EmployeeTrainingTool = (() => {
       trained: trainable.filter(x => doneToday(x.emp) && !pendingHand(x.emp)).length,
       hands: hand.length,
       untilReset: untilReset(),
-      // Marked Replace, less those the planner moves instead (moves).
-      replace: keepRows().filter(r => ['fire', 'replace'].includes(keepVerdict(r)) && !moved.has(r.emp._id)).length,
+      // Marked Fire or Replace, less those the planner moves instead
+      // (moves): fire, those whose replacement would lose money too.
+      replace: keepRows().filter(r => ['fire', 'replace'].includes(keepVerdict(r)) && !moved.has(r.emp._id) && !fireOnly(r)).length,
+      fire: keepRows().filter(r => fireOnly(r) && !moved.has(r.emp._id)).length,
       moves: moved.size,
       mismatches: all.filter(x => mismatchOf(x.emp, x.entry.company)).length,
       pricing: ready.some(r => r.pricing),

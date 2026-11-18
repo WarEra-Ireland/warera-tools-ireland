@@ -822,7 +822,8 @@ const DashboardTool = (() => {
     const pillLink = (label, kind, q) => `<a class="dash-pill ${kind}" href="${link(q)}">${escapeHtml(label)}</a>`;
     const pills = [
       s.hands ? pillLink(`🃏 ${plural(s.hands, 'hand')} waiting`, 'warn', '') : '',
-      s.moves ? pillLink(`🧭 ${plural(s.moves, 'move')} instead of replacing`, 'info', '&tab=assignments') : '',
+      s.moves ? pillLink(`🧭 ${plural(s.moves, 'move')} instead of firing or replacing`, 'info', '&tab=assignments') : '',
+      s.fire ? pillLink(`${s.fire} to fire`, 'loss', '&tab=keep') : '',
       s.replace ? pillLink(`${s.replace} to replace`, 'loss', '&tab=keep') : '',
       s.mismatches ? pillLink(plural(s.mismatches, 'mismatch', 'mismatches'), 'warn', '&tab=assignments') : '',
     ].filter(Boolean);
